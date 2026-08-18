@@ -7,7 +7,7 @@ List / read / create / extend global choices (global option sets). Always prints
 ./choices.ps1 reddt_responsetype                                 # dump its options
 ./choices.ps1 reddt_responsetype -DisplayName 'Response Type' -Options 'A','B' -WhatIf
 #>
-[CmdletBinding(SupportsShouldProcess)]
+[CmdletBinding(SupportsShouldProcess, ConfirmImpact = "High")]   # High, else ShouldProcess never prompts
 param(
     [string]$Name,                            # schema name, e.g. reddt_responsetype
     [string]$DisplayName,                     # defaults to $Name on create
@@ -20,7 +20,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$dv = { param($p, $m = "GET", $b) & "$PSScriptRoot/../dv.ps1" -Path $p -Method $m -Body $b -Environment $Environment -Solution $Solution }
+$dv = { param($p, $m = "GET", $b) & "$PSScriptRoot/../dv.ps1" -Path $p -Method $m -Body $b -Environment $Environment -Solution $Solution -Confirm:$false }
 
 function New-Label($text) {
     @{

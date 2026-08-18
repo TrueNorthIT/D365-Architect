@@ -70,6 +70,9 @@ belong to solution import, and this is not a replacement for it.
 
 ## Rules
 
+- **Every script that can write must declare `[CmdletBinding(SupportsShouldProcess, ConfirmImpact = "High")]`** and gate the write behind `$PSCmdlet.ShouldProcess(...)`. `SupportsShouldProcess` on its own is **not** a safety net: it defaults to Medium impact, and with `$ConfirmPreference` at its default of High that means it never prompts — you get `-WhatIf` and a false sense of security. `dv.ps1` enforces this at the transport for any method other than GET, so a raw `-Method PATCH` asks too.
+- `-Confirm:$false` is only for a caller that has *already* confirmed at a level where a human saw the diff — that is why `views.ps1` and `choices.ps1` pass it to `dv.ps1`. Never reach for it to make an unattended run go quiet.
+- Non-interactive shells cannot answer the prompt, so a write there fails closed rather than proceeding. That is the intended behaviour; do not "fix" it with `-Confirm:$false`.
 - **Always `-WhatIf` first**, show the diff, and get the developer's approval before writing. Writes publish immediately and are visible to everyone in the environment.
 - Defaults are `-Environment DEV` and `-Solution Redcentric`. Never write to Test/UAT/Prod without being asked explicitly by name.
 - Changing a column means editing **both** `fetchxml` and `layoutxml` — a column in only one of them silently does nothing. Prefer regex replaces that preserve the surrounding width/position attributes.

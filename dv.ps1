@@ -3,11 +3,20 @@
 .SYNOPSIS
 Thin wrapper over the Dataverse Web API. Auth via the Azure CLI token.
 
+Anything other than GET prompts for confirmation and publishes immediately once approved.
+Pass -WhatIf to see the call without making it, or -Confirm:$false to suppress the prompt -
+which callers that have already confirmed at a more meaningful level should do, and which
+nothing unattended should do without a human having read the diff first.
+
 .EXAMPLE
 ./dv.ps1 WhoAmI
 ./dv.ps1 "savedqueries?`$select=name,fetchxml&`$filter=returnedtypecode eq 'account'"
-./dv.ps1 "savedqueries(<id>)" -Method PATCH -Body @{ fetchxml = "<fetch>..." }
+./dv.ps1 "savedqueries(<id>)" -Method PATCH -Body @{ fetchxml = "<fetch>..." }   # prompts
 #>
+# ConfirmImpact is High deliberately: SupportsShouldProcess on its own defaults to Medium, and
+# with $ConfirmPreference at its default of High that means ShouldProcess NEVER prompts. It gives
+# you -WhatIf and the false impression of a safety net. High is what actually asks.
+[CmdletBinding(SupportsShouldProcess, ConfirmImpact = "High")]
 param(
     [Parameter(Mandatory)][string]$Path,
     [ValidateSet("GET", "POST", "PATCH", "DELETE")][string]$Method = "GET",
@@ -58,6 +67,12 @@ if ($null -ne $Body) {
     $req.Body = if ($Body -is [string]) { $Body } else { $Body | ConvertTo-Json -Depth 30 -Compress }
     $req.Body = [Text.Encoding]::UTF8.GetBytes($req.Body)
     if ($Method -eq "PATCH") { $headers["If-Match"] = "*" }  # update only, never upsert-create
+}
+
+# The last gate before anything changes. GET is exempt; everything else asks, every time.
+if ($Method -ne "GET") {
+    $target = "$Environment $(if ($Solution) { "(solution $Solution) " })-> $Path"
+    if (-not $PSCmdlet.ShouldProcess($target, "$Method - writes and publishes immediately")) { return }
 }
 
 for ($attempt = 1; ; $attempt++) {

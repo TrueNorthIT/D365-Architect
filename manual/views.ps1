@@ -7,7 +7,7 @@ List / read / update system views (savedqueries) for a table. Always prints a di
 ./views.ps1 account "Active Accounts"        # dump fetchxml + layoutxml
 ./views.ps1 account "Active Accounts" -FetchXml $fx -Solution Redcentric -WhatIf   # diff only, no write
 #>
-[CmdletBinding(SupportsShouldProcess)]
+[CmdletBinding(SupportsShouldProcess, ConfirmImpact = "High")]   # High, else ShouldProcess never prompts
 param(
     [Parameter(Mandatory)][string]$Table,     # logical name, e.g. reddt_order
     [string]$View,                            # view name (exact)
@@ -20,7 +20,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$dv = { param($p, $m = "GET", $b) & "$PSScriptRoot/../dv.ps1" -Path $p -Method $m -Body $b -Environment $Environment -Solution $Solution }
+$dv = { param($p, $m = "GET", $b) & "$PSScriptRoot/../dv.ps1" -Path $p -Method $m -Body $b -Environment $Environment -Solution $Solution -Confirm:$false }
 
 # Flatten a view into human-readable lines: what a developer actually sees in the view designer.
 function Read-View($fetch, $layout) {
