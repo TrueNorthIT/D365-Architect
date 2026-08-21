@@ -3,6 +3,7 @@ using D365Architect.Commands.Auth;
 using D365Architect.Commands.Environments;
 using D365Architect.Commands.Schema;
 using D365Architect.Commands.Table;
+using D365Architect.Commands.View;
 using D365Architect.Infrastructure;
 using D365Architect.Services;
 using D365Architect.Services.Authentication;
@@ -27,6 +28,10 @@ services.AddHttpClient<IDataverseClient, DataverseClient>();
 services.AddSingleton<EntityXmlDefinitionReader>();
 services.AddSingleton<EntityJsonDefinitionReader>();
 
+// Views only ever need one strategy — see ViewDefinition's doc comment for
+// why the XML-vs-JSON split that entities need doesn't apply here.
+services.AddSingleton<ViewJsonDefinitionReader>();
+
 // Component-specific XML->YAML converters. Add one registration per
 // component type (FormXml, SavedQuery, Ribbon, ...) as support grows;
 // XmlToYamlConverterService picks whichever one recognises the file.
@@ -36,6 +41,7 @@ services.AddSingleton<IXmlToYamlConverterService, XmlToYamlConverterService>();
 // Live export: pulls a table's metadata straight from Dataverse (JSON) and
 // converts it with the same curated model/YAML output as the XML pipeline.
 services.AddSingleton<ITableExportService, TableExportService>();
+services.AddSingleton<IViewExportService, ViewExportService>();
 
 // 2. Hand that container to Spectre.Console.Cli via the TypeRegistrar/
 //    TypeResolver adapter, so every command is itself resolved through DI
@@ -55,6 +61,7 @@ app.Configure(config =>
     WhoAmICommand.Configure(config);
     EnvironmentCommands.Configure(config);
     TableCommands.Configure(config);
+    ViewCommands.Configure(config);
     SchemaCommands.Configure(config);
 });
 

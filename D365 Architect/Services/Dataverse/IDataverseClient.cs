@@ -26,4 +26,19 @@ public interface IDataverseClient
     /// null if no solution with that unique name exists.
     /// </summary>
     Task<IReadOnlySet<Guid>?> TryGetSolutionAttributeMetadataIdsAsync(Uri environmentUrl, string accessToken, string solutionUniqueName, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Fetches every view (<c>savedquery</c>) defined against a table from
+    /// the Web API, as raw JSON — the shape
+    /// <see cref="Conversion.ViewJsonDefinitionReader"/> reads.
+    /// </summary>
+    Task<string> GetViewDefinitionsJsonAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Resolves a solution's unique name to the savedqueryids of the View
+    /// components it contains — i.e. which views that solution actually
+    /// customizes, as opposed to every view on a table. Returns null if no
+    /// solution with that unique name exists.
+    /// </summary>
+    Task<IReadOnlySet<Guid>?> TryGetSolutionSavedQueryIdsAsync(Uri environmentUrl, string accessToken, string solutionUniqueName, CancellationToken cancellationToken);
 }

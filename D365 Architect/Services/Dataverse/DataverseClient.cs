@@ -70,7 +70,41 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         // trusted from memory alone — see the SDK's componenttype OptionSet
         // for the full list if more component types are needed later.
         const int attributeComponentType = 2;
-        var relativePath = $"solutioncomponents?$filter=_solutionid_value eq {solutionId} and componenttype eq {attributeComponentType}&$select=objectid";
+        return await GetSolutionComponentObjectIdsAsync(environmentUrl, accessToken, solutionId.Value, attributeComponentType, cancellationToken);
+    }
+
+    public async Task<string> GetViewDefinitionsJsonAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken)
+    {
+        var relativePath = "savedqueries?$select=savedqueryid,name,description,fetchxml,layoutxml," +
+            "querytype,returnedtypecode,isdefault,isquickfindquery,isuserdefined,iscustomizable" +
+            $"&$filter=returnedtypecode eq '{Uri.EscapeDataString(entityLogicalName)}'&$orderby=name";
+
+        using var request = CreateRequest(environmentUrl, relativePath, accessToken);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+
+        return await response.Content.ReadAsStringAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlySet<Guid>?> TryGetSolutionSavedQueryIdsAsync(Uri environmentUrl, string accessToken, string solutionUniqueName, CancellationToken cancellationToken)
+    {
+        var solutionId = await TryGetSolutionIdAsync(environmentUrl, accessToken, solutionUniqueName, cancellationToken);
+        if (solutionId is null)
+        {
+            return null;
+        }
+
+        // componenttype 26 = View (the SavedQuery entity). Per Microsoft's
+        // documented solutioncomponent componenttype option set:
+        // https://learn.microsoft.com/power-apps/developer/data-platform/reference/entities/solutioncomponent
+        const int savedQueryComponentType = 26;
+        return await GetSolutionComponentObjectIdsAsync(environmentUrl, accessToken, solutionId.Value, savedQueryComponentType, cancellationToken);
+    }
+
+    /// <summary>Shared by every "which components of type X does this solution contain" lookup.</summary>
+    private async Task<IReadOnlySet<Guid>> GetSolutionComponentObjectIdsAsync(Uri environmentUrl, string accessToken, Guid solutionId, int componentType, CancellationToken cancellationToken)
+    {
+        var relativePath = $"solutioncomponents?$filter=_solutionid_value eq {solutionId} and componenttype eq {componentType}&$select=objectid";
 
         using var request = CreateRequest(environmentUrl, relativePath, accessToken);
         using var response = await httpClient.SendAsync(request, cancellationToken);
