@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "D365 Architect table definition",
+  "description": "Declarative YAML shape for a Dynamics table, produced by `d365architect table export`.",
+  "type": "object",
+  "properties": {
+    "entity": {
+      "description": "The table's logical name, e.g. \"account\". Serialises as the top-level \"entity\" key.",
+      "type": "string"
+    },
+    "schemaName": {
+      "description": "The customization-prefixed schema name, e.g. \"new_BankAccount\". Fixed at creation time — required when creating a table, immutable after.",
+      "type": "string"
+    },
+    "displayName": {
+      "type": "string"
+    },
+    "pluralDisplayName": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "ownershipType": {
+      "description": "\"UserOwned\", \"OrganizationOwned\", etc. Required to create a table; can't be changed afterwards.",
+      "type": "string"
+    },
+    "isActivity": {
+      "description": "Only present when true — false is the platform default for a table.",
+      "type": "boolean"
+    },
+    "hasActivities": {
+      "description": "Only present when true — false is the platform default for a table.",
+      "type": "boolean"
+    },
+    "hasNotes": {
+      "description": "Only present when true — false is the platform default for a table.",
+      "type": "boolean"
+    },
+    "attributes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "description": "The column's logical name, e.g. \"name\".",
+            "type": "string"
+          },
+          "schemaName": {
+            "description": "The customization-prefixed schema name, e.g. \"new_BankName\". Required to create a column; immutable after.",
+            "type": "string"
+          },
+          "type": {
+            "description": "The column's Dynamics type, e.g. \"nvarchar\", \"primarykey\", \"lookup\".",
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "physicalName": {
+            "description": "The underlying SQL column name from a legacy unpacked solution's Entity.xml, when it differs from Name in more than casing. Only ever set by EntityXmlDefinitionReader — the live Web API has no equivalent concept (Dataverse manages its own storage rather than mapping columns onto SQL Server directly).",
+            "type": "string"
+          },
+          "requiredLevel": {
+            "description": "\"recommended\", \"applicationrequired\" or \"systemrequired\". Only present when set to something other than \"none\" — that's Dataverse's default for every column type.",
+            "type": "string"
+          },
+          "maxLength": {
+            "description": "String/Memo character limit.",
+            "type": "integer"
+          },
+          "precision": {
+            "description": "Decimal places. For Money, only meaningful when PrecisionSource is 2 (attribute-specific).",
+            "type": "integer"
+          },
+          "precisionSource": {
+            "description": "Money only: 0 = currency-specific, 1 = organization setting, 2 = this attribute's own Precision.",
+            "type": "integer"
+          },
+          "minValue": {
+            "description": "Money/Decimal/Integer lower bound.",
+            "type": "number"
+          },
+          "maxValue": {
+            "description": "Money/Decimal/Integer upper bound.",
+            "type": "number"
+          },
+          "format": {
+            "description": "Type-specific format, e.g. \"Email\"/\"Text\" (String), \"DateOnly\"/\"DateAndTime\" (DateTime), \"TextArea\" (Memo).",
+            "type": "string"
+          },
+          "targets": {
+            "description": "Lookup/Customer/Owner: logical names of the table(s) this column can point to.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "isCustomField": {
+            "description": "Only present when true — false (a standard, non-custom field) is by far the common case.",
+            "type": "boolean"
+          },
+          "validForAdvancedFind": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "type"
+        ]
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "entity"
+  ]
+}
