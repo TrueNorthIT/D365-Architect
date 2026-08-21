@@ -52,6 +52,7 @@ own options.
 | `environment` | Manage D365 environments.                                     |
 | `table`       | Work with D365 table definitions.                              |
 | `view`        | Work with D365 view (saved query) definitions.                 |
+| `form`        | Work with D365 form definitions.                               |
 | `schema`      | Work with this tool's YAML schema.                             |
 
 ### `auth`
@@ -140,7 +141,7 @@ d365architect table export --table account --solution examplesolution
 
 Exported files follow a `<name>.<asset type>.yml` naming convention (e.g.
 `account.table.yml`) so a folder of exports stays sortable and unambiguous
-once forms and other asset types are supported.
+across tables, views, forms, and any asset type that joins them later.
 
 ### `view`
 
@@ -177,6 +178,39 @@ LayoutXML are kept verbatim rather than decomposed into a friendlier shape,
 since (unlike a table's columns) there's no bulk metadata endpoint to
 double-check that decomposition against.
 
+### `form`
+
+Work with D365 form definitions.
+
+#### `form export`
+
+Fetches every form defined on a table from the currently signed-in
+environment and saves each one as its own YAML file. Requires `auth login`
+first.
+
+```
+d365architect form export --table account
+```
+
+By default this exports every form on the table — main forms, quick create,
+quick view, dashboards, and so on. Pass `--solution` to scope the export
+down to just the forms that solution actually customizes:
+
+```
+d365architect form export --table account --solution examplesolution
+```
+
+| Option            | Description                                                                | Required |
+|-------------------|------------------------------------------------------------------------------|----------|
+| `-t, --table`     | Logical name of the table whose forms to export, e.g. `account`              | Yes      |
+| `-s, --solution`  | Unique name of a solution to scope the export to (only that solution's forms)  | No   |
+| `-o, --output`    | Directory to write the exported YAML files into. Defaults to the current directory | No |
+
+Each form is written as `<form-name>.form.yml`, following the same
+`<name>.<asset type>.yml` convention as `table export`/`view export` — e.g.
+"Account Main Form" becomes `account-main-form.form.yml`. FormXML is kept
+verbatim, same reasoning as a view's FetchXML/LayoutXML.
+
 ### `schema`
 
 Work with this tool's YAML schema.
@@ -192,22 +226,25 @@ could. No sign-in needed.
 ```
 d365architect schema export --for table
 d365architect schema export --for view
+d365architect schema export --for form
 ```
 
 | Option         | Description                                  | Required |
 |----------------|------------------------------------------------|----------|
-| `-f, --for`    | Which asset type to generate a schema for: `table` or `view`. Defaults to `table` | No |
+| `-f, --for`    | Which asset type to generate a schema for: `table`, `view`, or `form`. Defaults to `table` | No |
 | `-o, --output` | Path to write the schema to. Defaults to `schema/<asset-type>.schema.json` | No |
 
 This repository commits its generated schemas at
-[`schema/table.schema.json`](schema/table.schema.json) and
-[`schema/view.schema.json`](schema/view.schema.json), and re-runs `schema
-export` for both whenever a model changes. D365 developers can point their
-editor at them for inline validation and autocomplete while hand-editing or
-reviewing `*.table.yml`/`*.view.yml` files:
+[`schema/table.schema.json`](schema/table.schema.json),
+[`schema/view.schema.json`](schema/view.schema.json), and
+[`schema/form.schema.json`](schema/form.schema.json), and re-runs `schema
+export` for all three whenever a model changes. D365 developers can point
+their editor at them for inline validation and autocomplete while
+hand-editing or reviewing `*.table.yml`/`*.view.yml`/`*.form.yml` files:
 
 - **If you have this repo cloned**, it's already wired up — `.vscode/settings.json`
-  maps `*.table.yml` and `*.view.yml` files to their local schemas, so VS Code's
+  maps `*.table.yml`, `*.view.yml`, and `*.form.yml` files to their local
+  schemas, so VS Code's
   [YAML extension](https://marketplace.visualstudio.com/items?itemName=redhat.vscode-yaml)
   validates them automatically.
 - **From anywhere else**, add a workspace setting pointing at the raw files on
@@ -217,7 +254,8 @@ reviewing `*.table.yml`/`*.view.yml` files:
   {
     "yaml.schemas": {
       "https://raw.githubusercontent.com/TrueNorthIT/D365-Architect/main/schema/table.schema.json": "*.table.yml",
-      "https://raw.githubusercontent.com/TrueNorthIT/D365-Architect/main/schema/view.schema.json": "*.view.yml"
+      "https://raw.githubusercontent.com/TrueNorthIT/D365-Architect/main/schema/view.schema.json": "*.view.yml",
+      "https://raw.githubusercontent.com/TrueNorthIT/D365-Architect/main/schema/form.schema.json": "*.form.yml"
     }
   }
   ```

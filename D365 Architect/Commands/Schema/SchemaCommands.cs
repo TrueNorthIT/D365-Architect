@@ -16,9 +16,10 @@ internal static class SchemaCommands
             branch.SetDescription("Work with this tool's YAML schema.");
 
             branch.AddCommand<ExportSchemaCommand>("export")
-                .WithDescription("Writes the JSON Schema for a curated YAML shape (table or view) to disk.")
+                .WithDescription("Writes the JSON Schema for a curated YAML shape (table, view, or form) to disk.")
                 .WithExample("schema", "export", "--for", "table")
-                .WithExample("schema", "export", "--for", "view");
+                .WithExample("schema", "export", "--for", "view")
+                .WithExample("schema", "export", "--for", "form");
         });
     }
 }

@@ -41,4 +41,19 @@ public interface IDataverseClient
     /// solution with that unique name exists.
     /// </summary>
     Task<IReadOnlySet<Guid>?> TryGetSolutionSavedQueryIdsAsync(Uri environmentUrl, string accessToken, string solutionUniqueName, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Fetches every form (<c>systemform</c>) defined against a table from
+    /// the Web API, as raw JSON — the shape
+    /// <see cref="Conversion.FormJsonDefinitionReader"/> reads.
+    /// </summary>
+    Task<string> GetFormDefinitionsJsonAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Resolves a solution's unique name to the formids of the System Form
+    /// components it contains — i.e. which forms that solution actually
+    /// customizes, as opposed to every form on a table. Returns null if no
+    /// solution with that unique name exists.
+    /// </summary>
+    Task<IReadOnlySet<Guid>?> TryGetSolutionSystemFormIdsAsync(Uri environmentUrl, string accessToken, string solutionUniqueName, CancellationToken cancellationToken);
 }

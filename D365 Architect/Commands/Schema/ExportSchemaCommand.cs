@@ -33,12 +33,14 @@ public sealed class ExportSchemaCommand : Command<ExportSchemaCommand.Settings>
             "Declarative YAML shape for a Dynamics table, produced by `d365architect table export`.", "table.schema.json"),
         ["view"] = new AssetType(typeof(ViewDefinition), "D365 Architect view definition",
             "Declarative YAML shape for a Dynamics view, produced by `d365architect view export`.", "view.schema.json"),
+        ["form"] = new AssetType(typeof(FormDefinition), "D365 Architect form definition",
+            "Declarative YAML shape for a Dynamics form, produced by `d365architect form export`.", "form.schema.json"),
     };
 
     public sealed class Settings : CommandSettings
     {
         [CommandOption("-f|--for <ASSET_TYPE>")]
-        [Description("Which asset type's YAML shape to generate a schema for: 'table' or 'view'.")]
+        [Description("Which asset type's YAML shape to generate a schema for: 'table', 'view', or 'form'.")]
         public string For { get; init; } = "table";
 
         [CommandOption("-o|--output <PATH>")]
@@ -50,7 +52,7 @@ public sealed class ExportSchemaCommand : Command<ExportSchemaCommand.Settings>
     {
         if (!AssetTypes.TryGetValue(settings.For, out var assetType))
         {
-            AnsiConsole.MarkupLine($"[red]Unknown asset type '{settings.For}'.[/] Expected 'table' or 'view'.");
+            AnsiConsole.MarkupLine($"[red]Unknown asset type '{settings.For}'.[/] Expected 'table', 'view', or 'form'.");
             return 1;
         }
 

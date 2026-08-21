@@ -13,7 +13,8 @@ namespace D365Architect.Services.Schema;
 /// <summary>
 /// Builds a JSON Schema describing one of this tool's curated YAML shapes
 /// (e.g. <see cref="EntityDefinition"/>/<see cref="AttributeDefinition"/> for
-/// tables, <see cref="ViewDefinition"/> for views) by reflecting over
+/// tables, <see cref="ViewDefinition"/> for views, <see cref="FormDefinition"/>
+/// for forms) by reflecting over
 /// the model classes directly, rather than hand-maintaining a second copy of
 /// each shape that could drift out of sync:
 ///

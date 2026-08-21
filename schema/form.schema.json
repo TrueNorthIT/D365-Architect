@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "D365 Architect form definition",
+  "description": "Declarative YAML shape for a Dynamics form, produced by `d365architect form export`.",
+  "type": "object",
+  "properties": {
+    "form": {
+      "description": "The form's display name, e.g. \"Account Main Form\". Serialises as the top-level \"form\" key.",
+      "type": "string"
+    },
+    "entity": {
+      "description": "Logical name of the table this form belongs to, e.g. \"account\" (the systemform's objecttypecode).",
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "type": {
+      "description": "The kind of form this is, e.g. \"Quick Create\" or \"Dashboard\" — the systemform \"type\" option set's own label (see https://learn.microsoft.com/power-apps/developer/data-platform/reference/entities/systemform). Only present when it's something other than \"Main\" — an ordinary main form, and by far the most common case.",
+      "type": "string"
+    },
+    "isDefault": {
+      "description": "Only present when true — a table typically has one default form per Type, and false is the common case for any given form.",
+      "type": "boolean"
+    },
+    "formActivationState": {
+      "description": "\"Inactive\" for a form that hasn't been published/activated yet. Absent — Dataverse's \"Active\" state — is the common case for any form that's actually in use.",
+      "type": "string"
+    },
+    "isCustomizable": {
+      "description": "Whether this form can be customized. Absent when Dataverse doesn't report it.",
+      "type": "boolean"
+    },
+    "formXml": {
+      "description": "The form's layout and controls, as FormXML. Null for the same kind of internal/system case a view's FetchXML can be missing for — see FetchXml; not yet hit live for a form, but not assumed away either.",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "form",
+    "entity"
+  ]
+}

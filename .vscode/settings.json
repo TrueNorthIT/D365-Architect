@@ -1,6 +1,7 @@
 {
   "yaml.schemas": {
     "./schema/table.schema.json": "*.table.yml",
-    "./schema/view.schema.json": "*.view.yml"
+    "./schema/view.schema.json": "*.view.yml",
+    "./schema/form.schema.json": "*.form.yml"
   }
 }
