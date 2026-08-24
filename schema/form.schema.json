@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "D365 Architect form definition",
-  "description": "Declarative YAML shape for a Dynamics form, produced by `d365architect form export`.",
+  "description": "Declarative YAML shape for a Dynamics form, produced by `d365architect form export`. A field left out of this file was left at Dataverse's own default, not \"unknown\" — see each field's own description for what that default is. Editing this file back into Dataverse (not yet supported) will leave an omitted field at that default rather than whatever it happened to be before.",
   "type": "object",
   "properties": {
     "form": {
@@ -16,24 +16,662 @@
       "type": "string"
     },
     "type": {
-      "description": "The kind of form this is, e.g. \"Quick Create\" or \"Dashboard\" — the systemform \"type\" option set's own label (see https://learn.microsoft.com/power-apps/developer/data-platform/reference/entities/systemform). Only present when it's something other than \"Main\" — an ordinary main form, and by far the most common case.",
+      "description": "The kind of form this is, e.g. \"Quick Create\" or \"Dashboard\" — the systemform \"type\" option set's own label (see https://learn.microsoft.com/power-apps/developer/data-platform/reference/entities/systemform). Only present when it's something other than \"Main\" — an ordinary main form, and by far the most common case. Omit for a Main form; applying this file back won't change its type.",
       "type": "string"
     },
     "isDefault": {
-      "description": "Only present when true — a table typically has one default form per Type, and false is the common case for any given form.",
+      "description": "Only present when true — a table typically has one default form per Type, and false is the common case for any given form. Omit to leave this as a non-default form; applying this file back won't make it the default.",
       "type": "boolean"
     },
     "formActivationState": {
-      "description": "\"Inactive\" for a form that hasn't been published/activated yet. Absent — Dataverse's \"Active\" state — is the common case for any form that's actually in use.",
+      "description": "\"Inactive\" for a form that hasn't been published/activated yet. Absent — Dataverse's \"Active\" state — is the common case for any form that's actually in use. Omit to leave this form active; applying this file back won't deactivate it.",
       "type": "string"
     },
     "isCustomizable": {
-      "description": "Whether this form can be customized. Absent when Dataverse doesn't report it.",
+      "description": "Only present when false — true (customizable) is the common case; see FalseOrNull. Omit to leave this form customizable; applying this file back won't lock it down.",
       "type": "boolean"
     },
-    "formXml": {
-      "description": "The form's layout and controls, as FormXML. Null for the same kind of internal/system case a view's FetchXML can be missing for — see FetchXml; not yet hit live for a form, but not assumed away either.",
+    "tabs": {
+      "description": "The form's tabs, decomposed from its FormXML — see this class's own doc comment for what is (and isn't) captured. Empty for a form this tool doesn't decompose at all yet (dashboards) or whose FormXML Dataverse didn't return.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "description": "The tab's internal name, e.g. \"tab_1\".",
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "columns": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "width": {
+                  "description": "This column's relative width, e.g. \"50%\", \"33%\", \"100%\" — kept as Dataverse states it, not normalised.",
+                  "type": "string"
+                },
+                "sections": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "description": "The section's internal name, e.g. \"tab_1_column_1_section_1\".",
+                        "type": "string"
+                      },
+                      "label": {
+                        "type": "string"
+                      },
+                      "columns": {
+                        "description": "How many side-by-side sub-columns this section itself renders its rows into — a section can lay its own cells out into more than one column independently of FormColumn (a tab's own columns). Controls stays a flat, row-major list either way (row 1's cells left-to-right, then row 2's, ...), so this is the piece of information that says how to regroup them back into a grid — the cell/row structure itself isn't otherwise represented. Only present when greater than 1 — a single column is the common case; applying this file back won't change a section's own column count.",
+                        "type": "integer"
+                      },
+                      "controls": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "description": "The control's internal id, e.g. \"name\" or \"CasesForCustomer\" (FormXML's `control` element's own `id`).",
+                              "type": "string"
+                            },
+                            "field": {
+                              "description": "The attribute logical name this control is bound to, e.g. \"name\" (FormXML's `datafieldname`). Null for a control that isn't bound to a single field — a subgrid, web resource, iframe, quick view control, or timeline.",
+                              "type": "string"
+                            },
+                            "label": {
+                              "type": "string"
+                            },
+                            "classId": {
+                              "description": "Dataverse's raw control class id (a GUID) — which control renders this cell, e.g. distinguishing a non-default control override from a field's usual one. Deliberately not mapped to a friendly name: unlike a solutioncomponent componenttype (confirmed straight from Microsoft's own docs), no equally authoritative source lists every control class id, and guessing one wrong would be worse than showing the raw id.",
+                              "type": "string"
+                            },
+                            "disabled": {
+                              "description": "Only present when true — most controls on a form are enabled/editable. Omit to leave this control enabled; applying this file back won't disable it.",
+                              "type": "boolean"
+                            },
+                            "visible": {
+                              "description": "Only present when false — most controls on a form are visible. Confirmed live rather than assumed: a real, deliberately hidden field (FormXML's `visible=\"false\"`) is meaningfully different from one simply not on the form at all, and this tool would otherwise show them identically. Omit to leave this control visible; applying this file back won't hide it.",
+                              "type": "boolean"
+                            },
+                            "parameters": {
+                              "description": "This control's own `<parameters>` block, converted structurally (each XML element becomes a YAML map key, using the element's own name; an attribute becomes a plain key under a nested `attributes` map, its own text alongside those under `value`) rather than left as raw XML text — e.g. a subgrid's target table, relationship, and view; a web resource's name; a quick view control's source table and form. A boolean value of `false` inside this block is left out — every one of these parameters is an optional XML boolean with no platform default declared, so an absent one and an explicit `false` mean the same thing to Dataverse; omitting it here changes nothing when applied back. `true` is always kept. This whole property is absent when the control has no parameters at all, or when every one it had was `false` (see `docs/yaml-conventions.md` for the full reasoning). Unlike ClassId, none of this needs a friendly-name lookup this tool would have to get right on its own: the XML's own element/attribute names are kept as-is."
+                            },
+                            "additionalControls": {
+                              "description": "Alternate controls attached to this one via the form designer's \"add a component\" feature — e.g. a Calendar control added to a subgrid, or per-client (Web/Phone/Tablet) replacements. See FormAdditionalControl's own doc comment. Absent when this control has none.",
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "id": {
+                                    "description": "This alternate's own class id, when it's identified that way (a GUID) — mutually exclusive with Name in every sample seen so far. Kept raw for the same reason as ClassId.",
+                                    "type": "string"
+                                  },
+                                  "name": {
+                                    "description": "This alternate's fully-qualified PCF control name, e.g. \"MscrmControls.FieldControls.RecentRecords\" — mutually exclusive with Id in every sample seen so far.",
+                                    "type": "string"
+                                  },
+                                  "formFactor": {
+                                    "description": "Which client this alternate applies to (Web/Phone/Tablet), as Dataverse's raw integer. Not mapped to a friendly name: no authoritative option set documenting the values was found, same caution as ClassId.",
+                                    "type": "integer"
+                                  },
+                                  "version": {
+                                    "type": "string"
+                                  },
+                                  "parameters": {
+                                    "description": "This alternate's own parameters, converted the same structural way as Parameters (including the same false-stripping rule)."
+                                  }
+                                },
+                                "additionalProperties": false
+                              }
+                            },
+                            "events": {
+                              "description": "Field-level event bindings scoped to this control specifically (e.g. an \"on change\" handler for this one field) — distinct from Events, which are form-wide. Confirmed live rather than assumed: Microsoft's own published FormXML schema doesn't document `<events>` as a valid child of a cell at all (only `<labels>`/`<control>` are), yet real forms have it — exactly the kind of gap a schema-only audit would have missed. See FormEvent. Absent when this control has none.",
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "name": {
+                                    "description": "The event's own name, e.g. \"onload\", or a custom name for a field-level event tied to Attribute.",
+                                    "type": "string"
+                                  },
+                                  "attribute": {
+                                    "description": "The attribute logical name this event fires for, when it's field-level (a \"field changed\" event) rather than form-level.",
+                                    "type": "string"
+                                  },
+                                  "active": {
+                                    "description": "Whether this event is active. Shown whenever FormXML states it explicitly, same reasoning as Enabled — no observed unset case to know what it would default to.",
+                                    "type": "boolean"
+                                  },
+                                  "handlers": {
+                                    "description": "Handlers configured through the form designer's own \"Event Handlers\" UI. Absent when there are none.",
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "functionName": {
+                                          "description": "The bound function's fully-qualified name, e.g. \"AppCommon.Account.Instance.parentaccountid_setadditionalparams\".",
+                                          "type": "string"
+                                        },
+                                        "libraryName": {
+                                          "description": "The web resource this function comes from, e.g. \"AppCommon/Account/Account_main_system_library.js\".",
+                                          "type": "string"
+                                        },
+                                        "enabled": {
+                                          "description": "Whether this handler is enabled. Shown whenever FormXML states it explicitly (every sample seen states it, always as true) rather than only when it deviates from a default — unlike most other booleans this tool exports, no unset/omitted case has been observed to know what it would default to.",
+                                          "type": "boolean"
+                                        },
+                                        "passExecutionContext": {
+                                          "description": "Whether the platform passes its execution context as this function's first argument. Shown whenever FormXML states it explicitly, for the same reason as Enabled.",
+                                          "type": "boolean"
+                                        }
+                                      },
+                                      "additionalProperties": false,
+                                      "required": [
+                                        "functionName",
+                                        "libraryName"
+                                      ]
+                                    }
+                                  },
+                                  "internalHandlers": {
+                                    "description": "Handlers the platform itself injects (e.g. for a related-field default) rather than ones a maker configured. Absent when there are none.",
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "functionName": {
+                                          "description": "The bound function's fully-qualified name, e.g. \"AppCommon.Account.Instance.parentaccountid_setadditionalparams\".",
+                                          "type": "string"
+                                        },
+                                        "libraryName": {
+                                          "description": "The web resource this function comes from, e.g. \"AppCommon/Account/Account_main_system_library.js\".",
+                                          "type": "string"
+                                        },
+                                        "enabled": {
+                                          "description": "Whether this handler is enabled. Shown whenever FormXML states it explicitly (every sample seen states it, always as true) rather than only when it deviates from a default — unlike most other booleans this tool exports, no unset/omitted case has been observed to know what it would default to.",
+                                          "type": "boolean"
+                                        },
+                                        "passExecutionContext": {
+                                          "description": "Whether the platform passes its execution context as this function's first argument. Shown whenever FormXML states it explicitly, for the same reason as Enabled.",
+                                          "type": "boolean"
+                                        }
+                                      },
+                                      "additionalProperties": false,
+                                      "required": [
+                                        "functionName",
+                                        "libraryName"
+                                      ]
+                                    }
+                                  }
+                                },
+                                "additionalProperties": false
+                              }
+                            }
+                          },
+                          "additionalProperties": false,
+                          "required": [
+                            "id"
+                          ]
+                        }
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "headerControls": {
+      "description": "Controls pinned to the form's header bar, outside any tab. Absent when the form has none.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "description": "The control's internal id, e.g. \"name\" or \"CasesForCustomer\" (FormXML's `control` element's own `id`).",
+            "type": "string"
+          },
+          "field": {
+            "description": "The attribute logical name this control is bound to, e.g. \"name\" (FormXML's `datafieldname`). Null for a control that isn't bound to a single field — a subgrid, web resource, iframe, quick view control, or timeline.",
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "classId": {
+            "description": "Dataverse's raw control class id (a GUID) — which control renders this cell, e.g. distinguishing a non-default control override from a field's usual one. Deliberately not mapped to a friendly name: unlike a solutioncomponent componenttype (confirmed straight from Microsoft's own docs), no equally authoritative source lists every control class id, and guessing one wrong would be worse than showing the raw id.",
+            "type": "string"
+          },
+          "disabled": {
+            "description": "Only present when true — most controls on a form are enabled/editable. Omit to leave this control enabled; applying this file back won't disable it.",
+            "type": "boolean"
+          },
+          "visible": {
+            "description": "Only present when false — most controls on a form are visible. Confirmed live rather than assumed: a real, deliberately hidden field (FormXML's `visible=\"false\"`) is meaningfully different from one simply not on the form at all, and this tool would otherwise show them identically. Omit to leave this control visible; applying this file back won't hide it.",
+            "type": "boolean"
+          },
+          "parameters": {
+            "description": "This control's own `<parameters>` block, converted structurally (each XML element becomes a YAML map key, using the element's own name; an attribute becomes a plain key under a nested `attributes` map, its own text alongside those under `value`) rather than left as raw XML text — e.g. a subgrid's target table, relationship, and view; a web resource's name; a quick view control's source table and form. A boolean value of `false` inside this block is left out — every one of these parameters is an optional XML boolean with no platform default declared, so an absent one and an explicit `false` mean the same thing to Dataverse; omitting it here changes nothing when applied back. `true` is always kept. This whole property is absent when the control has no parameters at all, or when every one it had was `false` (see `docs/yaml-conventions.md` for the full reasoning). Unlike ClassId, none of this needs a friendly-name lookup this tool would have to get right on its own: the XML's own element/attribute names are kept as-is."
+          },
+          "additionalControls": {
+            "description": "Alternate controls attached to this one via the form designer's \"add a component\" feature — e.g. a Calendar control added to a subgrid, or per-client (Web/Phone/Tablet) replacements. See FormAdditionalControl's own doc comment. Absent when this control has none.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "description": "This alternate's own class id, when it's identified that way (a GUID) — mutually exclusive with Name in every sample seen so far. Kept raw for the same reason as ClassId.",
+                  "type": "string"
+                },
+                "name": {
+                  "description": "This alternate's fully-qualified PCF control name, e.g. \"MscrmControls.FieldControls.RecentRecords\" — mutually exclusive with Id in every sample seen so far.",
+                  "type": "string"
+                },
+                "formFactor": {
+                  "description": "Which client this alternate applies to (Web/Phone/Tablet), as Dataverse's raw integer. Not mapped to a friendly name: no authoritative option set documenting the values was found, same caution as ClassId.",
+                  "type": "integer"
+                },
+                "version": {
+                  "type": "string"
+                },
+                "parameters": {
+                  "description": "This alternate's own parameters, converted the same structural way as Parameters (including the same false-stripping rule)."
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "events": {
+            "description": "Field-level event bindings scoped to this control specifically (e.g. an \"on change\" handler for this one field) — distinct from Events, which are form-wide. Confirmed live rather than assumed: Microsoft's own published FormXML schema doesn't document `<events>` as a valid child of a cell at all (only `<labels>`/`<control>` are), yet real forms have it — exactly the kind of gap a schema-only audit would have missed. See FormEvent. Absent when this control has none.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "description": "The event's own name, e.g. \"onload\", or a custom name for a field-level event tied to Attribute.",
+                  "type": "string"
+                },
+                "attribute": {
+                  "description": "The attribute logical name this event fires for, when it's field-level (a \"field changed\" event) rather than form-level.",
+                  "type": "string"
+                },
+                "active": {
+                  "description": "Whether this event is active. Shown whenever FormXML states it explicitly, same reasoning as Enabled — no observed unset case to know what it would default to.",
+                  "type": "boolean"
+                },
+                "handlers": {
+                  "description": "Handlers configured through the form designer's own \"Event Handlers\" UI. Absent when there are none.",
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "functionName": {
+                        "description": "The bound function's fully-qualified name, e.g. \"AppCommon.Account.Instance.parentaccountid_setadditionalparams\".",
+                        "type": "string"
+                      },
+                      "libraryName": {
+                        "description": "The web resource this function comes from, e.g. \"AppCommon/Account/Account_main_system_library.js\".",
+                        "type": "string"
+                      },
+                      "enabled": {
+                        "description": "Whether this handler is enabled. Shown whenever FormXML states it explicitly (every sample seen states it, always as true) rather than only when it deviates from a default — unlike most other booleans this tool exports, no unset/omitted case has been observed to know what it would default to.",
+                        "type": "boolean"
+                      },
+                      "passExecutionContext": {
+                        "description": "Whether the platform passes its execution context as this function's first argument. Shown whenever FormXML states it explicitly, for the same reason as Enabled.",
+                        "type": "boolean"
+                      }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "functionName",
+                      "libraryName"
+                    ]
+                  }
+                },
+                "internalHandlers": {
+                  "description": "Handlers the platform itself injects (e.g. for a related-field default) rather than ones a maker configured. Absent when there are none.",
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "functionName": {
+                        "description": "The bound function's fully-qualified name, e.g. \"AppCommon.Account.Instance.parentaccountid_setadditionalparams\".",
+                        "type": "string"
+                      },
+                      "libraryName": {
+                        "description": "The web resource this function comes from, e.g. \"AppCommon/Account/Account_main_system_library.js\".",
+                        "type": "string"
+                      },
+                      "enabled": {
+                        "description": "Whether this handler is enabled. Shown whenever FormXML states it explicitly (every sample seen states it, always as true) rather than only when it deviates from a default — unlike most other booleans this tool exports, no unset/omitted case has been observed to know what it would default to.",
+                        "type": "boolean"
+                      },
+                      "passExecutionContext": {
+                        "description": "Whether the platform passes its execution context as this function's first argument. Shown whenever FormXML states it explicitly, for the same reason as Enabled.",
+                        "type": "boolean"
+                      }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "functionName",
+                      "libraryName"
+                    ]
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      }
+    },
+    "footerControls": {
+      "description": "Controls pinned to the form's footer bar, outside any tab. Absent when the form has none.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "description": "The control's internal id, e.g. \"name\" or \"CasesForCustomer\" (FormXML's `control` element's own `id`).",
+            "type": "string"
+          },
+          "field": {
+            "description": "The attribute logical name this control is bound to, e.g. \"name\" (FormXML's `datafieldname`). Null for a control that isn't bound to a single field — a subgrid, web resource, iframe, quick view control, or timeline.",
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "classId": {
+            "description": "Dataverse's raw control class id (a GUID) — which control renders this cell, e.g. distinguishing a non-default control override from a field's usual one. Deliberately not mapped to a friendly name: unlike a solutioncomponent componenttype (confirmed straight from Microsoft's own docs), no equally authoritative source lists every control class id, and guessing one wrong would be worse than showing the raw id.",
+            "type": "string"
+          },
+          "disabled": {
+            "description": "Only present when true — most controls on a form are enabled/editable. Omit to leave this control enabled; applying this file back won't disable it.",
+            "type": "boolean"
+          },
+          "visible": {
+            "description": "Only present when false — most controls on a form are visible. Confirmed live rather than assumed: a real, deliberately hidden field (FormXML's `visible=\"false\"`) is meaningfully different from one simply not on the form at all, and this tool would otherwise show them identically. Omit to leave this control visible; applying this file back won't hide it.",
+            "type": "boolean"
+          },
+          "parameters": {
+            "description": "This control's own `<parameters>` block, converted structurally (each XML element becomes a YAML map key, using the element's own name; an attribute becomes a plain key under a nested `attributes` map, its own text alongside those under `value`) rather than left as raw XML text — e.g. a subgrid's target table, relationship, and view; a web resource's name; a quick view control's source table and form. A boolean value of `false` inside this block is left out — every one of these parameters is an optional XML boolean with no platform default declared, so an absent one and an explicit `false` mean the same thing to Dataverse; omitting it here changes nothing when applied back. `true` is always kept. This whole property is absent when the control has no parameters at all, or when every one it had was `false` (see `docs/yaml-conventions.md` for the full reasoning). Unlike ClassId, none of this needs a friendly-name lookup this tool would have to get right on its own: the XML's own element/attribute names are kept as-is."
+          },
+          "additionalControls": {
+            "description": "Alternate controls attached to this one via the form designer's \"add a component\" feature — e.g. a Calendar control added to a subgrid, or per-client (Web/Phone/Tablet) replacements. See FormAdditionalControl's own doc comment. Absent when this control has none.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "description": "This alternate's own class id, when it's identified that way (a GUID) — mutually exclusive with Name in every sample seen so far. Kept raw for the same reason as ClassId.",
+                  "type": "string"
+                },
+                "name": {
+                  "description": "This alternate's fully-qualified PCF control name, e.g. \"MscrmControls.FieldControls.RecentRecords\" — mutually exclusive with Id in every sample seen so far.",
+                  "type": "string"
+                },
+                "formFactor": {
+                  "description": "Which client this alternate applies to (Web/Phone/Tablet), as Dataverse's raw integer. Not mapped to a friendly name: no authoritative option set documenting the values was found, same caution as ClassId.",
+                  "type": "integer"
+                },
+                "version": {
+                  "type": "string"
+                },
+                "parameters": {
+                  "description": "This alternate's own parameters, converted the same structural way as Parameters (including the same false-stripping rule)."
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "events": {
+            "description": "Field-level event bindings scoped to this control specifically (e.g. an \"on change\" handler for this one field) — distinct from Events, which are form-wide. Confirmed live rather than assumed: Microsoft's own published FormXML schema doesn't document `<events>` as a valid child of a cell at all (only `<labels>`/`<control>` are), yet real forms have it — exactly the kind of gap a schema-only audit would have missed. See FormEvent. Absent when this control has none.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "description": "The event's own name, e.g. \"onload\", or a custom name for a field-level event tied to Attribute.",
+                  "type": "string"
+                },
+                "attribute": {
+                  "description": "The attribute logical name this event fires for, when it's field-level (a \"field changed\" event) rather than form-level.",
+                  "type": "string"
+                },
+                "active": {
+                  "description": "Whether this event is active. Shown whenever FormXML states it explicitly, same reasoning as Enabled — no observed unset case to know what it would default to.",
+                  "type": "boolean"
+                },
+                "handlers": {
+                  "description": "Handlers configured through the form designer's own \"Event Handlers\" UI. Absent when there are none.",
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "functionName": {
+                        "description": "The bound function's fully-qualified name, e.g. \"AppCommon.Account.Instance.parentaccountid_setadditionalparams\".",
+                        "type": "string"
+                      },
+                      "libraryName": {
+                        "description": "The web resource this function comes from, e.g. \"AppCommon/Account/Account_main_system_library.js\".",
+                        "type": "string"
+                      },
+                      "enabled": {
+                        "description": "Whether this handler is enabled. Shown whenever FormXML states it explicitly (every sample seen states it, always as true) rather than only when it deviates from a default — unlike most other booleans this tool exports, no unset/omitted case has been observed to know what it would default to.",
+                        "type": "boolean"
+                      },
+                      "passExecutionContext": {
+                        "description": "Whether the platform passes its execution context as this function's first argument. Shown whenever FormXML states it explicitly, for the same reason as Enabled.",
+                        "type": "boolean"
+                      }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "functionName",
+                      "libraryName"
+                    ]
+                  }
+                },
+                "internalHandlers": {
+                  "description": "Handlers the platform itself injects (e.g. for a related-field default) rather than ones a maker configured. Absent when there are none.",
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "functionName": {
+                        "description": "The bound function's fully-qualified name, e.g. \"AppCommon.Account.Instance.parentaccountid_setadditionalparams\".",
+                        "type": "string"
+                      },
+                      "libraryName": {
+                        "description": "The web resource this function comes from, e.g. \"AppCommon/Account/Account_main_system_library.js\".",
+                        "type": "string"
+                      },
+                      "enabled": {
+                        "description": "Whether this handler is enabled. Shown whenever FormXML states it explicitly (every sample seen states it, always as true) rather than only when it deviates from a default — unlike most other booleans this tool exports, no unset/omitted case has been observed to know what it would default to.",
+                        "type": "boolean"
+                      },
+                      "passExecutionContext": {
+                        "description": "Whether the platform passes its execution context as this function's first argument. Shown whenever FormXML states it explicitly, for the same reason as Enabled.",
+                        "type": "boolean"
+                      }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "functionName",
+                      "libraryName"
+                    ]
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      }
+    },
+    "ancestor": {
+      "description": "Which form this one is derived from (FormXML's `<ancestor>`) — common on an Interactive-experience-style form built from an older one. Absent when this form has no ancestor.",
       "type": "string"
+    },
+    "hiddenFields": {
+      "description": "Fields the form tracks but never renders on any tab — see FormHiddenField. Absent when there are none.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "field": {
+            "description": "The attribute logical name, e.g. \"address1_addressid\" (FormXML's `datafieldname`).",
+            "type": "string"
+          },
+          "classId": {
+            "description": "Raw control class id, kept for the same reason as ClassId.",
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "field"
+        ]
+      }
+    },
+    "displayCondition": {
+      "description": "When this form is offered as a choice for a record, and to whom — see FormDisplayCondition. Absent when the form has none (every published Main form seen has one, but not every form type does).",
+      "type": "object",
+      "properties": {
+        "fallbackForm": {
+          "description": "Whether this form is the fallback when no other form's conditions match. Only present when true — most forms with display conditions aren't the fallback.",
+          "type": "boolean"
+        },
+        "order": {
+          "description": "Where this form ranks against a table's other forms when a user is offered a choice.",
+          "type": "integer"
+        },
+        "roles": {
+          "description": "Security role ids this form is restricted to. Absent means every role can see it (FormXML's `<Everyone />` — the common case); present means only these roles can (FormXML's `<Role Id=\"...\"/>` list) — the two are mutually exclusive on a real form.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "libraries": {
+      "description": "JavaScript libraries this form loads. Absent when there are none.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "description": "The web resource's path, e.g. \"AppCommon/Account/Account_main_system_library.js\".",
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "name"
+        ]
+      }
+    },
+    "events": {
+      "description": "The form's business logic — event/handler bindings, not layout. See FormEvent. Absent when there are none.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "description": "The event's own name, e.g. \"onload\", or a custom name for a field-level event tied to Attribute.",
+            "type": "string"
+          },
+          "attribute": {
+            "description": "The attribute logical name this event fires for, when it's field-level (a \"field changed\" event) rather than form-level.",
+            "type": "string"
+          },
+          "active": {
+            "description": "Whether this event is active. Shown whenever FormXML states it explicitly, same reasoning as Enabled — no observed unset case to know what it would default to.",
+            "type": "boolean"
+          },
+          "handlers": {
+            "description": "Handlers configured through the form designer's own \"Event Handlers\" UI. Absent when there are none.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "functionName": {
+                  "description": "The bound function's fully-qualified name, e.g. \"AppCommon.Account.Instance.parentaccountid_setadditionalparams\".",
+                  "type": "string"
+                },
+                "libraryName": {
+                  "description": "The web resource this function comes from, e.g. \"AppCommon/Account/Account_main_system_library.js\".",
+                  "type": "string"
+                },
+                "enabled": {
+                  "description": "Whether this handler is enabled. Shown whenever FormXML states it explicitly (every sample seen states it, always as true) rather than only when it deviates from a default — unlike most other booleans this tool exports, no unset/omitted case has been observed to know what it would default to.",
+                  "type": "boolean"
+                },
+                "passExecutionContext": {
+                  "description": "Whether the platform passes its execution context as this function's first argument. Shown whenever FormXML states it explicitly, for the same reason as Enabled.",
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "functionName",
+                "libraryName"
+              ]
+            }
+          },
+          "internalHandlers": {
+            "description": "Handlers the platform itself injects (e.g. for a related-field default) rather than ones a maker configured. Absent when there are none.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "functionName": {
+                  "description": "The bound function's fully-qualified name, e.g. \"AppCommon.Account.Instance.parentaccountid_setadditionalparams\".",
+                  "type": "string"
+                },
+                "libraryName": {
+                  "description": "The web resource this function comes from, e.g. \"AppCommon/Account/Account_main_system_library.js\".",
+                  "type": "string"
+                },
+                "enabled": {
+                  "description": "Whether this handler is enabled. Shown whenever FormXML states it explicitly (every sample seen states it, always as true) rather than only when it deviates from a default — unlike most other booleans this tool exports, no unset/omitted case has been observed to know what it would default to.",
+                  "type": "boolean"
+                },
+                "passExecutionContext": {
+                  "description": "Whether the platform passes its execution context as this function's first argument. Shown whenever FormXML states it explicitly, for the same reason as Enabled.",
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "functionName",
+                "libraryName"
+              ]
+            }
+          }
+        },
+        "additionalProperties": false
+      }
     }
   },
   "additionalProperties": false,

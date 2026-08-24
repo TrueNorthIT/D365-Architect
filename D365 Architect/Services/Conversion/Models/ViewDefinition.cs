@@ -41,24 +41,42 @@ public sealed class ViewDefinition
     /// Microsoft.Crm.Sdk.SavedQueryQueryType's own constants (see
     /// https://learn.microsoft.com/dotnet/api/microsoft.crm.sdk.savedqueryquerytype).
     /// Only present when it's something other than "MainApplicationView" — an
-    /// ordinary system view, and by far the most common case.
+    /// ordinary system view, and by far the most common case. Omit for an
+    /// ordinary view; applying this file back won't change its type.
     /// </summary>
     [YamlMember(Order = 3)]
     public string? QueryType { get; init; }
 
-    /// <summary>Only present when true — a table typically has one default view per <see cref="QueryType"/>, and false is the common case for any given view.</summary>
+    /// <summary>
+    /// Only present when true — a table typically has one default view per
+    /// <see cref="QueryType"/>, and false is the common case for any given
+    /// view. Omit to leave this as a non-default view; applying this file
+    /// back won't make it the default.
+    /// </summary>
     [YamlMember(Order = 4)]
     public bool? IsDefault { get; init; }
 
-    /// <summary>Whether this view's columns are searched by Quick Find. Only present when true.</summary>
+    /// <summary>
+    /// Whether this view's columns are searched by Quick Find. Only present
+    /// when true. Omit to leave Quick Find search off for this view;
+    /// applying this file back won't turn it on.
+    /// </summary>
     [YamlMember(Order = 5)]
     public bool? IsQuickFindQuery { get; init; }
 
-    /// <summary>Only present when true — most views ship as part of the platform or a solution, not hand-created by a user.</summary>
+    /// <summary>
+    /// Only present when true — most views ship as part of the platform or
+    /// a solution, not hand-created by a user. Purely informational:
+    /// applying this file back never changes it either way.
+    /// </summary>
     [YamlMember(Order = 6)]
     public bool? IsUserDefined { get; init; }
 
-    /// <summary>Whether this view can be customized. Absent when Dataverse doesn't report it.</summary>
+    /// <summary>
+    /// Only present when false — true (customizable) is the common case;
+    /// see <see cref="DefaultValueConventions.FalseOrNull"/>. Omit to leave
+    /// this view customizable; applying this file back won't lock it down.
+    /// </summary>
     [YamlMember(Order = 7)]
     public bool? IsCustomizable { get; init; }
 

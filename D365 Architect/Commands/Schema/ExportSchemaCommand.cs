@@ -27,14 +27,25 @@ public sealed class ExportSchemaCommand : Command<ExportSchemaCommand.Settings>
 
     private sealed record AssetType(Type ModelType, string Title, string Description, string DefaultFileName);
 
+    // Repeated verbatim on every asset type's root schema description (rather
+    // than only in each field's own description, or only in
+    // docs/yaml-conventions.md) so the contract is visible the moment someone
+    // opens one of these files, before they've hovered over any one field.
+    private const string RoundTripContract =
+        "A field left out of this file was left at Dataverse's own default, " +
+        "not \"unknown\" — see each field's own description for what that " +
+        "default is. Editing this file back into Dataverse (not yet " +
+        "supported) will leave an omitted field at that default rather than " +
+        "whatever it happened to be before.";
+
     private static readonly IReadOnlyDictionary<string, AssetType> AssetTypes = new Dictionary<string, AssetType>(StringComparer.OrdinalIgnoreCase)
     {
         ["table"] = new AssetType(typeof(EntityDefinition), "D365 Architect table definition",
-            "Declarative YAML shape for a Dynamics table, produced by `d365architect table export`.", "table.schema.json"),
+            $"Declarative YAML shape for a Dynamics table, produced by `d365architect table export`. {RoundTripContract}", "table.schema.json"),
         ["view"] = new AssetType(typeof(ViewDefinition), "D365 Architect view definition",
-            "Declarative YAML shape for a Dynamics view, produced by `d365architect view export`.", "view.schema.json"),
+            $"Declarative YAML shape for a Dynamics view, produced by `d365architect view export`. {RoundTripContract}", "view.schema.json"),
         ["form"] = new AssetType(typeof(FormDefinition), "D365 Architect form definition",
-            "Declarative YAML shape for a Dynamics form, produced by `d365architect form export`.", "form.schema.json"),
+            $"Declarative YAML shape for a Dynamics form, produced by `d365architect form export`. {RoundTripContract}", "form.schema.json"),
     };
 
     public sealed class Settings : CommandSettings

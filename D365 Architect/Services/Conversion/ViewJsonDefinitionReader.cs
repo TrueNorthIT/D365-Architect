@@ -99,7 +99,7 @@ public sealed class ViewJsonDefinitionReader
             IsDefault = DefaultValueConventions.TrueOrNull(GetBool(view, "isdefault")),
             IsQuickFindQuery = DefaultValueConventions.TrueOrNull(GetBool(view, "isquickfindquery")),
             IsUserDefined = DefaultValueConventions.TrueOrNull(GetBool(view, "isuserdefined")),
-            IsCustomizable = GetManagedPropertyBool(view, "iscustomizable"),
+            IsCustomizable = DefaultValueConventions.FalseOrNull(GetManagedPropertyBool(view, "iscustomizable")),
             // Null for a handful of internal system views (e.g. "{Entity}
             // BulkOperation View") that don't carry one — confirmed live,
             // not assumed; see ViewDefinition.FetchXml.

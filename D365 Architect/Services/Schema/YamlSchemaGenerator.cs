@@ -97,7 +97,17 @@ public static class YamlSchemaGenerator
             _ when type == typeof(int) => new JsonObject { ["type"] = "integer" },
             _ when type == typeof(double) => new JsonObject { ["type"] = "number" },
             _ when type == typeof(bool) => new JsonObject { ["type"] = "boolean" },
+            // A genuinely dynamic shape (e.g. FormControl.Parameters, converted
+            // structurally from arbitrary XML rather than a fixed model) has no
+            // fixed schema of its own to describe — an empty schema is JSON
+            // Schema's own way of saying "any value is valid here", which is
+            // honest about that rather than asserting a shape that isn't real.
+            _ when type == typeof(object) => new JsonObject(),
             _ when type != typeof(string) && typeof(IEnumerable).IsAssignableFrom(type) => BuildArraySchema(type, xmlDocs, ancestors),
+            // A curated model type (e.g. FormDisplayCondition) used as a
+            // single property rather than always inside a list — recurse
+            // the same way BuildArraySchema does for its element type.
+            _ when type.IsClass => BuildObjectSchema(type, xmlDocs, ancestors),
             _ => throw new NotSupportedException($"No JSON Schema mapping for type '{type}'. Extend {nameof(YamlSchemaGenerator)} to handle it."),
         };
 
@@ -151,7 +161,7 @@ public static class YamlSchemaGenerator
         {
             text.Append(node switch
             {
-                XElement { Name.LocalName: "see" } see => (string?)see.Attribute("cref") is { } cref ? cref.Split('.')[^1] : see.Value,
+                XElement { Name.LocalName: "see" } see => (string?)see.Attribute("cref") is { } cref ? CrefToMemberName(cref) : see.Value,
                 XText t => t.Value,
                 XElement e => e.Value,
                 _ => "",
@@ -160,4 +170,15 @@ public static class YamlSchemaGenerator
 
         return string.Join(' ', text.ToString().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
     }
+
+    /// <summary>
+    /// Reduces a cref like "P:Namespace.Type.Member" or (for a method,
+    /// which embeds its full parameter list, dots and all — e.g.
+    /// "M:Namespace.Type.Method(System.Nullable{System.Boolean})") down to
+    /// just the member's own name. The parameter list has to be stripped
+    /// before splitting on '.', or a parameter type's own namespace can
+    /// masquerade as "the last segment" and end up in the generated schema
+    /// instead of the actual member name.
+    /// </summary>
+    private static string CrefToMemberName(string cref) => cref.Split('(')[0].Split('.')[^1];
 }

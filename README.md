@@ -208,8 +208,48 @@ d365architect form export --table account --solution examplesolution
 
 Each form is written as `<form-name>.form.yml`, following the same
 `<name>.<asset type>.yml` convention as `table export`/`view export` — e.g.
-"Account Main Form" becomes `account-main-form.form.yml`. FormXML is kept
-verbatim, same reasoning as a view's FetchXML/LayoutXML.
+"Account Main Form" becomes `account-main-form.form.yml`.
+
+Unlike a view's FetchXML/LayoutXML, a form's FormXML isn't kept verbatim —
+it's decomposed into `tabs` → `columns` → `sections` → `controls` (plus
+`headerControls`/`footerControls` for anything pinned outside a tab). Both
+levels of column layout are kept, not flattened away: a tab's own
+side-by-side `columns` (each with its width), and a section's own internal
+column count when it lays its fields out into more than one — a real
+distinction, since two sections in different tab-columns render next to
+each other rather than stacked, and a section's own multi-column layout
+changes how its fields group visually even though the field list itself is
+still just one flat, row-major list either way. Each control lists its id,
+the attribute it's bound to (when it's bound to one), its label, and its
+raw control class id. A raw XML blob of a form's layout markup isn't
+something you can usefully review, diff, or drive a bulk change from; this
+structure is. Every control is captured this way, not just simple fields —
+a subgrid's target table/relationship/view, a web resource's name, a quick
+view control's source form, and so on all show up structurally under that
+control's `parameters`, converted from XML to nested YAML using the XML's
+own element names rather than modeled property-by-property per control
+type (FormXML has well over a dozen of them, each with its own shape). A
+control can also carry `additionalControls` — alternates attached via the
+form designer's "add a component" feature (a Calendar control added to a
+subgrid, or per-client Web/Phone/Tablet replacements) — captured from
+FormXML's separate `controlDescriptions` section rather than missed
+entirely just because it lives outside the usual cell/control tree. A
+control can also carry its own `events` (field-level "on change" logic),
+and `visible: false` on a control marks a field that's deliberately hidden
+rather than simply absent from the form.
+
+Beyond a control's own content, the form itself carries `ancestor` (the
+form it's derived from), `hiddenFields` (fields tracked but never rendered
+on any tab), `displayCondition` (when this form is offered as a choice, and
+to which security roles), `libraries` (JavaScript files it loads), and
+`events` (its form-wide OnLoad/OnSave-style business logic) — none of
+these are layout, but they're real, common, and previously invisible
+otherwise. See [`docs/yaml-conventions.md`](docs/yaml-conventions.md) for
+the full audit of what's captured against Microsoft's own FormXML schema,
+including what's deliberately still out of scope and why. The one real
+content gap is dashboards: their tiles are chart/visualization elements
+rather than `<control>` elements at all, so a dashboard form's
+tabs/columns/sections come back with no controls in them.
 
 ### `schema`
 
@@ -287,3 +327,11 @@ hand-editing or reviewing `*.table.yml`/`*.view.yml`/`*.form.yml` files:
 
 - Add `--help` to any command to see its full list of options.
 - Found a problem, or have a suggestion? Open an issue in this repository.
+
+## Contributing
+
+See [`docs/yaml-conventions.md`](docs/yaml-conventions.md) for the design
+rules the exported YAML follows — what an absent field means, and how a
+converted structure (e.g. a form control's parameters) maps back to its
+source shape. That's written for whoever builds the eventual import
+direction, not end users of the CLI.
