@@ -3,10 +3,12 @@
 This document describes design rules this tool's exported YAML (`*.table.yml`,
 `*.view.yml`, `*.form.yml`) follows, and why. Two audiences:
 
-- **Whoever builds the other direction** (`d365architect * import`, tracked
-  as a future feature, not yet implemented) needs to know exactly what an
-  absent field means and how a converted structure maps back to its source
-  shape — that's most of what's below.
+- **Whoever builds the other direction** (`d365architect form build-xml`
+  exists today and rebuilds FormXML from a `*.form.yml` file — see
+  "Rebuilding FormXML" below; a live `form import` that pushes it back into
+  Dataverse doesn't exist yet) needs to know exactly what an absent field
+  means and how a converted structure maps back to its source shape —
+  that's most of what's below.
 - **Anyone editing the YAML by hand** needs the same thing, just surfaced
   where they'll actually see it: every rule here is also written into the
   field descriptions in `schema export`'s generated JSON Schema
@@ -58,6 +60,7 @@ omit.
 | `FormControl` | `Disabled` | `false` | Common case — most controls are enabled |
 | `FormControl` | `Visible` | `true` (**inverted** — see `FalseOrNull`) | Common case — most controls are visible; `false` confirmed live on 11 real fields across 5 forms |
 | `FormDisplayCondition` | `FallbackForm` | `false` | At most one form per table can be the fallback, so `false` is definitionally the common case across a table's forms as a whole, not just an observed majority |
+| `FormControl` | `ColumnSpan`, `RowSpan` | `1` | FormXML's own `colspan`/`rowspan` attributes have no declared default, but `1` (no spanning) is overwhelmingly the common case; confirmed live on a single real form's 69 cells (64/69 `rowspan` and 63/69 `colspan` values were exactly `1`), with real, non-default spans (up to `rowspan="15"`, for a subgrid/timeline control deliberately laid out to occupy several otherwise-empty rows) shown whenever they occur |
 | `FormControl` | `Parameters` (every boolean value inside it) | `false` | See Rule 3 below — a different, stronger argument than the others in this table |
 
 **Not covered by this convention, deliberately**: `FormEvent.Active`, `FormEventHandler.Enabled`/`PassExecutionContext`. Every sample seen states these explicitly (always `true`), but with no observed unset or `false` case, there's no evidence for what omitting them would actually mean — so they're shown exactly as FormXML states them rather than guessed at.
@@ -144,6 +147,7 @@ row is one of: captured, or a documented, deliberate decision not to —
 | `controlDescriptions`/`customControl` ("add a component") | ✅ Captured | several forms | `FormControl.AdditionalControls`, see `FormAdditionalControl` |
 | Cell `visible="false"` | ✅ Captured | 11 (5 forms) | `FormControl.Visible` |
 | A section's own `columns` attribute (sub-column count) | ✅ Captured | 4+ sections | `FormSection.Columns` |
+| Cell `colspan`/`rowspan` | ✅ Captured | 5 non-default spans on one real form (up to `rowspan="15"`) | `FormControl.ColumnSpan`/`RowSpan` — genuinely structural (how much visual space a control's cell occupies), not cosmetic; found via a live round-trip check, not the initial schema audit |
 | `ancestor` | ✅ Captured | 6 forms | `FormDefinition.Ancestor` |
 | `hiddencontrols` | ✅ Captured | 7 forms | `FormDefinition.HiddenFields` |
 | `DisplayConditions` (incl. `Role`/`Everyone`) | ✅ Captured | 21 forms | `FormDefinition.DisplayCondition` |
@@ -158,6 +162,10 @@ row is one of: captured, or a documented, deliberate decision not to —
 | `formparameters`, `externaldependencies` | 📝 Documented gap | 0 | Confirmed absent from every form checked |
 | A tab's own `tabheader`/`tabfooter` | 📝 Documented gap | 0 | Distinct from the form-level `header`/`footer` this tool already captures |
 | Form root's own display attributes (`showImage`, `shownavigationbar`, `maxWidth`, `hasmargin`, `headerdensity`, `showinformselector`) | 📝 Documented gap | present on every form | Chrome/rendering settings for the form shell, not its content — same reasoning as the already-excluded `formpresentation` |
+| Tab/section-level designer/rendering attributes (`locklevel`, `IsUserDefined`, `showlabel`, `showbar`, `layout`, `celllabelalignment`, `celllabelposition`, `labelwidth`, `labelid`, `verticallayout`, `expanded`) | 📝 Documented gap | present on every tab/section | Same "chrome, not content" reasoning as the form root's own display attributes above, just at the tab/section level instead — extending that exclusion explicitly rather than leaving it implicit |
+| `control`'s own `indicationOfSubgrid="true"` | 📝 Documented gap | 3 (all subgrid controls) | Confirmed redundant with the control's own `classid`, which already identifies it as a subgrid — a designer-UI hint, not independent information |
+| Cell `auto` (e.g. `auto="false"`) | 📝 Documented gap | 3, always alongside a spanning subgrid cell | Meaning unconfirmed — possibly whether the cell's span was auto-computed vs. manually set; no counter-example seen to guess from |
+| `Handler`'s own `parameters` attribute (distinct from a control's `<parameters>` element) | 📝 Documented gap | every handler, always `""` | Same reasoning as `FormEvent.Active`/`FormEventHandler.Enabled` below: no observed non-empty value to show what omitting it would mean |
 
 ### Where the published schema itself turned out to be wrong
 
@@ -193,3 +201,88 @@ reference page), there is no equally authoritative source enumerating every
 control class id, and a wrong guess would misrepresent real data rather than
 just under-describe it. **For import**: `ClassId` should be written back to
 FormXML verbatim, exactly as read.
+
+## Rebuilding FormXML (`form build-xml`)
+
+`FormXmlWriter` (`d365architect form build-xml --input x.form.yml`) applies
+every rule above in reverse to rebuild a `<form>` element from a
+`FormDefinition`. Needs sign-in: before building anything, it calls
+`IDataverseClient.TryGetSystemFormXmlAsync` (via `IFormXmlBuildService`) to
+look the form up live, by table + name — the same identity `form export`
+itself uses, since `formid` was never part of this tool's YAML in the first
+place (see `FormDefinition`'s own doc comment).
+
+**Two different modes, depending on what that lookup finds:**
+
+- **The form already exists** (the common case — editing YAML for a form
+  `form export` already produced): its current, live FormXML is the base
+  document. `FormXmlWriter.Write(form, existingRoot)` only replaces the
+  top-level elements this tool actually manages — `ancestor`,
+  `hiddencontrols`, `tabs`, `header`/`footer`, `events`, `formLibraries`,
+  `DisplayConditions`, `controlDescriptions` — each one in place if the
+  document already had it, appended if not, removed if the YAML no longer
+  calls for one. Everything else on that document — `Navigation`,
+  `clientresources`, `RibbonDiffXml`, `formparameters`,
+  `externaldependencies`, a tab's own `tabheader`/`tabfooter`, and the form
+  root's own chrome attributes (`showImage`, `headerdensity`, ...) — is
+  never looked at, so it survives untouched. This is the mechanism, not
+  just an aspiration: every one of those was a real, documented gap in the
+  from-scratch approach this tool used before; patching a live document
+  closes all of them at once, for the simple reason that closing them no
+  longer means modeling them — it means not touching them.
+- **The form doesn't exist yet** (`TryGetSystemFormXmlAsync` returns
+  null — a brand-new form this YAML describes but that hasn't been created
+  in Dataverse): falls back to building a `<form>` from scratch, exactly as
+  before. The "documented gap" list above still applies in full here, for
+  the unavoidable reason that there's no live document to preserve those
+  features from.
+
+**Dashboards are still refused outright either way** — not just in the
+from-scratch case. A dashboard's tiles (`<Visualization>`/`<SavedQuery>`)
+live *inside* `<tabs>`, which this tool always replaces wholesale in both
+modes, so patching a live dashboard's FormXML would delete its tiles just
+as surely as building one from scratch would.
+
+**What this still doesn't do**: write anything back into Dataverse. `form
+build-xml` only ever reads (the lookup) and writes a local file — the
+actual create/update call, plus publish and any pre-flight
+conflict/staleness check, is the scope of a future `form import`, which
+this is one building block toward.
+
+**Record-level fields aren't FormXML's job.** `Name`, `Description`,
+`Type`, `IsDefault`, `FormActivationState`, and `IsCustomizable` live on
+the `systemform` record itself (`GetFormDefinitionsJsonAsync`'s own
+columns), not inside the `formxml` blob — `FormXmlWriter` correctly
+doesn't touch them, and a future import step would set them as separate
+properties on the same create/update request that carries the rebuilt
+`formxml`, not encode them into the XML somehow.
+
+**Ids this tool never captured are synthesised deterministically.** A
+tab/section/cell's own GUID, a control's `uniqueid`, a library's
+`libraryUniqueId`, and a handler's `handlerUniqueId` were never round-tripped
+in the first place (see the "Deliberately excluded" notes on the relevant
+models) — there's no original value to restore. Rather than
+`Guid.NewGuid()` on every call, `FormXmlWriter.DeterministicGuid` derives
+each one from stable, human-authored data (a tab's name/label, a control's
+own id, ...), the same idea as a name-based UUID (RFC 4122 §4.3). This
+means re-running `build-xml` on unchanged YAML produces byte-identical
+FormXML — useful for diffing, and for not making every apply look like a
+change even when nothing did.
+
+**A tab or section can genuinely have no `name` attribute at all** (a real
+"Card" form's tabs, confirmed live) — only a `label`. `FormXmlWriter` never
+invents one to fill the gap; the fallback used for id-seeding (falling back
+to the label, then a fixed placeholder) is never written out as the actual
+`name` attribute unless the source data had one. An earlier version of this
+code got this wrong (synthesized `name: tab_1` into a tab that never had a
+`name` at all) — caught by round-tripping every form exported this session
+back through the reader afterward and diffing the result against the
+original, not by inspection.
+
+**Verified, not assumed**: every non-dashboard form exported from two
+tables in a real tenant this session round-trips byte-identical
+(`FormDefinition` → YAML → `FormXmlWriter.Write` → wrapped as a fake
+`systemforms` response → `FormJsonDefinitionReader` again → YAML again),
+except for one confirmed, harmless, and documented wrinkle — see
+`FormXmlWriter`'s own doc comment on `PopulateParameterElement` for exactly
+what it is and why it doesn't lose anything.

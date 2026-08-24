@@ -16,8 +16,13 @@ internal static class FormCommands
             branch.SetDescription("Work with D365 form definitions.");
 
             branch.AddCommand<ExportFormCommand>("export")
-                .WithDescription("Fetches every form defined on a table and saves each as its own YAML file.")
-                .WithExample("form", "export", "--table", "account");
+                .WithDescription("Fetches one form from a table and saves it as YAML — pick it interactively, or pass --form-id.")
+                .WithExample("form", "export", "--table", "account")
+                .WithExample("form", "export", "--table", "account", "--form-id", "00000000-0000-0000-0000-000000000000");
+
+            branch.AddCommand<BuildFormXmlCommand>("build-xml")
+                .WithDescription("Rebuilds FormXML from a *.form.yml file, patched onto the form's current live FormXML.")
+                .WithExample("form", "build-xml", "--input", "account-main-form.form.yml");
         });
     }
 }

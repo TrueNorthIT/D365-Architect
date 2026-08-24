@@ -16,10 +16,29 @@ public interface IFormExportService
     /// actually customizes (its System Form solution components), instead
     /// of every form defined on the table.
     /// </param>
+    /// <param name="formId">
+    /// When given, exports only this one form (its systemform id) instead
+    /// of every form on the table — how `form export` behaves once a form
+    /// has been chosen, whether via <c>--form-id</c> or the interactive
+    /// picker (see <see cref="ListFormsAsync"/>). Combined with
+    /// <paramref name="solutionUniqueName"/> when both are given: a form id
+    /// outside that solution's forms exports nothing rather than falling
+    /// back to it.
+    /// </param>
     /// <param name="cancellationToken"></param>
     /// <exception cref="InvalidDataException">Dataverse returned metadata this tool doesn't understand yet.</exception>
     /// <exception cref="Dataverse.SolutionNotFoundException"><paramref name="solutionUniqueName"/> doesn't match any solution in the environment.</exception>
-    Task<IReadOnlyList<ExportedForm>> ExportFormsAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string? solutionUniqueName, CancellationToken cancellationToken);
+    Task<IReadOnlyList<ExportedForm>> ExportFormsAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string? solutionUniqueName, Guid? formId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Lists every form on a table cheaply (id, name, type — never their
+    /// full FormXml) for `form export`'s interactive picker, when it's run
+    /// without <c>--form-id</c>. Honors <paramref name="solutionUniqueName"/>
+    /// the same way <see cref="ExportFormsAsync"/> does.
+    /// </summary>
+    /// <exception cref="InvalidDataException">Dataverse returned metadata this tool doesn't understand yet.</exception>
+    /// <exception cref="Dataverse.SolutionNotFoundException"><paramref name="solutionUniqueName"/> doesn't match any solution in the environment.</exception>
+    Task<IReadOnlyList<FormSummary>> ListFormsAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string? solutionUniqueName, CancellationToken cancellationToken);
 }
 
 /// <summary>

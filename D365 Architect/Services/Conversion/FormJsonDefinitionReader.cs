@@ -72,6 +72,53 @@ public sealed class FormJsonDefinitionReader
         }
     }
 
+    public IReadOnlyList<FormSummary> ReadSummaries(string content) => ReadSummaries(content, allowedFormIds: null);
+
+    /// <summary>
+    /// As <see cref="Read(string, IReadOnlySet{Guid}?)"/>, but reads only
+    /// enough of each form (id, name, type) to list it for a human to
+    /// choose from — never touches <c>formxml</c> at all, so this is cheap
+    /// even for a table whose forms are individually large. See
+    /// <see cref="Dataverse.IDataverseClient.GetFormSummariesJsonAsync"/>.
+    /// </summary>
+    public IReadOnlyList<FormSummary> ReadSummaries(string content, IReadOnlySet<Guid>? allowedFormIds)
+    {
+        JsonDocument doc;
+        try
+        {
+            doc = JsonDocument.Parse(content);
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidDataException($"Form metadata is not well-formed JSON: {ex.Message}", ex);
+        }
+
+        using (doc)
+        {
+            var formElements = doc.RootElement.TryGetProperty("value", out var valueProperty) && valueProperty.ValueKind == JsonValueKind.Array
+                ? valueProperty.EnumerateArray()
+                : Enumerable.Empty<JsonElement>();
+
+            if (allowedFormIds is not null)
+            {
+                formElements = formElements.Where(f => IsInAllowedSet(f, allowedFormIds));
+            }
+
+            return formElements.Select(ParseSummary).ToList();
+        }
+    }
+
+    private static FormSummary ParseSummary(JsonElement form)
+    {
+        var formId = form.TryGetProperty("formid", out var idProperty) && idProperty.ValueKind == JsonValueKind.String && Guid.TryParse(idProperty.GetString(), out var id)
+            ? id
+            : Guid.Empty;
+        var name = GetString(form, "name") ?? "(unnamed form)";
+        var type = GetInt(form, "type") is { } typeValue ? TypeNames.GetValueOrDefault(typeValue, typeValue.ToString()) : "Unknown";
+
+        return new FormSummary(formId, name, type);
+    }
+
     private static bool IsInAllowedSet(JsonElement form, IReadOnlySet<Guid> allowedFormIds) =>
         form.TryGetProperty("formid", out var idProperty)
         && idProperty.ValueKind == JsonValueKind.String
@@ -149,6 +196,16 @@ public sealed class FormJsonDefinitionReader
     /// lookup by `forControl` — confirmed against a real tenant to match a
     /// control's own `uniqueid` attribute, not the cell's or the control's
     /// own `id`. See <see cref="FormAdditionalControl"/>.
+    ///
+    /// A `forControl` that matches no control actually on the form (seen
+    /// live — a leftover from a control that was since removed without its
+    /// `controlDescription` being cleaned up) is silently dropped rather
+    /// than surfaced some other way: this lookup is only ever consulted by
+    /// a real control's own `uniqueid` while parsing that control, so an
+    /// entry nothing ever looks up for just never gets used. Accepted as a
+    /// documented gap rather than modeled (e.g. as some
+    /// "OrphanedAdditionalControls" list) — it describes a control that's
+    /// already gone, not one currently on the form.
     /// </summary>
     private static IReadOnlyDictionary<string, IReadOnlyList<FormAdditionalControl>> ParseControlDescriptions(XElement? formRoot)
     {
@@ -281,6 +338,8 @@ public sealed class FormJsonDefinitionReader
             ClassId = (string?)control.Attribute("classid"),
             Disabled = DefaultValueConventions.TrueOrNull((string?)control.Attribute("disabled") == "true"),
             Visible = DefaultValueConventions.FalseOrNull((bool?)cell.Attribute("visible")),
+            ColumnSpan = (int?)cell.Attribute("colspan") is { } colspan and > 1 ? colspan : null,
+            RowSpan = (int?)cell.Attribute("rowspan") is { } rowspan and > 1 ? rowspan : null,
             Parameters = control.Element("parameters") is { } parameters ? ConvertToObject(parameters) : null,
             AdditionalControls = uniqueId is not null && additionalControls.TryGetValue(uniqueId, out var additional) ? additional : null,
             // Not documented as a valid child of <cell> in Microsoft's own
@@ -344,6 +403,16 @@ public sealed class FormJsonDefinitionReader
         if (children.Count == 0 && attributes.Count == 0)
         {
             var value = element.Value;
+            if (string.IsNullOrEmpty(value))
+            {
+                // A genuinely empty leaf, e.g. a self-closing <parameters />
+                // (confirmed live: a base control's own default customControl
+                // entry in controlDescriptions has nothing else to say) — not
+                // the same as omitting the element entirely, but there's
+                // nothing here worth keeping either.
+                return null;
+            }
+
             if (value.TrimStart().StartsWith('<') && TryParseEmbeddedXml(value) is { } embedded)
             {
                 return ConvertToObject(embedded);

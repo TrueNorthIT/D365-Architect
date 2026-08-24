@@ -184,17 +184,35 @@ Work with D365 form definitions.
 
 #### `form export`
 
-Fetches every form defined on a table from the currently signed-in
-environment and saves each one as its own YAML file. Requires `auth login`
-first.
+Fetches one form from a table in the currently signed-in environment and
+saves it as YAML. Requires `auth login` first.
 
 ```
 d365architect form export --table account
 ```
 
-By default this exports every form on the table — main forms, quick create,
-quick view, dashboards, and so on. Pass `--solution` to scope the export
-down to just the forms that solution actually customizes:
+Without `--form-id`, this looks up every form on the table (id, name, type
+only — not each one's full FormXml) and prompts you to choose one
+interactively, arrow keys + Enter:
+
+```
+? Select a form to export from account:
+> Account Main Form
+  Account Quick Create
+  Account Card Form
+  Account Quick View Form
+(Move up/down to reveal more forms)
+```
+
+Pass `--form-id` to skip the prompt and export a specific form directly —
+useful for scripting, or once you already know which form you want:
+
+```
+d365architect form export --table account --form-id 00000000-0000-0000-0000-000000000000
+```
+
+Pass `--solution` to scope the interactive list (or validate `--form-id`
+against) just the forms that solution actually customizes:
 
 ```
 d365architect form export --table account --solution examplesolution
@@ -202,11 +220,12 @@ d365architect form export --table account --solution examplesolution
 
 | Option            | Description                                                                | Required |
 |-------------------|------------------------------------------------------------------------------|----------|
-| `-t, --table`     | Logical name of the table whose forms to export, e.g. `account`              | Yes      |
-| `-s, --solution`  | Unique name of a solution to scope the export to (only that solution's forms)  | No   |
-| `-o, --output`    | Directory to write the exported YAML files into. Defaults to the current directory | No |
+| `-t, --table`     | Logical name of the table whose forms to choose from, e.g. `account`         | Yes      |
+| `-f, --form-id`   | Id of the form to export. Omit to choose interactively from a list           | No       |
+| `-s, --solution`  | Unique name of a solution to scope the list (or the form id check) to        | No       |
+| `-o, --output`    | Directory to write the exported YAML file into. Defaults to the current directory | No |
 
-Each form is written as `<form-name>.form.yml`, following the same
+The form is written as `<form-name>.form.yml`, following the same
 `<name>.<asset type>.yml` convention as `table export`/`view export` — e.g.
 "Account Main Form" becomes `account-main-form.form.yml`.
 
@@ -250,6 +269,44 @@ including what's deliberately still out of scope and why. The one real
 content gap is dashboards: their tiles are chart/visualization elements
 rather than `<control>` elements at all, so a dashboard form's
 tabs/columns/sections come back with no controls in them.
+
+#### `form build-xml`
+
+Rebuilds FormXML from a `*.form.yml` file — the reverse of `form export`'s
+decomposition. Needs sign-in: it looks up the form's current, live FormXML
+first (by table + name, the same identity `form export` uses) and patches
+only the elements this tool manages onto that document, rather than
+building a new `<form>` from scratch — so anything this tool has never
+decomposed (`Navigation`, `clientresources`, `RibbonDiffXml`, root chrome
+attributes, ...) survives untouched because it's never modified, not
+because this tool reconstructed it. When no form by that name exists yet
+(a brand-new form this YAML describes but hasn't been created in Dataverse),
+it falls back to building fresh from just the YAML instead. This is one
+building block toward a future `form import`, which would actually write
+the result back — this command only ever reads.
+
+```
+d365architect form build-xml --input account-main-form.form.yml
+```
+
+| Option          | Description                                            | Required |
+|-----------------|----------------------------------------------------------|----------|
+| `-i, --input`   | Path to the `*.form.yml` file to rebuild FormXML from     | Yes      |
+| `-o, --output`  | Path to write the rebuilt FormXML to. Defaults to `<input>.xml` | No |
+
+This refuses to run on a dashboard-type form rather than silently produce
+one with none of its visualizations — patching can't protect a dashboard's
+tiles either, since they live inside `<tabs>`, which this tool always
+replaces wholesale. For a genuinely new form with no live counterpart yet,
+it's safe to treat the output as complete for a form built entirely from
+this tool's own YAML, but the same gap list as before still applies in that
+case: anything this tool documents as a deliberate gap simply won't be in
+the output, since there's no prior document to have carried it. See
+[`docs/yaml-conventions.md`](docs/yaml-conventions.md#rebuilding-formxml-form-build-xml)
+for the full detail, including how ids this tool never captured (a
+tab/section/cell's own GUID, a control's `uniqueid`, ...) are derived
+deterministically so re-running this on unchanged YAML produces
+byte-identical output rather than a spurious diff every time.
 
 ### `schema`
 

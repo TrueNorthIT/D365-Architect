@@ -114,6 +114,18 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         return await response.Content.ReadAsStringAsync(cancellationToken);
     }
 
+    public async Task<string> GetFormSummariesJsonAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken)
+    {
+        var relativePath = "systemforms?$select=formid,name,type" +
+            $"&$filter=objecttypecode eq '{Uri.EscapeDataString(entityLogicalName)}'&$orderby=name";
+
+        using var request = CreateRequest(environmentUrl, relativePath, accessToken);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+
+        return await response.Content.ReadAsStringAsync(cancellationToken);
+    }
+
     public async Task<IReadOnlySet<Guid>?> TryGetSolutionSystemFormIdsAsync(Uri environmentUrl, string accessToken, string solutionUniqueName, CancellationToken cancellationToken)
     {
         var solutionId = await TryGetSolutionIdAsync(environmentUrl, accessToken, solutionUniqueName, cancellationToken);
@@ -128,6 +140,38 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         const int systemFormComponentType = 60;
         return await GetSolutionComponentObjectIdsAsync(environmentUrl, accessToken, solutionId.Value, systemFormComponentType, cancellationToken);
     }
+
+    public async Task<string?> TryGetSystemFormXmlAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string formName, CancellationToken cancellationToken)
+    {
+        // Unlike every other filter in this file, `formName` is a
+        // human-editable display name rather than a logical/unique name, so
+        // it can genuinely contain an apostrophe (e.g. "Editor's View") —
+        // OData string literals need that doubled, not just URL-escaped.
+        var relativePath = "systemforms?$select=formxml" +
+            $"&$filter=objecttypecode eq '{Uri.EscapeDataString(entityLogicalName)}' and name eq '{Uri.EscapeDataString(EscapeODataStringLiteral(formName))}'";
+
+        using var request = CreateRequest(environmentUrl, relativePath, accessToken);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        using var doc = JsonDocument.Parse(json);
+        var results = doc.RootElement.GetProperty("value").EnumerateArray().ToList();
+
+        if (results.Count == 0)
+        {
+            return null;
+        }
+
+        if (results.Count > 1)
+        {
+            throw new AmbiguousSystemFormException(entityLogicalName, formName, results.Count);
+        }
+
+        return results[0].GetProperty("formxml").GetString();
+    }
+
+    private static string EscapeODataStringLiteral(string value) => value.Replace("'", "''");
 
     /// <summary>Shared by every "which components of type X does this solution contain" lookup.</summary>
     private async Task<IReadOnlySet<Guid>> GetSolutionComponentObjectIdsAsync(Uri environmentUrl, string accessToken, Guid solutionId, int componentType, CancellationToken cancellationToken)

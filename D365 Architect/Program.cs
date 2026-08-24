@@ -47,6 +47,11 @@ services.AddSingleton<ITableExportService, TableExportService>();
 services.AddSingleton<IViewExportService, ViewExportService>();
 services.AddSingleton<IFormExportService, FormExportService>();
 
+// `form build-xml` reads the form's current live FormXML (when it already
+// exists) so it can patch onto it instead of building one from scratch —
+// see FormXmlWriter's own doc comment.
+services.AddSingleton<IFormXmlBuildService, FormXmlBuildService>();
+
 // 2. Hand that container to Spectre.Console.Cli via the TypeRegistrar/
 //    TypeResolver adapter, so every command is itself resolved through DI
 //    (constructor injection), rather than newed up directly.

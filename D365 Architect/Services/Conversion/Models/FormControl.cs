@@ -71,6 +71,30 @@ public sealed class FormControl
     public bool? Visible { get; init; }
 
     /// <summary>
+    /// How many of the section's own sub-columns this control's cell spans
+    /// (FormXML's `colspan`, an attribute of `&lt;cell&gt;`, not `&lt;control&gt;`).
+    /// Only present when greater than 1 — a single column is the common
+    /// case; applying this file back won't change a cell's own span.
+    /// Confirmed live: real, non-default spans exist alongside the
+    /// overwhelmingly common `colspan="1"`, not just the trivial case.
+    /// </summary>
+    [YamlMember(Order = 6)]
+    public int? ColumnSpan { get; init; }
+
+    /// <summary>
+    /// How many rows this control's cell spans (FormXML's `rowspan`) —
+    /// genuinely structural, not cosmetic: a tall control like a subgrid or
+    /// notes timeline is laid out this way specifically so it visually
+    /// occupies several of its section's otherwise-empty rows rather than
+    /// being squeezed into one. Only present when greater than 1 — a single
+    /// row is the common case; applying this file back won't change a
+    /// cell's own span. Confirmed live: real spans up to 15 alongside the
+    /// overwhelmingly common `rowspan="1"`.
+    /// </summary>
+    [YamlMember(Order = 7)]
+    public int? RowSpan { get; init; }
+
+    /// <summary>
     /// This control's own `&lt;parameters&gt;` block, converted structurally
     /// (each XML element becomes a YAML map key, using the element's own
     /// name; an attribute becomes a plain key under a nested `attributes`
@@ -88,7 +112,7 @@ public sealed class FormControl
     /// friendly-name lookup this tool would have to get right on its own:
     /// the XML's own element/attribute names are kept as-is.
     /// </summary>
-    [YamlMember(Order = 6)]
+    [YamlMember(Order = 8)]
     public object? Parameters { get; init; }
 
     /// <summary>
@@ -98,7 +122,7 @@ public sealed class FormControl
     /// <see cref="FormAdditionalControl"/>'s own doc comment. Absent when
     /// this control has none.
     /// </summary>
-    [YamlMember(Order = 7)]
+    [YamlMember(Order = 9)]
     public IReadOnlyList<FormAdditionalControl>? AdditionalControls { get; init; }
 
     /// <summary>
@@ -111,6 +135,6 @@ public sealed class FormControl
     /// exactly the kind of gap a schema-only audit would have missed. See
     /// <see cref="FormEvent"/>. Absent when this control has none.
     /// </summary>
-    [YamlMember(Order = 8)]
+    [YamlMember(Order = 10)]
     public IReadOnlyList<FormEvent>? Events { get; init; }
 }

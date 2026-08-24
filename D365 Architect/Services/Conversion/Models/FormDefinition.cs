@@ -50,6 +50,12 @@ namespace D365Architect.Services.Conversion.Models;
 /// `headerdensity`/`showinformselector`, which aren't even in Microsoft's
 /// published schema) — chrome/rendering settings for the whole form shell,
 /// same reasoning as <c>formpresentation</c> above.
+///
+/// None of that is necessarily lost forever on the way back out, though:
+/// <c>form build-xml</c> patches onto the form's existing live FormXML
+/// rather than building a new document from scratch whenever one already
+/// exists, so all of the above survives untouched in that case — see
+/// <see cref="FormXmlWriter"/>'s own doc comment for exactly how.
 /// </summary>
 public sealed class FormDefinition
 {
