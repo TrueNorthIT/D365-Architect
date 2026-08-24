@@ -129,10 +129,12 @@ public sealed class FormControl
     /// Field-level event bindings scoped to this control specifically (e.g.
     /// an "on change" handler for this one field) — distinct from
     /// <see cref="FormDefinition.Events"/>, which are form-wide. Confirmed
-    /// live rather than assumed: Microsoft's own published FormXML schema
-    /// doesn't document `&lt;events&gt;` as a valid child of a cell at all
-    /// (only `&lt;labels&gt;`/`&lt;control&gt;` are), yet real forms have it —
-    /// exactly the kind of gap a schema-only audit would have missed. See
+    /// live rather than assumed: Microsoft's own FormXML schema *documentation
+    /// page* doesn't mention `&lt;events&gt;` as a valid child of a cell at
+    /// all (only `&lt;labels&gt;`/`&lt;control&gt;` are) — the actual
+    /// downloadable XSD (see <see cref="FormXmlValidator"/>) already
+    /// declares it correctly, but the prose page doesn't, exactly the kind
+    /// of gap a docs-only audit would have missed. See
     /// <see cref="FormEvent"/>. Absent when this control has none.
     /// </summary>
     [YamlMember(Order = 10)]

@@ -329,9 +329,12 @@ public static class FormXmlWriter
     /// Reverses <see cref="FormJsonDefinitionReader"/>'s <c>ConvertToObject</c>:
     /// a plain string becomes the element's own text; a map's `attributes`
     /// key becomes XML attributes, its `value` key becomes the element's
-    /// text, and every other key becomes a child element (repeated once per
-    /// list entry when the value is a list) named after that key. A
-    /// deliberately omitted `false` (see `docs/yaml-conventions.md` Rule 3)
+    /// text, its `xml` key (see that method's own doc comment) rebuilds the
+    /// wrapped fragment as a real element tree and re-escapes *that whole
+    /// tree's own rendered text* as this element's value rather than adding
+    /// it as a child, and every other key becomes a child element (repeated
+    /// once per list entry when the value is a list) named after that key.
+    /// A deliberately omitted `false` (see `docs/yaml-conventions.md` Rule 3)
     /// is never re-added — that omission was already equivalent to writing
     /// it, so there's nothing to restore.
     ///
@@ -379,6 +382,32 @@ public static class FormXmlWriter
             if (key == "value" && entry.Value is string ownText)
             {
                 element.Value = ownText;
+                continue;
+            }
+
+            if (key == "xml" && entry.Value is IDictionary xmlWrapper)
+            {
+                // Reverses the reader's `xml` marker (see
+                // FormJsonDefinitionReader.ConvertToObject's own doc
+                // comment): build the fragment's own root element (there's
+                // always exactly one entry — the fragment's root element
+                // name) as a real XElement tree first, then set its
+                // rendered text as this element's own value rather than
+                // adding it as a real child — XElement escapes it back into
+                // `&lt;.../&gt;` automatically when the whole document is
+                // serialised, matching how Dataverse itself double-encodes
+                // it (e.g. a quick view control's QuickForms).
+                foreach (DictionaryEntry fragment in xmlWrapper)
+                {
+                    var fragmentRoot = new XElement(fragment.Key.ToString()!);
+                    if (fragment.Value is not null)
+                    {
+                        PopulateParameterElement(fragmentRoot, fragment.Value);
+                    }
+
+                    element.Value = fragmentRoot.ToString(SaveOptions.DisableFormatting);
+                }
+
                 continue;
             }
 

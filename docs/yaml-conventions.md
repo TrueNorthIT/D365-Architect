@@ -83,17 +83,29 @@ still derive the original from it. Concretely:
   way guessing at `FormControl.ClassId`'s meaning would (see Rule 4).
 - A parameter value that is itself a double-encoded XML fragment (e.g. a
   quick view control's `QuickForms`) is parsed and converted the same way,
-  recursively, rather than left as an embedded string.
+  recursively — but wrapped under a reserved `xml` key naming the
+  fragment's own root element (e.g.
+  `QuickForms: { xml: { QuickFormIds: { QuickFormId: ... } } }`), rather
+  than merged in as if it were real structural children. Those two cases
+  parse identically once the fragment's escaped text is unescaped and
+  re-parsed as XML — the only way to tell them apart on the way back out is
+  this marker. That distinction is worth keeping, not just cosmetic:
+  Dataverse's own runtime expects `QuickForms`' value as escaped *text*, not
+  literal XML structure, so writing the latter isn't just a schema
+  nitpick — it was a real, confirmed `FormXmlWriter` bug (caught by a real
+  `form build-xml` schema violation) before this marker existed.
 
 This was a deliberate choice over the terser but cryptic `@name`/`#text`
 XML-to-JSON convention (used by tools like Newtonsoft's `XmlNodeConverter`):
 every key in this tool's YAML should read as a real word, not a sigil.
 
 **For import**: reconstructing a `<parameters>` block from this YAML means
-walking it back the other way — a `attributes`/`value` pair becomes an
-element with that attribute and text, everything else becomes a child
-element named after its own key, and a list becomes repeated elements with
-that name.
+walking it back the other way — an `attributes`/`value` pair becomes an
+element with that attribute and text; an `xml` key rebuilds its one nested
+entry as a real element tree, then sets *that whole tree's own rendered
+text*, re-escaped, as the current element's value rather than adding it as
+a child; everything else becomes a child element named after its own key;
+and a list becomes repeated elements with that name.
 
 ## Rule 3: a stripped `false` inside `parameters` is a special case, not the general rule
 
@@ -153,7 +165,7 @@ row is one of: captured, or a documented, deliberate decision not to —
 | `DisplayConditions` (incl. `Role`/`Everyone`) | ✅ Captured | 21 forms | `FormDefinition.DisplayCondition` |
 | `formLibraries` | ✅ Captured | 9 forms | `FormDefinition.Libraries` |
 | `events` (form-level) | ✅ Captured | 11 forms | `FormDefinition.Events` |
-| `events` nested inside a `<cell>` (field-level) | ✅ Captured | confirmed live | `FormControl.Events` — **not documented as valid there in Microsoft's own schema at all**; found only by checking real data, not the schema. See the callout below. |
+| `events` nested inside a `<cell>` (field-level) | ✅ Captured | confirmed live | `FormControl.Events` — **not mentioned as valid there on Microsoft's own FormXML schema *documentation page***; found only by checking real data, not that page. The actual downloadable XSD already declares it correctly — see the callout below. |
 | Dashboard tiles (`Visualization`/`SavedQuery`, not `<control>`) | 📝 Documented gap | every dashboard form | Not decomposed — see `FormDefinition`'s own doc comment |
 | `Navigation` (related-record nav menu) | 📝 Documented gap | 11 forms | Real and non-trivial, but menu chrome rather than form content |
 | `clientresources` (JS/CSS resource declarations) | 📝 Documented gap | 8 forms | Largely redundant with `events`'/`formLibraries`' own library references |
@@ -169,25 +181,44 @@ row is one of: captured, or a documented, deliberate decision not to —
 
 ### Where the published schema itself turned out to be wrong
 
-Three things confirmed only by checking real tenant data, not Microsoft's
-schema documentation — worth knowing before trusting that schema as the last
-word on anything else:
+Microsoft actually publishes *two* different things that both get called
+"the FormXML schema", and they don't agree with each other:
+
+1. The prose [documentation page](https://learn.microsoft.com/power-apps/developer/model-driven-apps/form-xml-schema) — readable, but hand-maintained and, it turns out, incomplete.
+2. The actual downloadable XSD (`FormXml.xsd` + its own `RibbonCore.xsd`/`RibbonTypes.xsd`/`RibbonWSS.xsd` includes), from the ["Schemas.zip"](https://learn.microsoft.com/power-apps/developer/model-driven-apps/edit-customizations-xml-file-schema-validation) download — the one this tool actually vendors and validates against (see `FormXmlValidator`, `Resources/FormXmlSchema/NOTICE.md`).
+
+Three things this session originally found by checking real tenant data
+against the *docs page*, since re-checked against the real XSD once it was
+vendored for validation — two turned out to be the docs page's own gap, not
+the XSD's:
 
 - `controlDescriptions`/`customControl`'s `id` attribute is documented
-  `use="required"`; real forms have `customControl` entries with no `id` at
-  all (only `name`/`formFactor`).
+  `use="required"` on the docs page; real forms have `customControl`
+  entries with no `id` at all (only `name`/`formFactor`). **The real XSD
+  already has this right** — `id` is declared `use="optional"`.
 - A `<cell>` is documented as only ever containing `<labels>`/`<control>`;
   real forms nest a field-level `<events>` block directly inside one too
-  (see the audit table above).
-- A `<form>`'s root attributes documented in the schema don't include
+  (see the audit table above). **The real XSD already has this right
+  too** — `FormXmlEventsType` is declared as a valid, optional child of a
+  cell.
+- A `<form>`'s root attributes documented on the page don't include
   `headerdensity` or `showinformselector`, both of which appear on real
-  forms anyway.
+  forms anyway. **This one genuinely is a gap in the real XSD as well**,
+  confirmed by actually running a real form's FormXML through
+  `FormXmlValidator`: `FormType`'s attribute list has no
+  `xs:anyAttribute` wildcard to fall back on, so real, live
+  Dataverse-produced FormXML fails strict validation against Microsoft's
+  own official schema for these two attributes — through no fault of this
+  tool's own output.
 
-None of these are reasons to distrust the schema generally — it's still the
-only authoritative source for the shapes this tool *does* rely on (e.g. the
-boolean-with-no-default argument in Rule 3) — just a reminder to verify
-against real data before treating an absence in the schema as proof
-something doesn't happen in practice.
+None of this is a reason to distrust either artifact generally — the real
+XSD is still the authoritative source this tool validates against, and
+still agrees with everything else this tool relies on (e.g. the
+boolean-with-no-default argument in Rule 3) — just a reminder that "the
+docs page doesn't mention it" and "the schema doesn't allow it" are two
+different claims, and a `form build-xml` validation warning about
+`headerdensity`/`showinformselector` reflects a real, pre-existing quirk of
+Dataverse itself, not a bug introduced by rebuilding it through this tool.
 
 ## Rule 4: raw platform identifiers are never guessed at
 
@@ -248,6 +279,16 @@ build-xml` only ever reads (the lookup) and writes a local file — the
 actual create/update call, plus publish and any pre-flight
 conflict/staleness check, is the scope of a future `form import`, which
 this is one building block toward.
+
+**Every rebuild is validated against Microsoft's own FormXML schema**
+(`FormXmlValidator`, see `Resources/FormXmlSchema/NOTICE.md` for exactly
+which files and where they came from) before being written, and any
+violation is printed as a warning — the file still gets written either
+way. This is deliberately a warning, not a gate: see "Where the published
+schema itself turned out to be wrong" above for a confirmed case
+(`headerdensity`/`showinformselector`) where real, live Dataverse FormXML
+already fails this exact validation, through no fault of anything this
+tool does. A violation is worth reading, not necessarily worth acting on.
 
 **Record-level fields aren't FormXML's job.** `Name`, `Description`,
 `Type`, `IsDefault`, `FormActivationState`, and `IsCustomizable` live on

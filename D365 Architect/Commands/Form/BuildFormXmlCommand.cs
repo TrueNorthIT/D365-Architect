@@ -21,6 +21,14 @@ namespace D365Architect.Commands.Form;
 /// in Dataverse), falls back to building fresh from just the YAML instead.
 /// This is one building block toward a future `form import`, which would
 /// actually write the result back — this command only ever reads.
+///
+/// Also validates the rebuilt FormXML against Microsoft's own official
+/// FormXML XSD schema (see <see cref="Services.Conversion.FormXmlValidator"/>)
+/// before writing it, and prints any violations as a warning rather than
+/// refusing to write the file — a violation there isn't necessarily a bug
+/// in this tool's own output; see that class's own doc comment for a
+/// confirmed case where real, live Dataverse forms violate that same
+/// schema too.
 /// </summary>
 public sealed class BuildFormXmlCommand(IAuthenticationService authenticationService, IFormXmlBuildService formXmlBuildService)
     : AsyncCommand<BuildFormXmlCommand.Settings>
@@ -63,6 +71,16 @@ public sealed class BuildFormXmlCommand(IAuthenticationService authenticationSer
             var formXml = await AnsiConsole.Status().StartAsync($"Rebuilding FormXML for '{form.Name}'...",
                 async _ => await formXmlBuildService.BuildFormXmlAsync(auth.EnvironmentUrl, auth.AccessToken, form, cancellationToken));
 
+            var violations = FormXmlValidator.Validate(formXml);
+            if (violations.Count > 0)
+            {
+                AnsiConsole.MarkupLine($"[yellow]{violations.Count} schema violation(s) against Microsoft's own FormXML schema (writing the file anyway — see FormXmlValidator's own doc comment for why this isn't necessarily a bug):[/]");
+                foreach (var violation in violations)
+                {
+                    AnsiConsole.MarkupLine($"[yellow]  - {violation}[/]");
+                }
+            }
+
             var outputPath = settings.Output ?? Path.ChangeExtension(settings.Input, ".xml");
             await File.WriteAllTextAsync(outputPath, formXml, cancellationToken);
 
@@ -87,6 +105,15 @@ public sealed class BuildFormXmlCommand(IAuthenticationService authenticationSer
         catch (HttpRequestException ex)
         {
             AnsiConsole.MarkupLine($"[red]{ex.Message}[/]");
+            return 1;
+        }
+        catch (System.Xml.XmlException ex)
+        {
+            // Unlike a validation violation (reported above without
+            // stopping), this means FormXmlWriter itself produced XML that
+            // isn't even well-formed — a real bug in this tool, not a
+            // known Dataverse quirk.
+            AnsiConsole.MarkupLine($"[red]Rebuilt FormXML isn't well-formed XML — this is a bug in this tool, not the source YAML:[/] {ex.Message}");
             return 1;
         }
     }

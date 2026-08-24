@@ -328,6 +328,15 @@ tab/section/cell's own GUID, a control's `uniqueid`, ...) are derived
 deterministically so re-running this on unchanged YAML produces
 byte-identical output rather than a spurious diff every time.
 
+Before writing, the rebuilt FormXML is checked against Microsoft's own
+official FormXML XSD schema (vendored in this repo — see
+`D365 Architect/Resources/FormXmlSchema/NOTICE.md`); any violation is
+printed as a warning but doesn't stop the file from being written, since a
+violation isn't necessarily this tool's mistake — real, live Dataverse
+FormXML is confirmed to violate this same schema in at least one way
+(`headerdensity`/`showinformselector`), unrelated to anything `form
+build-xml` does.
+
 ### `schema`
 
 Work with this tool's YAML schema.

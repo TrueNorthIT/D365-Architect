@@ -342,9 +342,11 @@ public sealed class FormJsonDefinitionReader
             RowSpan = (int?)cell.Attribute("rowspan") is { } rowspan and > 1 ? rowspan : null,
             Parameters = control.Element("parameters") is { } parameters ? ConvertToObject(parameters) : null,
             AdditionalControls = uniqueId is not null && additionalControls.TryGetValue(uniqueId, out var additional) ? additional : null,
-            // Not documented as a valid child of <cell> in Microsoft's own
-            // published FormXML schema (only <labels>/<control> are) — real
-            // forms have it anyway, confirmed live rather than assumed.
+            // Not mentioned as a valid child of <cell> on Microsoft's own
+            // FormXML schema documentation page (only <labels>/<control>
+            // are) — real forms have it anyway, confirmed live rather than
+            // assumed. The actual downloadable XSD (see FormXmlValidator)
+            // already declares it correctly; only the docs page is behind.
             Events = NullIfEmpty(cell.Element("events")?.Elements("event").Select(ParseEvent).ToList()),
         };
     }
@@ -361,10 +363,21 @@ public sealed class FormJsonDefinitionReader
     /// - A leaf element (no attributes, no children) becomes its text
     ///   value — recursing when that text is itself a serialised XML
     ///   fragment (e.g. a quick view control's QuickForms; some Dataverse
-    ///   parameters are double-encoded this way). Embedded JSON (e.g. a
-    ///   timeline control's *ConfigurationJSON parameters) is left as a
-    ///   plain string — that's a different, more common Dataverse pattern
-    ///   this tool doesn't also parse.
+    ///   parameters are double-encoded this way), wrapped under a reserved
+    ///   `xml` key naming the fragment's own root element (e.g.
+    ///   `{ xml: { QuickFormIds: { QuickFormId: ... } } }`) so
+    ///   <see cref="FormXmlWriter"/> knows to re-escape this back into text
+    ///   on the way out rather than emit it as real child elements — those
+    ///   are two structurally identical shapes on the way in (an XML
+    ///   fragment's own elements look just like real ones once parsed) but
+    ///   very much not the same thing on the way out: Dataverse's own
+    ///   runtime expects `QuickForms`' value as escaped text, not literal
+    ///   XML structure, and writing the latter isn't just a schema nitpick —
+    ///   it's a real functional difference, confirmed by a genuine
+    ///   `form build-xml` schema violation before this was fixed. Embedded
+    ///   JSON (e.g. a timeline control's *ConfigurationJSON parameters) is
+    ///   left as a plain string — a different, more common Dataverse
+    ///   pattern this tool doesn't also parse.
     /// - An element with attributes and/or children becomes a map: its
     ///   attributes (if any) grouped under `attributes`, its own text (if
     ///   any, alongside attributes) under `value`, and each child element
@@ -374,7 +387,7 @@ public sealed class FormJsonDefinitionReader
     ///   already self-describing, and guessing at word boundaries to
     ///   reformat them risks getting it wrong for exactly the same reason
     ///   guessing at <see cref="FormControl.ClassId"/>'s meaning would.
-    ///   (`attributes`/`value` could theoretically collide with a real
+    ///   (`attributes`/`value`/`xml` could theoretically collide with a real
     ///   child element of the same name — not seen in practice, but a
     ///   known, accepted trade-off of choosing readability over an
     ///   unambiguous-but-cryptic marker like `@`/`#`.)
@@ -415,7 +428,16 @@ public sealed class FormJsonDefinitionReader
 
             if (value.TrimStart().StartsWith('<') && TryParseEmbeddedXml(value) is { } embedded)
             {
-                return ConvertToObject(embedded);
+                // Recording only the parsed content (as this used to) would
+                // discard which element it was embedded as (QuickForms' own
+                // <QuickFormIds> wrapper, here) — the `xml` key retains
+                // that, so FormXmlWriter can re-escape this back into text
+                // rather than emitting real elements. See this method's own
+                // doc comment for why that distinction matters.
+                return new Dictionary<string, object>
+                {
+                    ["xml"] = new Dictionary<string, object> { [embedded.Name.LocalName] = ConvertToObject(embedded) ?? "" },
+                };
             }
 
             return IsFalse(value) ? null : value;
