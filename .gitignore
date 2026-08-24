@@ -215,6 +215,9 @@ publish/
 # Note: Comment the next line if you want to checkin your web deploy settings,
 # but database connection strings (with potential passwords) will be unencrypted
 *.pubxml
+# This one's just build settings (RID, self-contained, single-file) for the
+# standalone exe -- no secrets, meant to be shared. See README.md.
+!D365 Architect/Properties/PublishProfiles/win-x64.pubxml
 *.publishproj
 
 # Microsoft Azure Web App publish settings. Comment the next line if you want to

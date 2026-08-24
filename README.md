@@ -13,25 +13,45 @@ A command-line tool for managing Dynamics 365 environments.
 ## Getting the tool
 
 This tool isn't published as a ready-made download yet, so for now you build
-it from source:
+it from source. Two ways to do that, depending on whether the machine you're
+running it on has the .NET runtime installed:
 
-1. Get a copy of this repository.
-2. From the `D365 Architect` folder, run:
+**Framework-dependent** (needs the [.NET 10 runtime](#requirements) already
+installed wherever you run it, but is the faster everyday build):
 
-   ```
-   dotnet build -c Release
-   ```
+```
+dotnet build "D365 Architect/D365 Architect.csproj" -c Release
+```
 
-3. The tool is produced as `d365architect.exe` (Windows) under
-   `D365 Architect\bin\Release\net10.0\`. Copy it (and the rest of that
-   folder's contents) wherever you'd like to run it from.
+The tool is produced as `d365architect.exe` under
+`D365 Architect/bin/Release/net10.0/`, alongside its dependency DLLs — copy
+the whole folder if you're moving it elsewhere, not just the `.exe`.
 
 If you have the .NET SDK installed but just want to try it without building
-a standalone copy, you can also run it directly from that folder with:
+a copy of anything, you can also run it directly from that folder with:
 
 ```
-dotnet run -- <command> [options]
+dotnet run --project "D365 Architect" -- <command> [options]
 ```
+
+**Standalone** (a single `d365architect.exe`, with the .NET runtime and
+every dependency bundled in — nothing else needs to be installed on the
+machine you run it on):
+
+```
+dotnet publish "D365 Architect/D365 Architect.csproj" -c Release -p:PublishProfile=win-x64
+```
+
+Produces `d365architect.exe` under
+`D365 Architect/bin/Release/net10.0/publish/win-x64/` — that one file is
+everything; copy just it wherever you like. It's larger (~75 MB, since the
+whole runtime travels with it) and doesn't need the `.xml`/`.pdb` sitting
+next to it for normal use — those two are only for `schema export`'s
+descriptions and crash symbols respectively, both dev-time concerns (see
+`schema`, below). The `win-x64` profile lives at
+`D365 Architect/Properties/PublishProfiles/win-x64.pubxml`; add another
+`.pubxml` alongside it (with a different `RuntimeIdentifier` and
+`PublishDir`) for another platform, e.g. `linux-x64` or `osx-arm64`.
 
 ## Usage
 
@@ -330,6 +350,14 @@ d365architect schema export --for form
 |----------------|------------------------------------------------|----------|
 | `-f, --for`    | Which asset type to generate a schema for: `table`, `view`, or `form`. Defaults to `table` | No |
 | `-o, --output` | Path to write the schema to. Defaults to `schema/<asset-type>.schema.json` | No |
+
+A dev-time-only detail: descriptions come from this assembly's own
+`d365architect.xml` doc-comments file, which sits next to `d365architect.dll`/`.exe`
+in an ordinary build but isn't part of the [standalone single-file
+build](#getting-the-tool) above. Run this command from a regular
+`dotnet build`/`dotnet run` output (which is what maintaining this repo
+already does), not the standalone `.exe`, or the generated schema's
+per-field descriptions will be blank — every other command is unaffected.
 
 This repository commits its generated schemas at
 [`schema/table.schema.json`](schema/table.schema.json),
