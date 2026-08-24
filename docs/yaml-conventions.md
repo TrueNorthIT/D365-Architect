@@ -290,6 +290,25 @@ schema itself turned out to be wrong" above for a confirmed case
 already fails this exact validation, through no fault of anything this
 tool does. A violation is worth reading, not necessarily worth acting on.
 
+Each violation (`FormXmlValidationMessage`) carries .NET's own
+`XmlSeverityType` (`Error`/`Warning`) alongside the message — checked
+empirically across every violation shape seen so far (an undeclared
+attribute, an invalid child element, incomplete content, an invalid choice
+member): all of them come back `Error`. `Warning` is reserved for a small
+set of lax-wildcard cases this schema's own structure doesn't seem to hit
+anywhere this tool's output reaches, so it may never actually appear in
+practice — exposed anyway since .NET is the authority on it, not a guess,
+and either severity is still just a `form build-xml` warning regardless
+(see above). It also carries a `Snippet` of the offending FormXML plus a
+`SnippetCaretOffset` into it, so `form build-xml` can point at the exact
+spot rather than just printing a line/column pair — deliberately an offset
+for the *caller* to highlight (inline, inverse video) rather than a
+second line of spaces-and-a-caret baked into the snippet itself: FormXML
+is always one very long line, a console can wrap that onto several display
+lines, and a separate caret line's alignment would silently break the
+moment that happens, while an inline highlight travels with the character
+regardless.
+
 **Record-level fields aren't FormXML's job.** `Name`, `Description`,
 `Type`, `IsDefault`, `FormActivationState`, and `IsCustomizable` live on
 the `systemform` record itself (`GetFormDefinitionsJsonAsync`'s own

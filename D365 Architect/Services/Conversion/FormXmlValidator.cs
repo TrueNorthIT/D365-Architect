@@ -15,6 +15,10 @@ namespace D365Architect.Services.Conversion;
 /// there's no wildcard attribute to fall back on). That means a violation
 /// here isn't necessarily a bug in this tool's own output — callers should
 /// surface these as warnings, not a reason to refuse writing the file.
+/// Each result is a <see cref="FormXmlValidationMessage"/> — the validator's
+/// own severity, position, message, and a ready-to-print snippet of the
+/// offending FormXML (see that type's own doc comment for why a snippet
+/// matters here specifically).
 /// </summary>
 public static class FormXmlValidator
 {
@@ -30,16 +34,16 @@ public static class FormXmlValidator
 
     /// <returns>Every schema violation found, in document order; empty when the document is fully valid.</returns>
     /// <exception cref="XmlException"><paramref name="formXml"/> isn't well-formed XML at all.</exception>
-    public static IReadOnlyList<string> Validate(string formXml)
+    public static IReadOnlyList<FormXmlValidationMessage> Validate(string formXml)
     {
-        var messages = new List<string>();
+        var messages = new List<FormXmlValidationMessage>();
 
         var settings = new XmlReaderSettings
         {
             ValidationType = ValidationType.Schema,
             Schemas = SchemaSet.Value,
         };
-        settings.ValidationEventHandler += (_, e) => messages.Add(FormatMessage(e));
+        settings.ValidationEventHandler += (_, e) => messages.Add(ToValidationMessage(e, formXml));
 
         using var stringReader = new StringReader(formXml);
         using var xmlReader = XmlReader.Create(stringReader, settings);
@@ -54,10 +58,52 @@ public static class FormXmlValidator
         return messages;
     }
 
-    private static string FormatMessage(ValidationEventArgs e) =>
-        e.Exception is { LineNumber: > 0 } ex
-            ? $"Line {ex.LineNumber}, position {ex.LinePosition}: {e.Message}"
-            : e.Message;
+    private static FormXmlValidationMessage ToValidationMessage(ValidationEventArgs e, string formXml)
+    {
+        var (line, column) = e.Exception is { LineNumber: > 0 } ex ? (ex.LineNumber, ex.LinePosition) : (0, 0);
+        var (snippet, caretOffset) = BuildSnippet(formXml, line, column);
+        return new FormXmlValidationMessage(e.Severity, line, column, e.Message, snippet, caretOffset);
+    }
+
+    /// <summary>
+    /// A short excerpt of <paramref name="formXml"/> around
+    /// (<paramref name="lineNumber"/>, <paramref name="linePosition"/>), plus
+    /// the offset into that excerpt of the exact character being pointed at —
+    /// see <see cref="FormXmlValidationMessage.SnippetCaretOffset"/> for why
+    /// that's returned as an offset for the caller to highlight inline,
+    /// rather than this method baking in its own second-line caret.
+    /// </summary>
+    private static (string Snippet, int CaretOffset) BuildSnippet(string formXml, int lineNumber, int linePosition)
+    {
+        if (lineNumber < 1)
+        {
+            return ("", 0);
+        }
+
+        // XmlException's LineNumber/LinePosition are computed against the
+        // reader's own notion of lines, which treats \r\n and \n both as a
+        // single line break — matched here so a real position lines up
+        // with the right line even if the source has Windows line endings.
+        var lines = formXml.Replace("\r\n", "\n").Split('\n');
+        if (lineNumber > lines.Length)
+        {
+            return ("", 0);
+        }
+
+        var line = lines[lineNumber - 1];
+        var column = Math.Clamp(linePosition - 1, 0, line.Length);
+
+        const int contextChars = 50;
+        var start = Math.Max(0, column - contextChars);
+        var end = Math.Min(line.Length, column + contextChars);
+
+        var prefix = start > 0 ? "…" : "";
+        var suffix = end < line.Length ? "…" : "";
+        var excerpt = prefix + line[start..end] + suffix;
+        var caretOffset = prefix.Length + (column - start);
+
+        return (excerpt, caretOffset);
+    }
 
     private static XmlSchemaSet LoadSchemaSet()
     {
