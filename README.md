@@ -44,11 +44,14 @@ dotnet publish "D365 Architect/D365 Architect.csproj" -c Release -p:PublishProfi
 
 Produces `d365architect.exe` under
 `D365 Architect/bin/Release/net10.0/publish/win-x64/` — that one file is
-everything; copy just it wherever you like. It's larger (~75 MB, since the
-whole runtime travels with it) and doesn't need the `.xml`/`.pdb` sitting
-next to it for normal use — those two are only for `schema export`'s
-descriptions and crash symbols respectively, both dev-time concerns (see
-`schema`, below). The `win-x64` profile lives at
+everything the tool itself needs to run; copy just it wherever you like.
+This README is copied alongside it too, so anyone who receives just that
+folder still has the command reference; it's not needed for the exe to
+work. It's larger (~75 MB, since the whole runtime travels with it) and
+doesn't need the `.xml`/`.pdb` sitting next to it for normal use — those
+two are only for `schema export`'s descriptions and crash symbols
+respectively, both dev-time concerns (see `schema`, below). The `win-x64`
+profile lives at
 `D365 Architect/Properties/PublishProfiles/win-x64.pubxml`; add another
 `.pubxml` alongside it (with a different `RuntimeIdentifier` and
 `PublishDir`) for another platform, e.g. `linux-x64` or `osx-arm64`.
