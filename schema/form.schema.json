@@ -97,6 +97,14 @@
                               "description": "Only present when false — most controls on a form are visible. Confirmed live rather than assumed: a real, deliberately hidden field (FormXML's `visible=\"false\"`) is meaningfully different from one simply not on the form at all, and this tool would otherwise show them identically. Omit to leave this control visible; applying this file back won't hide it.",
                               "type": "boolean"
                             },
+                            "columnSpan": {
+                              "description": "How many of the section's own sub-columns this control's cell spans (FormXML's `colspan`, an attribute of `<cell>`, not `<control>`). Only present when greater than 1 — a single column is the common case; applying this file back won't change a cell's own span. Confirmed live: real, non-default spans exist alongside the overwhelmingly common `colspan=\"1\"`, not just the trivial case.",
+                              "type": "integer"
+                            },
+                            "rowSpan": {
+                              "description": "How many rows this control's cell spans (FormXML's `rowspan`) — genuinely structural, not cosmetic: a tall control like a subgrid or notes timeline is laid out this way specifically so it visually occupies several of its section's otherwise-empty rows rather than being squeezed into one. Only present when greater than 1 — a single row is the common case; applying this file back won't change a cell's own span. Confirmed live: real spans up to 15 alongside the overwhelmingly common `rowspan=\"1\"`.",
+                              "type": "integer"
+                            },
                             "parameters": {
                               "description": "This control's own `<parameters>` block, converted structurally (each XML element becomes a YAML map key, using the element's own name; an attribute becomes a plain key under a nested `attributes` map, its own text alongside those under `value`) rather than left as raw XML text — e.g. a subgrid's target table, relationship, and view; a web resource's name; a quick view control's source table and form. A boolean value of `false` inside this block is left out — every one of these parameters is an optional XML boolean with no platform default declared, so an absent one and an explicit `false` mean the same thing to Dataverse; omitting it here changes nothing when applied back. `true` is always kept. This whole property is absent when the control has no parameters at all, or when every one it had was `false` (see `docs/yaml-conventions.md` for the full reasoning). Unlike ClassId, none of this needs a friendly-name lookup this tool would have to get right on its own: the XML's own element/attribute names are kept as-is."
                             },
@@ -129,7 +137,7 @@
                               }
                             },
                             "events": {
-                              "description": "Field-level event bindings scoped to this control specifically (e.g. an \"on change\" handler for this one field) — distinct from Events, which are form-wide. Confirmed live rather than assumed: Microsoft's own published FormXML schema doesn't document `<events>` as a valid child of a cell at all (only `<labels>`/`<control>` are), yet real forms have it — exactly the kind of gap a schema-only audit would have missed. See FormEvent. Absent when this control has none.",
+                              "description": "Field-level event bindings scoped to this control specifically (e.g. an \"on change\" handler for this one field) — distinct from Events, which are form-wide. Confirmed live rather than assumed: Microsoft's own FormXML schema *documentation page* doesn't mention `<events>` as a valid child of a cell at all (only `<labels>`/`<control>` are) — the actual downloadable XSD (see FormXmlValidator) already declares it correctly, but the prose page doesn't, exactly the kind of gap a docs-only audit would have missed. See FormEvent. Absent when this control has none.",
                               "type": "array",
                               "items": {
                                 "type": "object",
@@ -258,6 +266,14 @@
             "description": "Only present when false — most controls on a form are visible. Confirmed live rather than assumed: a real, deliberately hidden field (FormXML's `visible=\"false\"`) is meaningfully different from one simply not on the form at all, and this tool would otherwise show them identically. Omit to leave this control visible; applying this file back won't hide it.",
             "type": "boolean"
           },
+          "columnSpan": {
+            "description": "How many of the section's own sub-columns this control's cell spans (FormXML's `colspan`, an attribute of `<cell>`, not `<control>`). Only present when greater than 1 — a single column is the common case; applying this file back won't change a cell's own span. Confirmed live: real, non-default spans exist alongside the overwhelmingly common `colspan=\"1\"`, not just the trivial case.",
+            "type": "integer"
+          },
+          "rowSpan": {
+            "description": "How many rows this control's cell spans (FormXML's `rowspan`) — genuinely structural, not cosmetic: a tall control like a subgrid or notes timeline is laid out this way specifically so it visually occupies several of its section's otherwise-empty rows rather than being squeezed into one. Only present when greater than 1 — a single row is the common case; applying this file back won't change a cell's own span. Confirmed live: real spans up to 15 alongside the overwhelmingly common `rowspan=\"1\"`.",
+            "type": "integer"
+          },
           "parameters": {
             "description": "This control's own `<parameters>` block, converted structurally (each XML element becomes a YAML map key, using the element's own name; an attribute becomes a plain key under a nested `attributes` map, its own text alongside those under `value`) rather than left as raw XML text — e.g. a subgrid's target table, relationship, and view; a web resource's name; a quick view control's source table and form. A boolean value of `false` inside this block is left out — every one of these parameters is an optional XML boolean with no platform default declared, so an absent one and an explicit `false` mean the same thing to Dataverse; omitting it here changes nothing when applied back. `true` is always kept. This whole property is absent when the control has no parameters at all, or when every one it had was `false` (see `docs/yaml-conventions.md` for the full reasoning). Unlike ClassId, none of this needs a friendly-name lookup this tool would have to get right on its own: the XML's own element/attribute names are kept as-is."
           },
@@ -290,7 +306,7 @@
             }
           },
           "events": {
-            "description": "Field-level event bindings scoped to this control specifically (e.g. an \"on change\" handler for this one field) — distinct from Events, which are form-wide. Confirmed live rather than assumed: Microsoft's own published FormXML schema doesn't document `<events>` as a valid child of a cell at all (only `<labels>`/`<control>` are), yet real forms have it — exactly the kind of gap a schema-only audit would have missed. See FormEvent. Absent when this control has none.",
+            "description": "Field-level event bindings scoped to this control specifically (e.g. an \"on change\" handler for this one field) — distinct from Events, which are form-wide. Confirmed live rather than assumed: Microsoft's own FormXML schema *documentation page* doesn't mention `<events>` as a valid child of a cell at all (only `<labels>`/`<control>` are) — the actual downloadable XSD (see FormXmlValidator) already declares it correctly, but the prose page doesn't, exactly the kind of gap a docs-only audit would have missed. See FormEvent. Absent when this control has none.",
             "type": "array",
             "items": {
               "type": "object",
@@ -407,6 +423,14 @@
             "description": "Only present when false — most controls on a form are visible. Confirmed live rather than assumed: a real, deliberately hidden field (FormXML's `visible=\"false\"`) is meaningfully different from one simply not on the form at all, and this tool would otherwise show them identically. Omit to leave this control visible; applying this file back won't hide it.",
             "type": "boolean"
           },
+          "columnSpan": {
+            "description": "How many of the section's own sub-columns this control's cell spans (FormXML's `colspan`, an attribute of `<cell>`, not `<control>`). Only present when greater than 1 — a single column is the common case; applying this file back won't change a cell's own span. Confirmed live: real, non-default spans exist alongside the overwhelmingly common `colspan=\"1\"`, not just the trivial case.",
+            "type": "integer"
+          },
+          "rowSpan": {
+            "description": "How many rows this control's cell spans (FormXML's `rowspan`) — genuinely structural, not cosmetic: a tall control like a subgrid or notes timeline is laid out this way specifically so it visually occupies several of its section's otherwise-empty rows rather than being squeezed into one. Only present when greater than 1 — a single row is the common case; applying this file back won't change a cell's own span. Confirmed live: real spans up to 15 alongside the overwhelmingly common `rowspan=\"1\"`.",
+            "type": "integer"
+          },
           "parameters": {
             "description": "This control's own `<parameters>` block, converted structurally (each XML element becomes a YAML map key, using the element's own name; an attribute becomes a plain key under a nested `attributes` map, its own text alongside those under `value`) rather than left as raw XML text — e.g. a subgrid's target table, relationship, and view; a web resource's name; a quick view control's source table and form. A boolean value of `false` inside this block is left out — every one of these parameters is an optional XML boolean with no platform default declared, so an absent one and an explicit `false` mean the same thing to Dataverse; omitting it here changes nothing when applied back. `true` is always kept. This whole property is absent when the control has no parameters at all, or when every one it had was `false` (see `docs/yaml-conventions.md` for the full reasoning). Unlike ClassId, none of this needs a friendly-name lookup this tool would have to get right on its own: the XML's own element/attribute names are kept as-is."
           },
@@ -439,7 +463,7 @@
             }
           },
           "events": {
-            "description": "Field-level event bindings scoped to this control specifically (e.g. an \"on change\" handler for this one field) — distinct from Events, which are form-wide. Confirmed live rather than assumed: Microsoft's own published FormXML schema doesn't document `<events>` as a valid child of a cell at all (only `<labels>`/`<control>` are), yet real forms have it — exactly the kind of gap a schema-only audit would have missed. See FormEvent. Absent when this control has none.",
+            "description": "Field-level event bindings scoped to this control specifically (e.g. an \"on change\" handler for this one field) — distinct from Events, which are form-wide. Confirmed live rather than assumed: Microsoft's own FormXML schema *documentation page* doesn't mention `<events>` as a valid child of a cell at all (only `<labels>`/`<control>` are) — the actual downloadable XSD (see FormXmlValidator) already declares it correctly, but the prose page doesn't, exactly the kind of gap a docs-only audit would have missed. See FormEvent. Absent when this control has none.",
             "type": "array",
             "items": {
               "type": "object",
