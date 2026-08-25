@@ -18,6 +18,10 @@ internal static class TableCommands
             branch.AddCommand<ExportTableCommand>("export")
                 .WithDescription("Fetches a table's live definition and saves it as YAML.")
                 .WithExample("table", "export", "--table", "account");
+
+            branch.AddCommand<ImportTableCommand>("import")
+                .WithDescription("Writes a *.table.yml file's table-level properties and columns back into Dataverse, after showing a diff and asking for confirmation.")
+                .WithExample("table", "import", "--input", "account.table.yml");
         });
     }
 }

@@ -1,0 +1,124 @@
+using System.ComponentModel;
+using D365Architect.Services.Authentication;
+using D365Architect.Services.Conversion;
+using D365Architect.Services.Dataverse;
+using Spectre.Console;
+using Spectre.Console.Cli;
+
+namespace D365Architect.Commands.Form;
+
+/// <summary>
+/// `d365architect form import --input account-main-form.form.yml [--yes]`
+/// Writes a `*.form.yml` file's rebuilt FormXML directly back into
+/// Dataverse — straight from the YAML, not through `form build-xml` first.
+/// That command exists for a human to inspect/validate the rebuilt FormXML
+/// locally; it's never a required intermediary, and this command doesn't
+/// call it or share any state with it — <see cref="IFormImportService"/>
+/// does its own independent retrieve-and-patch. Needs sign-in.
+///
+/// Before writing anything: retrieves the form's current live FormXML,
+/// rebuilds it (patched onto that live document, the same mechanism
+/// `build-xml` uses — see <see cref="Services.Conversion.FormXmlWriter"/>),
+/// validates it against Microsoft's own FormXML schema, and prints a
+/// line-level diff of the actual FormXML on both sides — the live form
+/// rebuilt through the same writer/id-rules as the new one, specifically so
+/// the two are comparable rather than differing on every element purely
+/// from resynthesized ids (see
+/// <see cref="Services.Conversion.FormImportPreview.ExistingComparableFormXml"/>'s
+/// own doc comment) — the concrete answer to "must have a way to check
+/// differences between client and server". Nothing is written until you
+/// confirm (or pass <c>--yes</c>), and if the two sides are identical,
+/// nothing is written at all.
+///
+/// Only ever updates a form that already exists — refuses (rather than
+/// creating one) when no form matches the YAML's table + name yet, and
+/// refuses outright for a dashboard, same as `build-xml`.
+///
+/// What this doesn't do yet: publish the change (Dataverse customizations
+/// still need publishing separately before end users see it), or detect
+/// that the live form changed since this YAML was last exported (only that
+/// it differs from what's about to be written) — see
+/// `docs/yaml-conventions.md` for both.
+/// </summary>
+public sealed class ImportFormCommand(IAuthenticationService authenticationService, IFormImportService formImportService)
+    : AsyncCommand<ImportFormCommand.Settings>
+{
+    public sealed class Settings : CommandSettings
+    {
+        [CommandOption("-i|--input <PATH>")]
+        [Description("Path to the *.form.yml file to import.")]
+        public required string Input { get; init; }
+
+        [CommandOption("-y|--yes")]
+        [Description("Skip the confirmation prompt and import immediately.")]
+        public bool Yes { get; init; }
+    }
+
+    protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
+    {
+        var form = await FormYamlFileReader.TryReadAsync(settings.Input, cancellationToken);
+        if (form is null)
+        {
+            return 1;
+        }
+
+        try
+        {
+            var auth = await authenticationService.GetCurrentContextAsync(cancellationToken);
+
+            var preview = await AnsiConsole.Status().StartAsync($"Looking up '{form.Name}' and rebuilding its FormXML...",
+                async _ => await formImportService.PreviewAsync(auth.EnvironmentUrl, auth.AccessToken, form, cancellationToken));
+
+            if (!preview.HasChanges)
+            {
+                AnsiConsole.MarkupLine("[green]No changes[/] — the rebuilt FormXML already matches what's live in Dataverse. Nothing to import.");
+                return 0;
+            }
+
+            AnsiConsole.MarkupLine($"[bold]Changes for '{form.Name}':[/]");
+            DiffConsole.PrintDiff(TextDiff.Compute(DiffConsole.PrettyPrintXml(preview.ExistingComparableFormXml), DiffConsole.PrettyPrintXml(preview.NewFormXml)));
+            AnsiConsole.WriteLine();
+
+            FormXmlValidationConsole.PrintViolations(preview.Violations);
+
+            if (!settings.Yes && !AnsiConsole.Confirm("Import these changes into Dataverse?", defaultValue: false))
+            {
+                AnsiConsole.MarkupLine("[yellow]Aborted.[/] Nothing was written.");
+                return 0;
+            }
+
+            await AnsiConsole.Status().StartAsync("Importing...",
+                async _ => await formImportService.ApplyAsync(auth.EnvironmentUrl, auth.AccessToken, preview, cancellationToken));
+
+            AnsiConsole.MarkupLine($"[green]Imported.[/] '{form.Name}' updated in Dataverse.");
+            AnsiConsole.MarkupLine("[grey]Note: this only updates the form's FormXML — publish customizations separately (e.g. in the maker portal) before end users see the change; this tool doesn't publish yet.[/]");
+            return 0;
+        }
+        catch (AuthenticationRequiredException ex)
+        {
+            AnsiConsole.MarkupLine($"[red]{ex.Message}[/]");
+            return 1;
+        }
+        catch (FormNotFoundException ex)
+        {
+            AnsiConsole.MarkupLine($"[red]{ex.Message}[/]");
+            return 1;
+        }
+        catch (AmbiguousSystemFormException ex)
+        {
+            AnsiConsole.MarkupLine($"[red]{ex.Message}[/]");
+            return 1;
+        }
+        catch (NotSupportedException ex)
+        {
+            AnsiConsole.MarkupLine($"[red]{ex.Message}[/]");
+            return 1;
+        }
+        catch (HttpRequestException ex)
+        {
+            AnsiConsole.MarkupLine($"[red]{ex.Message}[/]");
+            return 1;
+        }
+    }
+
+}

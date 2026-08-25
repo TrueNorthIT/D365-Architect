@@ -276,9 +276,11 @@ as surely as building one from scratch would.
 
 **What this still doesn't do**: write anything back into Dataverse. `form
 build-xml` only ever reads (the lookup) and writes a local file — the
-actual create/update call, plus publish and any pre-flight
-conflict/staleness check, is the scope of a future `form import`, which
-this is one building block toward.
+actual create/update call is `form import`'s job (see below), and
+`build-xml` is never a required step on the way there: import does its own
+independent retrieve-and-patch rather than calling into or depending on
+this command in any way. `build-xml` exists for a human to inspect and
+validate what would get built, on demand, not as plumbing.
 
 **Every rebuild is validated against Microsoft's own FormXML schema**
 (`FormXmlValidator`, see `Resources/FormXmlSchema/NOTICE.md` for exactly
@@ -346,3 +348,289 @@ tables in a real tenant this session round-trips byte-identical
 except for one confirmed, harmless, and documented wrinkle — see
 `FormXmlWriter`'s own doc comment on `PopulateParameterElement` for exactly
 what it is and why it doesn't lose anything.
+
+## Importing FormXML (`form import`)
+
+`IFormImportService`/`FormImportService` (`d365architect form import
+--input x.form.yml [--yes]`) writes a `*.form.yml` file's rebuilt FormXML
+back into Dataverse — directly from the YAML. It does **not** call `form
+build-xml` or `IFormXmlBuildService` first, and never shares a call path
+with either: it does its own independent lookup (`IDataverseClient.
+TryGetSystemFormAsync`, which — unlike `TryGetSystemFormXmlAsync` — also
+returns the form's own id, since import has to know which record to
+update) and its own `FormXmlWriter.Write(form, existingRoot)` call. This
+was a deliberate design choice, not an oversight: `build-xml` is a
+standalone tool for a human to inspect and validate what would get built,
+on demand — never plumbing something else is required to route through.
+
+**Only ever updates a form that already exists.** No form matching the
+YAML's table + name yet throws `FormNotFoundException` rather than
+creating one — creating a brand-new form isn't supported yet (it would need
+a fair bit more: minimum required systemform properties beyond just
+`formxml`, and likely solution-context registration). Refuses a dashboard
+outright too, same as `build-xml`, for the same reason (`FormXmlWriter`
+itself refuses).
+
+**"Must have a way to check differences between client and server"** (this
+feature's own originating requirement) is `TextDiff`, applied to the actual
+FormXML on both sides — but not naively. Diffing the live document's *raw*
+FormXML directly against the rebuild was tried first, and confirmed live
+(against a real, richly-customized production form, not a synthetic test
+case) to be nearly useless for this: every tab, section, and cell showed up
+as "changed", purely because their wrapper ids are resynthesized fresh on
+every rebuild — a wall of noise even when re-importing a file with no
+meaningful edits at all.
+
+The fix, once that was seen: rebuild the *live* form's own content through
+the exact same `FormXmlWriter` call, base document, and deterministic id
+rules that produced the new FormXML (`FormImportPreview.ExistingComparableFormXml` —
+decompose the live FormXML the same way `form export` would, then run that
+back through `FormXmlWriter.Write` against the same base document). Since
+both sides are now canonicalized through the identical pipeline, unchanged
+content produces identical ids and identical attribute-stripping on both
+sides and disappears from the diff entirely — only a genuine difference in
+the underlying `FormDefinition` content survives to show up. Both sides
+are pretty-printed (one element per line) purely for this display; the
+actual payload sent to Dataverse is untouched by that. Only the changed
+lines plus a couple of lines of context are shown, not the whole document.
+If the two sides are identical (`FormImportPreview.HasChanges` is false),
+nothing is written and nothing is asked — confirmed live to actually be
+true in practice for an unedited file on a real, complex form, not just in
+a minimal test case.
+
+**Be precise about what this diff does and doesn't catch**: it compares a
+canonicalized rebuild of the live document against what's about to be
+written, not against what the live document looked like when this YAML was
+last exported. It will not by itself notice "someone else changed this
+form after I exported it, before I imported my own change" — only that the
+live document currently differs from the rebuild, which could be *because*
+of that concurrent change just as easily as because of your own edits,
+with no way from this diff alone to tell which. Catching that specifically
+would need tracking a version marker (e.g. `modifiedon`, or an ETag via
+`If-Match`) at export time, which this tool doesn't do yet. What the diff
+*does* reliably catch: every meaningful change about to happen — which is
+still the concrete, useful half of "checking differences", just not the
+whole of it.
+
+**Confirmation is the default, not an afterthought.** Unless `--yes` is
+passed, `form import` shows the diff and every `FormXmlValidator` warning
+(same rendering as `build-xml`, factored into `FormXmlValidationConsole` so
+both commands render it identically) and asks before writing anything,
+defaulting to "no" if you just press Enter — deliberately the safer
+default for a command that overwrites live configuration in a real
+Dataverse environment.
+
+**What this doesn't do yet**: publish the change. `UpdateSystemFormXmlAsync`
+only patches the `systemform` record's `formxml` column — Dataverse
+customizations still need publishing separately (e.g. in the maker portal)
+before end users see the change. `form import` says as much after a
+successful write rather than implying more happened than actually did.
+
+## Importing views (`view import`)
+
+`IViewImportService`/`ViewImportService` (`d365architect view import
+--input x.view.yml [--yes]`) is the `form import` counterpart for views —
+same shape (preview → diff → validate/plan → confirm → apply), but
+genuinely simpler, for one structural reason: a view's FetchXml/LayoutXml
+are kept **verbatim** (see `ViewDefinition`'s own doc comment), never
+decomposed and rebuilt through a writer. There's no id-resynthesis to
+cancel out, so the diff compares `ExistingFetchXml`/`ExistingLayoutXml`
+against the local YAML's own values directly — pretty-printed purely for
+the display, same as form import's XML, but with no canonicalization step
+needed first.
+
+**Only three fields are ever written**: `Description`, `FetchXml`,
+`LayoutXml`. `QueryType`/`IsDefault`/`IsQuickFindQuery`/`IsUserDefined`/
+`IsCustomizable` are all documented on `ViewDefinition` itself as fields
+applying a YAML file back doesn't change (setting the default view, for
+one, needs a dedicated qualifying action, not a plain field write) — import
+respects that boundary rather than attempting a guess at any of them.
+
+**Only updates a view that already exists** — `ViewNotFoundException`
+otherwise, same reasoning as `FormNotFoundException`. A local field that's
+null means "don't touch this", never "clear it" — confirmed in
+`IDataverseClient.UpdateSavedQueryAsync`'s own contract, and mirrored in
+`ViewImportPreview.HasChanges`, which only compares a field when the local
+YAML actually has a value there.
+
+**What this doesn't do yet**: publish the change — same, already-documented
+gap as `form import`.
+
+## Importing tables (`table import`)
+
+`ITableImportService`/`TableImportService` (`d365architect table import
+--input x.table.yml [--yes]`) is the largest and riskiest of the three
+import commands, for a structural reason none of the others have: a
+table isn't one XML blob or one record's few fields — it's the table
+itself (a handful of properties) plus an open-ended list of columns, each
+of which needs its own Dataverse-defined, type-specific create/update
+shape to write at all. Confirmed against Microsoft's own documented
+Web API examples before writing a line of code, not guessed — getting an
+attribute metadata shape wrong risks actually damaging a live table's
+schema, a categorically worse failure mode than a malformed form or view.
+
+**Update is a full-object PUT, not a partial PATCH** — confirmed directly
+from Microsoft's own docs: *"You can't use the PATCH method to update data
+model entities... you must use the PUT method... and be careful to include
+all the existing properties that you don't intend to change."* This
+applies to both a table's own metadata and each column's. `table import`
+handles this the same way `FormXmlWriter` handles FormXML: fetch the
+attribute/entity's full, live representation first (`GetAttributeMetadataJsonAsync`/
+`GetEntityMetadataJsonAsync`), mutate only the fields this tool tracks *in
+place* (`AttributeMetadataJsonBuilder.ApplyUpdateFields`), and PUT the
+whole thing straight back — never a freshly-built partial object that
+could silently drop something Dataverse already had on file. `MSCRM.MergeLabels:
+true` is sent on every entity/attribute PUT so an edited display name
+doesn't wipe out other languages' labels this tool never touched (a
+documented Dataverse gotcha: that header's absence defaults to overwriting
+them).
+
+**Only these seven column types are ever created or updated**: `String`,
+`Memo`, `Integer`, `BigInt`, `Decimal`, `Money`, `DateTime` — see
+`AttributeMetadataJsonBuilder.SupportedTypes`. Deliberately excluded, and
+why:
+- **`Picklist`/`Boolean`** need an `OptionSet` definition (the actual
+  choice values) — this tool doesn't capture that on export at all yet
+  (see `EntityJsonDefinitionReader`'s own doc comment: it needs a separate,
+  per-attribute, type-cast request Dataverse doesn't expose in bulk).
+  Writing a Picklist/Boolean column without knowing its options isn't
+  possible to do correctly.
+- **`Lookup`/`Customer`/`Owner`** aren't creatable via this endpoint at
+  all — confirmed against Microsoft's own docs: a Lookup attribute only
+  comes into existence as part of creating a whole *relationship*
+  (`RelationshipDefinitions`, a materially larger and different operation),
+  and a Customer lookup specifically documents a dedicated
+  `CreateCustomerRelationships` action instead of a plain attribute POST.
+- **`Double`** has no officially documented create-body example anywhere
+  Microsoft's own Web API docs could confirm one — every other type here
+  is backed by a real, verbatim example; guessing at the one that isn't,
+  for an operation that edits a live table's schema, isn't a risk worth
+  taking.
+- Anything else (`MultiSelectPicklist`, `State`, `Status`,
+  `Uniqueidentifier`, `PartyList`, `File`, `Image`, `Virtual`,
+  `EntityName`, `ManagedProperty`) simply hasn't been investigated.
+
+A column of any of these excluded types still shows up in the diff and the
+per-column plan (`AttributeImportAction.SkippedUnsupportedType`) — visible,
+never silently dropped — it's just never written.
+
+**Every create/update is validated before a request is ever built** —
+`AttributeChangeValidator`, checked live against real invalid changes on a
+real table, not just reasoned about:
+- **Changing a column's `Type` after creation** — confirmed immutable by
+  Microsoft's own docs ("Once a column is saved, you can't change the data
+  type"). Checked *before* comparing anything else about the two sides
+  (`TableImportService`'s own Type-mismatch check runs ahead of
+  `AttributesMatch`), since Type isn't one of the fields this tool ever
+  writes back for an existing column — without that check first, a type
+  change alongside no other difference would otherwise be silently
+  reported as "Unchanged" instead of the invalid, would-fail change it
+  actually is.
+- **Changing a column's `SchemaName` after creation** — also confirmed
+  immutable, checked the same way and for the same reason.
+- **Creating a column whose `SchemaName` has no customization prefix, or
+  has one but contains a character Dataverse wouldn't accept anywhere else
+  in the name** (e.g. `BankName`, or `new_Bank Name` with a space) —
+  Dataverse requires a prefix for a custom column, and only letters,
+  digits, and underscores in a schema name; this tool never invents or
+  corrects one, so both are caught here rather than left for Dataverse's
+  own create call to reject.
+- **Creating a column whose `Name` (logical name) doesn't match what
+  Dataverse will actually derive** — Dataverse creates a new attribute's
+  logical name by lowercasing `SchemaName`, not from anything you send for
+  `Name` directly; if the local YAML's `Name` doesn't already equal
+  `SchemaName` lowercased, the column that gets created would silently have
+  a different logical name than the YAML claims, and every later import
+  would treat it as a brand-new column instead of recognizing it. This is
+  standard, long-established Dataverse behaviour rather than something
+  re-confirmed against a fresh doc citation this session.
+- **Two new columns in the same local YAML claiming the same
+  `SchemaName`** — a purely local, cross-attribute check (Dataverse itself
+  would only reject the second create), so it lives in
+  `TableImportService` rather than the per-attribute validator.
+- **An invalid `RequiredLevel`** — anything other than `None`,
+  `Recommended`, `ApplicationRequired`, or `SystemRequired` (Dataverse's
+  own documented values) on either create or update.
+- **A non-positive, or excessive, `MaxLength`** on a String/Memo column —
+  must be greater than 0, and (String only) no more than 4000. Corroborated
+  across multiple sources rather than a single canonical Microsoft Learn
+  page stating it as an explicit ceiling the way the checks below do — kept
+  as a hard check anyway since every source agrees and Dataverse would
+  reject anything higher regardless, but flagged here as the one bound in
+  this list that isn't a direct citation.
+- **An Integer `MinValue`/`MaxValue` outside -2147483648 to 2147483647** —
+  confirmed directly against Microsoft Learn
+  (`IntegerAttributeMetadata.MinValue`/`MaxValue`: "Possible values are
+  -2147483648 to 2147483647"). Also what keeps the `(int)` casts in
+  `AttributeMetadataJsonBuilder` safe — anything outside that range is
+  rejected here, before either ever reaches that cast.
+- **A Decimal or Money `Precision` outside 1 to 10** — confirmed directly
+  against Microsoft Learn for Decimal (`DecimalAttributeMetadata.Precision`:
+  "Possible values are 1-10"); applied to Money's `Precision` too since it's
+  the identical property shape on the same platform, though Money's own
+  page only re-confirms the default (2), not this exact range — a
+  reasonable extension, not an independently-cited one.
+- **`MinValue` greater than `MaxValue`** on an Integer, Decimal, or Money
+  column — a plain sanity check, not something that needed a docs lookup.
+
+The MaxLength-ceiling and Precision-range checks above only fire when that
+specific value is actually being *changed* to something new — never when
+it's merely being resent unchanged as part of updating some other field on
+the same column. This was found to matter, not just designed defensively:
+`account`'s own live `exchangerate` column already carries `Precision: 12`,
+outside Decimal's documented 1-10 range, presumably grandfathered in before
+the constraint existed (or set outside the ordinary create-time check as a
+system column). Blocking every future edit to `exchangerate` over a
+Precision nobody's trying to change would be exactly the false positive
+this validation is supposed to prevent — confirmed live, not assumed.
+
+Any of these show up in the column plan as `AttributeImportAction.Invalid`
+with the specific reason — visible, never attempted, and never left for a
+cryptic Dataverse API error to explain instead.
+
+**Some changes Dataverse allows but warns against are shown, not
+blocked** — lowering `MaxLength` or `Precision` below what existing data
+might already exceed. These still plan as a normal `Update`, just with a
+`Warnings` entry printed alongside it, since Microsoft's own docs only
+caution against this ("you shouldn't lower it if you have data... that
+exceeds the lower value") rather than documenting it as a hard,
+API-enforced rejection — unconfirmed either way, so this tool warns rather
+than either blocking a possibly-fine change or silently allowing a
+possibly-risky one.
+
+**Never deletes a column, ever.** A column present live but absent from
+the local YAML shows as `AttributeImportAction.WouldRemove` in the plan,
+with an explicit reason — and that's the end of it. There's no override
+flag, and no code path in `TableImportService`/`DataverseClient` that
+issues a delete request at all. Deleting a column is exactly the kind of
+destructive, hard-to-reverse operation this tool refuses to guess its way
+into; if a column genuinely needs removing, that's a deliberate action to
+take elsewhere, not a side effect of a YAML file simply not mentioning it.
+
+**Never creates the table itself**, either — same "don't attempt the
+large, different, and separately-risky operation of bringing a whole new
+object into existence" boundary `form import`/`view import` already draw
+around forms/views that don't exist yet.
+
+**The diff is the table's decomposed YAML**, not a rebuilt artifact —
+unlike FormXML, there's no single canonical "table document" this tool
+ever reconstructs, so there's nothing to canonicalize before comparing.
+Since a column's identity (its logical name) is never resynthesized the
+way a form's tab/section/cell ids are, comparing the local YAML directly
+against a fresh re-export produces a clean, meaningful diff without any of
+the noise a raw-artifact comparison caused for forms — confirmed live
+against a real, non-trivial table (`account`), not assumed. Separately from
+that informational diff, an explicit **column plan** lists exactly what
+will happen to each column (create/update/skipped/would-remove) — a column
+can appear "different" in the diff without anything being done about it
+(unsupported type, or a removal), and the plan is where that distinction
+actually shows up.
+
+**What this doesn't do yet**: publish the change. Unlike form/view
+import's still-open question about whether publishing turns out to be
+necessary, Microsoft's own docs are explicit here: *"When you update a
+table or column definition, use the PublishXml Action before the changes
+you make are applied to the model-driven applications."* `table import`
+doesn't call it yet — the change is real and stored the moment `apply`
+succeeds, but won't be visible in model-driven apps until published
+separately.

@@ -163,6 +163,61 @@ Exported files follow a `<name>.<asset type>.yml` naming convention (e.g.
 `account.table.yml`) so a folder of exports stays sortable and unambiguous
 across tables, views, forms, and any asset type that joins them later.
 
+#### `table import`
+
+Writes a `*.table.yml` file's table-level properties (`displayName`/
+`pluralDisplayName`/`description`) and columns back into Dataverse. Needs
+sign-in.
+
+```
+d365architect table import --input account.table.yml
+```
+
+| Option        | Description                                              | Required |
+|---------------|--------------------------------------------------------------|----------|
+| `-i, --input` | Path to the `*.table.yml` file to import                       | Yes      |
+| `-y, --yes`   | Skip the confirmation prompt and import immediately            | No       |
+
+Before writing anything, this prints the full diff between the local file
+and re-exporting the table right now, plus a separate **column plan**
+listing exactly what will happen to each column: `create`, `update`, or —
+just as important — why nothing will happen for one that's different in
+the diff but not actually touched. Only these column types can be created
+or updated: `String`, `Memo`, `Integer`, `BigInt`, `Decimal`, `Money`,
+`DateTime` — anything else (`Picklist`, `Boolean`, `Lookup`, and several
+more) shows up in the plan as not applied, with the reason, rather than
+being guessed at. **Columns are never deleted automatically**, no matter
+what the local YAML says or doesn't say — a column missing from the file
+just shows up in the plan as "not applied", nothing more. The table itself
+is never created if it doesn't exist yet, either. Unless `--yes` is passed,
+you get a confirmation prompt (defaulting to "no") before anything actually
+changes in Dataverse, and if there's genuinely nothing to apply, nothing is
+written at all.
+
+Every create/update is also checked for common invalid changes *before*
+anything is sent — changing a column's type or SchemaName after creation,
+creating a column whose SchemaName has no customization prefix or contains
+an invalid character (e.g. `BankName` or `new_Bank Name` instead of
+`new_BankName`), a `Name` that won't match the logical name Dataverse
+actually derives from SchemaName, two new columns claiming the same
+SchemaName, an invalid `RequiredLevel`, a MaxLength outside 1–4000
+(String/Memo), an Integer MinValue/MaxValue outside -2147483648 to
+2147483647, a Decimal/Money Precision outside 1–10, or MinValue greater
+than MaxValue — all show up in the plan as `invalid` with the specific
+reason, rather than being attempted and failing with a raw Dataverse API
+error. See `docs/yaml-conventions.md` for which of these are confirmed
+against Microsoft's own documented bounds versus a reasonable, same-shape
+extension. A few things Dataverse allows but warns against (lowering
+`MaxLength`/`Precision` below what existing data might exceed) still plan
+as a normal update, just with a warning printed alongside.
+
+**What this doesn't do yet**: publish the change — Dataverse's own docs
+confirm this is required for a table/column change to take effect in
+model-driven apps, and this tool doesn't call it automatically. See
+[`docs/yaml-conventions.md`](docs/yaml-conventions.md#importing-tables-table-import)
+for the full detail, including exactly why each excluded column type is
+excluded.
+
 ### `view`
 
 Work with D365 view (saved query) definitions.
@@ -197,6 +252,32 @@ Accounts" becomes `active-accounts.view.yml`. A view's FetchXML and
 LayoutXML are kept verbatim rather than decomposed into a friendlier shape,
 since (unlike a table's columns) there's no bulk metadata endpoint to
 double-check that decomposition against.
+
+#### `view import`
+
+Writes a `*.view.yml` file's description/FetchXML/LayoutXML directly back
+into Dataverse. Needs sign-in.
+
+```
+d365architect view import --input active-accounts.view.yml
+```
+
+| Option        | Description                                              | Required |
+|---------------|--------------------------------------------------------------|----------|
+| `-i, --input` | Path to the `*.view.yml` file to import                        | Yes      |
+| `-y, --yes`   | Skip the confirmation prompt and import immediately             | No       |
+
+Simpler than `form import`: since FetchXML/LayoutXML are kept verbatim
+(never decomposed and rebuilt), the diff compares the live values against
+the local YAML directly, with no canonicalization step needed first. Only
+`description`/`fetchXml`/`layoutXml` are ever written — a view's type,
+default status, and Quick Find flag are never changed by this command. Only
+ever updates a view that already exists; unless `--yes` is passed, you get
+a confirmation prompt (defaulting to "no") before anything actually changes
+in Dataverse.
+
+**What this doesn't do yet**: publish the change — same as `form
+import`/`table import`.
 
 ### `form`
 
@@ -301,9 +382,10 @@ decomposed (`Navigation`, `clientresources`, `RibbonDiffXml`, root chrome
 attributes, ...) survives untouched because it's never modified, not
 because this tool reconstructed it. When no form by that name exists yet
 (a brand-new form this YAML describes but hasn't been created in Dataverse),
-it falls back to building fresh from just the YAML instead. This is one
-building block toward a future `form import`, which would actually write
-the result back — this command only ever reads.
+it falls back to building fresh from just the YAML instead. This is purely a local
+inspection/validation tool — `form import` (below) doesn't call this
+command or depend on it in any way; it does its own independent
+retrieve-and-patch.
 
 ```
 d365architect form build-xml --input account-main-form.form.yml
@@ -336,6 +418,45 @@ violation isn't necessarily this tool's mistake — real, live Dataverse
 FormXML is confirmed to violate this same schema in at least one way
 (`headerdensity`/`showinformselector`), unrelated to anything `form
 build-xml` does.
+
+#### `form import`
+
+Writes a `*.form.yml` file's rebuilt FormXML directly back into
+Dataverse — straight from the YAML, not through `form build-xml` first (see
+that command's own description above for why it's never a required step on
+the way here). Needs sign-in.
+
+```
+d365architect form import --input account-main-form.form.yml
+```
+
+| Option        | Description                                              | Required |
+|---------------|--------------------------------------------------------------|----------|
+| `-i, --input` | Path to the `*.form.yml` file to import                       | Yes      |
+| `-y, --yes`   | Skip the confirmation prompt and import immediately            | No       |
+
+Before writing anything, this looks up the form's current live FormXML,
+rebuilds it (the same patch-onto-the-live-document mechanism as
+`build-xml`), validates it against Microsoft's own FormXML schema, and
+prints a line-level diff between what's live now and what's about to
+replace it — the concrete answer to "must have a way to check differences
+between client and server". If the rebuild is identical to what's already
+live, nothing is written at all. Otherwise, unless `--yes` is passed, you
+get a confirmation prompt (defaulting to "no") before anything actually
+changes in Dataverse.
+
+Only ever updates a form that already exists — it refuses (rather than
+creating one) when no form matches the YAML's table + name yet, and
+refuses outright for a dashboard, same as `build-xml`.
+
+**What this doesn't do yet**: publish the change (Dataverse customizations
+still need publishing separately — e.g. in the maker portal — before end
+users see it), or detect that the live form was changed by someone else
+since this YAML was last exported (it only compares the live document
+against what's about to be written, not against what it looked like at
+export time). See
+[`docs/yaml-conventions.md`](docs/yaml-conventions.md#importing-formxml-form-import)
+for the full detail on both.
 
 ### `schema`
 
