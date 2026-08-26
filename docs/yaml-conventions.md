@@ -80,7 +80,7 @@ still derive the original from it. Concretely:
 - Element/attribute **names** are kept exactly as Dataverse names them (e.g.
   `RelationshipName`, `TargetEntityType`, `entityname`) — never re-cased or
   reworded, since guessing at word boundaries risks getting it wrong the same
-  way guessing at `FormControl.ClassId`'s meaning would (see Rule 4).
+  way guessing at a custom control's class id's meaning would (see Rule 4).
 - A parameter value that is itself a double-encoded XML fragment (e.g. a
   quick view control's `QuickForms`) is parsed and converted the same way,
   recursively — but wrapped under a reserved `xml` key naming the
@@ -232,15 +232,38 @@ that changed `form import`'s behavior.
 ## Rule 4: raw platform identifiers are never guessed at
 
 `AttributeDefinition`/`FormControl` keep some Dataverse identifiers as raw,
-uninterpreted strings — most notably `FormControl.ClassId` (the control's
-class id, a GUID). This tool deliberately does not maintain a
-classid-to-friendly-name lookup table: unlike `componenttype`/`queryType`/the
-systemform `type` option set (each backed by a documented, authoritative
-Microsoft reference — the SDK's own enum, or a table on a "Choices/Options"
-reference page), there is no equally authoritative source enumerating every
-control class id, and a wrong guess would misrepresent real data rather than
-just under-describe it. **For import**: `ClassId` should be written back to
-FormXML verbatim, exactly as read.
+uninterpreted strings when there's no reliable way to do otherwise —
+`FormControl.CustomControlId` (a custom/PCF control's own class id, a GUID)
+is the clearest example: unlike `componenttype`/`queryType`/the systemform
+`type` option set (each backed by a documented, authoritative Microsoft
+reference — the SDK's own enum, or a table on a "Choices/Options"
+reference page), there is no equally authoritative source enumerating
+every control ever registered on a real tenant, and a wrong guess would
+misrepresent real data rather than just under-describe it.
+
+**Dataverse's own *standard* controls are the one exception, not a
+contradiction of this rule** — a small, knowable set, now mapped to a
+friendly name via `FormControl.Control`/`StandardFormControls` (e.g.
+`SingleLineText`, `Lookup`, `Subgrid` instead of a raw GUID). What makes
+this different from guessing: every entry was cross-checked against real,
+live, Microsoft-published FormXML (not a docs page alone, and not a single
+third-party tool's own internal table) before being trusted for a round
+trip that writes back to a real form — see `StandardFormControls`'s own
+doc comment for exactly which entries are confirmed that way versus
+corroborated-but-not-personally-live-confirmed, and what was deliberately
+left out rather than guessed (`BigInt` — no control exists, Dataverse
+doesn't support it on forms at all; `UniqueIdentifier` — no control found
+anywhere; Business Process Flow — its class id lives in a `workflow`
+record's own Xaml, not `systemform` FormXML, so out of scope here by
+construction).
+
+A control is either one of Dataverse's own standard ones (`Control`) or
+something else (`CustomControlId`) — never both, and this tool refuses to
+guess which when it's ambiguous (see `FormControlValidator` below) rather
+than picking one silently. **Legacy**: a `*.form.yml` hand-authored before
+this split existed may still carry the older `classId` key directly —
+still read, for compatibility, but never written; a fresh `form export`
+always produces `control`/`customControlId` instead.
 
 ## Rebuilding FormXML (`form build-xml`)
 
@@ -334,10 +357,15 @@ as the Precision/MaxLength case above, needed here because
 `FormXmlWriter` always replaces `header`/`footer`/`tabs` wholesale rather
 than patching one control at a time, so an untouched classid-less control
 would otherwise get flagged every time something *else* on the form
-changed). Its findings are `FormXmlValidationMessage`s too, merged
-straight into the same list `FormXmlValidator` produces — so they get the
-identical `IsKnownHarmless`-gated blocking treatment, no separate
-mechanism needed.
+changed). `FormControlValidator` also catches two purely local mistakes
+that don't need Dataverse at all to know are wrong: `control` and
+`customControlId` both set on the same control (mutually exclusive — see
+Rule 4), and a `control` value that isn't one of `StandardFormControls`'
+recognized names (almost certainly a typo, since a real one only ever
+comes from a fresh `form export` in the first place). All three findings
+are `FormXmlValidationMessage`s, merged straight into the same list
+`FormXmlValidator` produces — so they get the identical
+`IsKnownHarmless`-gated blocking treatment, no separate mechanism needed.
 
 Each violation (`FormXmlValidationMessage`) also carries .NET's own
 `XmlSeverityType` (`Error`/`Warning`) alongside the message — checked

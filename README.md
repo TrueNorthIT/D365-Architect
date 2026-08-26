@@ -346,8 +346,13 @@ distinction, since two sections in different tab-columns render next to
 each other rather than stacked, and a section's own multi-column layout
 changes how its fields group visually even though the field list itself is
 still just one flat, row-major list either way. Each control lists its id,
-the attribute it's bound to (when it's bound to one), its label, and its
-raw control class id. A raw XML blob of a form's layout markup isn't
+the attribute it's bound to (when it's bound to one), its label, and which
+control renders it — as a friendly name (`control: SingleLineText`,
+`Lookup`, `Subgrid`, ...) for one of Dataverse's own confirmed standard
+controls, or the raw class id (`customControlId`) for a custom/PCF control
+or one not yet in that list — see `docs/yaml-conventions.md`'s Rule 4 and
+`StandardFormControls` for the full set and how each entry was confirmed
+rather than guessed. A raw XML blob of a form's layout markup isn't
 something you can usefully review, diff, or drive a bulk change from; this
 structure is. Every control is captured this way, not just simple fields —
 a subgrid's target table/relationship/view, a web resource's name, a quick
@@ -468,13 +473,17 @@ on the same reasoning, and a real import attempt with that exact shape
 failed live with a raw Dataverse 400. `--yes` does not imply
 `--allow-schema-violations`; they're deliberately separate opt-ins.
 
-This also catches a control with no `ClassId` before writing it — a second
-real, live-confirmed failure mode (`"The class id cannot be null for
-control element..."`) that Microsoft's own FormXML schema doesn't check at
-all (`classid` isn't declared required there), so no amount of schema
-validation alone would ever catch it. A control whose live counterpart
-already has no `ClassId` either is exempted, so re-importing a form
-unchanged never trips this — see `docs/yaml-conventions.md` for why.
+This also catches a control with no resolvable `control`/`customControlId`
+before writing it — a second real, live-confirmed failure mode (`"The
+class id cannot be null for control element..."`) that Microsoft's own
+FormXML schema doesn't check at all (`classid` isn't declared required
+there), so no amount of schema validation alone would ever catch it. A
+control whose live counterpart already has no classid either is exempted,
+so re-importing a form unchanged never trips this — see
+`docs/yaml-conventions.md` for why. Also catches a `control` value that's
+not one of `StandardFormControls`' recognized names (a likely typo) and
+`control`/`customControlId` both set at once (mutually exclusive) — see
+below.
 
 Only ever updates a form that already exists — it refuses (rather than
 creating one) when nothing matches, and refuses outright for a dashboard,

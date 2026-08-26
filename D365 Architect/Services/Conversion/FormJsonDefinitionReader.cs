@@ -334,13 +334,22 @@ public sealed class FormJsonDefinitionReader
         }
 
         var uniqueId = (string?)control!.Attribute("uniqueid");
+        var rawClassId = (string?)control.Attribute("classid");
+        var friendlyControl = rawClassId is not null ? StandardFormControls.TryGetFriendlyName(rawClassId) : null;
 
         return new FormControl
         {
             Id = id,
             Field = (string?)control.Attribute("datafieldname"),
             Label = FirstLabelText(cell.Element("labels")),
-            ClassId = (string?)control.Attribute("classid"),
+            // A recognized standard control's classid becomes Control (the
+            // friendly name); anything else keeps the raw classid under
+            // CustomControlId instead — never both, and the legacy ClassId
+            // property is only ever populated by reading an old
+            // *.form.yml, never written here. See StandardFormControls'
+            // own doc comment for how "recognized" was actually confirmed.
+            Control = friendlyControl,
+            CustomControlId = rawClassId is not null && friendlyControl is null ? rawClassId : null,
             Disabled = DefaultValueConventions.TrueOrNull((string?)control.Attribute("disabled") == "true"),
             Visible = DefaultValueConventions.FalseOrNull((bool?)cell.Attribute("visible")),
             ColumnSpan = (int?)cell.Attribute("colspan") is { } colspan and > 1 ? colspan : null,

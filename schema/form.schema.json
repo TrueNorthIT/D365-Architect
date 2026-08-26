@@ -12,6 +12,11 @@
       "description": "Logical name of the table this form belongs to, e.g. \"account\" (the systemform's objecttypecode).",
       "type": "string"
     },
+    "formId": {
+      "description": "The systemform's own formid — unlike Name, this is what form import actually matches against the live form with, so a local rename (or two forms sharing a name — see AmbiguousSystemFormException) can never send an update to the wrong record. Name/Entity are still kept for readability and as the fallback lookup for a pre-existing exported file from before this field existed; once present, they're purely informational — editing them locally never changes which form gets updated. Absent only for a form export predating this field.",
+      "type": "string",
+      "format": "uuid"
+    },
     "description": {
       "type": "string"
     },
@@ -85,8 +90,39 @@
                             "label": {
                               "type": "string"
                             },
-                            "classId": {
-                              "description": "Dataverse's raw control class id (a GUID) — which control renders this cell, e.g. distinguishing a non-default control override from a field's usual one. Deliberately not mapped to a friendly name: unlike a solutioncomponent componenttype (confirmed straight from Microsoft's own docs), no equally authoritative source lists every control class id, and guessing one wrong would be worse than showing the raw id.",
+                            "control": {
+                              "description": "Which control renders this cell, as one of Dataverse's own confirmed standard controls (e.g. \"SingleLineText\", \"Lookup\", \"Subgrid\") — see StandardFormControls for the full list and how each entry was confirmed, not guessed. Mutually exclusive with CustomControlId: a control is either one of Dataverse's own standard ones (set this) or something else (a custom/PCF control, or a standard one not yet in that list — set that instead).",
+                              "type": "string",
+                              "enum": [
+                                "ActivitiesGrid",
+                                "Currency",
+                                "DateAndTime",
+                                "Decimal",
+                                "Email",
+                                "IFrame",
+                                "Lookup",
+                                "MultiSelectOptionSet",
+                                "MultilineText",
+                                "Notes",
+                                "OptionSet",
+                                "PartyList",
+                                "Phone",
+                                "QuickViewForm",
+                                "SingleLineText",
+                                "Subgrid",
+                                "TickerSymbol",
+                                "Timeline",
+                                "TwoOptions",
+                                "TwoOptionsCheckbox",
+                                "Url",
+                                "WebResource",
+                                "WebResourceImage",
+                                "WebResourceSilverlight",
+                                "WholeNumber"
+                              ]
+                            },
+                            "customControlId": {
+                              "description": "The raw Dataverse control class id (a GUID), for a control that isn't one of Dataverse's own recognized standard controls — a custom/PCF control, or a standard one this tool hasn't confirmed the friendly name for yet. See Control's own doc comment for when to use which. Kept raw rather than guessed at a friendly name here: unlike Dataverse's own standard controls (a small, now-confirmed set — see StandardFormControls), there's no source enumerating every control ever registered on a real tenant, and a wrong guess would misrepresent real data rather than just under-describe it.",
                               "type": "string"
                             },
                             "disabled": {
@@ -217,6 +253,10 @@
                                 },
                                 "additionalProperties": false
                               }
+                            },
+                            "classId": {
+                              "description": "Legacy: the raw control class id, exactly as this tool captured it before Control/CustomControlId existed. Still read — so a `*.form.yml` hand-authored before this split keeps working — but never written: a fresh `form export` always produces Control or CustomControlId instead, and this stays null (so it's omitted) on every export going forward.",
+                              "type": "string"
                             }
                           },
                           "additionalProperties": false,
@@ -254,8 +294,39 @@
           "label": {
             "type": "string"
           },
-          "classId": {
-            "description": "Dataverse's raw control class id (a GUID) — which control renders this cell, e.g. distinguishing a non-default control override from a field's usual one. Deliberately not mapped to a friendly name: unlike a solutioncomponent componenttype (confirmed straight from Microsoft's own docs), no equally authoritative source lists every control class id, and guessing one wrong would be worse than showing the raw id.",
+          "control": {
+            "description": "Which control renders this cell, as one of Dataverse's own confirmed standard controls (e.g. \"SingleLineText\", \"Lookup\", \"Subgrid\") — see StandardFormControls for the full list and how each entry was confirmed, not guessed. Mutually exclusive with CustomControlId: a control is either one of Dataverse's own standard ones (set this) or something else (a custom/PCF control, or a standard one not yet in that list — set that instead).",
+            "type": "string",
+            "enum": [
+              "ActivitiesGrid",
+              "Currency",
+              "DateAndTime",
+              "Decimal",
+              "Email",
+              "IFrame",
+              "Lookup",
+              "MultiSelectOptionSet",
+              "MultilineText",
+              "Notes",
+              "OptionSet",
+              "PartyList",
+              "Phone",
+              "QuickViewForm",
+              "SingleLineText",
+              "Subgrid",
+              "TickerSymbol",
+              "Timeline",
+              "TwoOptions",
+              "TwoOptionsCheckbox",
+              "Url",
+              "WebResource",
+              "WebResourceImage",
+              "WebResourceSilverlight",
+              "WholeNumber"
+            ]
+          },
+          "customControlId": {
+            "description": "The raw Dataverse control class id (a GUID), for a control that isn't one of Dataverse's own recognized standard controls — a custom/PCF control, or a standard one this tool hasn't confirmed the friendly name for yet. See Control's own doc comment for when to use which. Kept raw rather than guessed at a friendly name here: unlike Dataverse's own standard controls (a small, now-confirmed set — see StandardFormControls), there's no source enumerating every control ever registered on a real tenant, and a wrong guess would misrepresent real data rather than just under-describe it.",
             "type": "string"
           },
           "disabled": {
@@ -386,6 +457,10 @@
               },
               "additionalProperties": false
             }
+          },
+          "classId": {
+            "description": "Legacy: the raw control class id, exactly as this tool captured it before Control/CustomControlId existed. Still read — so a `*.form.yml` hand-authored before this split keeps working — but never written: a fresh `form export` always produces Control or CustomControlId instead, and this stays null (so it's omitted) on every export going forward.",
+            "type": "string"
           }
         },
         "additionalProperties": false,
@@ -411,8 +486,39 @@
           "label": {
             "type": "string"
           },
-          "classId": {
-            "description": "Dataverse's raw control class id (a GUID) — which control renders this cell, e.g. distinguishing a non-default control override from a field's usual one. Deliberately not mapped to a friendly name: unlike a solutioncomponent componenttype (confirmed straight from Microsoft's own docs), no equally authoritative source lists every control class id, and guessing one wrong would be worse than showing the raw id.",
+          "control": {
+            "description": "Which control renders this cell, as one of Dataverse's own confirmed standard controls (e.g. \"SingleLineText\", \"Lookup\", \"Subgrid\") — see StandardFormControls for the full list and how each entry was confirmed, not guessed. Mutually exclusive with CustomControlId: a control is either one of Dataverse's own standard ones (set this) or something else (a custom/PCF control, or a standard one not yet in that list — set that instead).",
+            "type": "string",
+            "enum": [
+              "ActivitiesGrid",
+              "Currency",
+              "DateAndTime",
+              "Decimal",
+              "Email",
+              "IFrame",
+              "Lookup",
+              "MultiSelectOptionSet",
+              "MultilineText",
+              "Notes",
+              "OptionSet",
+              "PartyList",
+              "Phone",
+              "QuickViewForm",
+              "SingleLineText",
+              "Subgrid",
+              "TickerSymbol",
+              "Timeline",
+              "TwoOptions",
+              "TwoOptionsCheckbox",
+              "Url",
+              "WebResource",
+              "WebResourceImage",
+              "WebResourceSilverlight",
+              "WholeNumber"
+            ]
+          },
+          "customControlId": {
+            "description": "The raw Dataverse control class id (a GUID), for a control that isn't one of Dataverse's own recognized standard controls — a custom/PCF control, or a standard one this tool hasn't confirmed the friendly name for yet. See Control's own doc comment for when to use which. Kept raw rather than guessed at a friendly name here: unlike Dataverse's own standard controls (a small, now-confirmed set — see StandardFormControls), there's no source enumerating every control ever registered on a real tenant, and a wrong guess would misrepresent real data rather than just under-describe it.",
             "type": "string"
           },
           "disabled": {
@@ -543,6 +649,10 @@
               },
               "additionalProperties": false
             }
+          },
+          "classId": {
+            "description": "Legacy: the raw control class id, exactly as this tool captured it before Control/CustomControlId existed. Still read — so a `*.form.yml` hand-authored before this split keeps working — but never written: a fresh `form export` always produces Control or CustomControlId instead, and this stays null (so it's omitted) on every export going forward.",
+            "type": "string"
           }
         },
         "additionalProperties": false,

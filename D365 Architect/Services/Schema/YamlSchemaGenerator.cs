@@ -62,7 +62,7 @@ public static class YamlSchemaGenerator
             var name = member?.Alias ?? CamelCaseNamingConvention.Instance.Apply(property.Name);
             var description = GetDescription(type, property, xmlDocs);
 
-            properties[name] = BuildPropertySchema(property.PropertyType, description, xmlDocs, ancestors);
+            properties[name] = BuildPropertySchema(property, description, xmlDocs, ancestors);
 
             if (property.GetCustomAttribute<RequiredMemberAttribute>() is not null)
             {
@@ -87,9 +87,36 @@ public static class YamlSchemaGenerator
         return schema;
     }
 
-    private static JsonObject BuildPropertySchema(Type propertyType, string? description, XDocument? xmlDocs, HashSet<Type> ancestors)
+    private static JsonObject BuildPropertySchema(PropertyInfo property, string? description, XDocument? xmlDocs, HashSet<Type> ancestors)
     {
+        var propertyType = property.PropertyType;
         var type = Nullable.GetUnderlyingType(propertyType) ?? propertyType;
+
+        // Checked before the ordinary type-driven switch below: a property
+        // marked SchemaEnum still gets its base "type": "string" from that
+        // switch, just with an "enum" added on top constraining it to a
+        // known set of values — see SchemaEnumAttribute's own doc comment
+        // for why this reads the values by reflection rather than they
+        // being duplicated here by hand.
+        if (property.GetCustomAttribute<SchemaEnumAttribute>() is { } schemaEnum)
+        {
+            var values = (IEnumerable<string>)(schemaEnum.ProviderType.GetMember(schemaEnum.ProviderMemberName, BindingFlags.Public | BindingFlags.Static)
+                    .FirstOrDefault()
+                switch
+                {
+                    FieldInfo field => field.GetValue(null),
+                    PropertyInfo prop => prop.GetValue(null),
+                    _ => throw new InvalidOperationException($"'{schemaEnum.ProviderType.Name}.{schemaEnum.ProviderMemberName}' (named by a {nameof(SchemaEnumAttribute)} on '{property.DeclaringType?.Name}.{property.Name}') isn't a public static field or property."),
+                })!;
+
+            var enumSchema = new JsonObject { ["type"] = "string", ["enum"] = new JsonArray(values.Select(v => JsonValue.Create(v)).ToArray()) };
+            if (!string.IsNullOrWhiteSpace(description))
+            {
+                enumSchema.Insert(0, "description", description);
+            }
+
+            return enumSchema;
+        }
 
         var schema = type switch
         {

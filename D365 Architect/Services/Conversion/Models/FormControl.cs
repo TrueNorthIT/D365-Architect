@@ -1,3 +1,5 @@
+using D365Architect.Services.Conversion;
+using D365Architect.Services.Schema;
 using YamlDotNet.Serialization;
 
 namespace D365Architect.Services.Conversion.Models;
@@ -40,15 +42,44 @@ public sealed class FormControl
     public string? Label { get; init; }
 
     /// <summary>
-    /// Dataverse's raw control class id (a GUID) — which control renders
-    /// this cell, e.g. distinguishing a non-default control override from a
-    /// field's usual one. Deliberately not mapped to a friendly name:
-    /// unlike a solutioncomponent componenttype (confirmed straight from
-    /// Microsoft's own docs), no equally authoritative source lists every
-    /// control class id, and guessing one wrong would be worse than showing
-    /// the raw id.
+    /// Which control renders this cell, as one of Dataverse's own
+    /// confirmed standard controls (e.g. "SingleLineText", "Lookup",
+    /// "Subgrid") — see <see cref="StandardFormControls"/> for the full
+    /// list and how each entry was confirmed, not guessed. Mutually
+    /// exclusive with <see cref="CustomControlId"/>: a control is either
+    /// one of Dataverse's own standard ones (set this) or something else
+    /// (a custom/PCF control, or a standard one not yet in that list — set
+    /// that instead).
     /// </summary>
     [YamlMember(Order = 3)]
+    [SchemaEnum(typeof(StandardFormControls), nameof(StandardFormControls.FriendlyNames))]
+    public string? Control { get; init; }
+
+    /// <summary>
+    /// The raw Dataverse control class id (a GUID), for a control that
+    /// isn't one of Dataverse's own recognized standard controls — a
+    /// custom/PCF control, or a standard one this tool hasn't confirmed
+    /// the friendly name for yet. See <see cref="Control"/>'s own doc
+    /// comment for when to use which. Kept raw rather than guessed at a
+    /// friendly name here: unlike Dataverse's own standard controls (a
+    /// small, now-confirmed set — see <see cref="StandardFormControls"/>),
+    /// there's no source enumerating every control ever registered on a
+    /// real tenant, and a wrong guess would misrepresent real data rather
+    /// than just under-describe it.
+    /// </summary>
+    [YamlMember(Order = 4)]
+    public string? CustomControlId { get; init; }
+
+    /// <summary>
+    /// Legacy: the raw control class id, exactly as this tool captured it
+    /// before <see cref="Control"/>/<see cref="CustomControlId"/> existed.
+    /// Still read — so a `*.form.yml` hand-authored before this split
+    /// keeps working — but never written: a fresh `form export` always
+    /// produces <see cref="Control"/> or <see cref="CustomControlId"/>
+    /// instead, and this stays null (so it's omitted) on every export
+    /// going forward.
+    /// </summary>
+    [YamlMember(Alias = "classId", Order = 99)]
     public string? ClassId { get; init; }
 
     /// <summary>
