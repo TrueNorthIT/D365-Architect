@@ -30,9 +30,12 @@ namespace D365Architect.Commands.Form;
 /// confirm (or pass <c>--yes</c>), and if the two sides are identical,
 /// nothing is written at all.
 ///
-/// Only ever updates a form that already exists — refuses (rather than
-/// creating one) when no form matches the YAML's table + name yet, and
-/// refuses outright for a dashboard, same as `build-xml`.
+/// Only ever updates a form that already exists — matched by the YAML's own
+/// `formId` when it has one (immune to a rename or a name shared with
+/// another form), or by table + name as a fallback for a file exported
+/// before that field existed. Refuses (rather than creating one) when
+/// nothing matches, and refuses outright for a dashboard, same as
+/// `build-xml`.
 ///
 /// What this doesn't do yet: publish the change (Dataverse customizations
 /// still need publishing separately before end users see it), or detect
@@ -68,6 +71,12 @@ public sealed class ImportFormCommand(IAuthenticationService authenticationServi
 
             var preview = await AnsiConsole.Status().StartAsync($"Looking up '{form.Name}' and rebuilding its FormXML...",
                 async _ => await formImportService.PreviewAsync(auth.EnvironmentUrl, auth.AccessToken, form, cancellationToken));
+
+            if (preview.IdentityMismatchWarning is not null)
+            {
+                AnsiConsole.MarkupLine($"[yellow]Warning:[/] {preview.IdentityMismatchWarning.EscapeMarkup()}");
+                AnsiConsole.WriteLine();
+            }
 
             if (!preview.HasChanges)
             {

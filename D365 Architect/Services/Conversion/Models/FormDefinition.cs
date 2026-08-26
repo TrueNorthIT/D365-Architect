@@ -24,12 +24,16 @@ namespace D365Architect.Services.Conversion.Models;
 /// them — undecomposed rather than guessed at, same spirit as a view's
 /// undecomposed LayoutXML columns.
 ///
-/// Deliberately excluded: <c>formid</c>/<c>formidunique</c> — GUIDs with no
-/// meaning to a human editing this YAML; <see cref="Name"/> is this asset's
-/// only practical identity, same reasoning as <see cref="ViewDefinition.Name"/>.
-/// Also excluded: <c>formpresentation</c> (Classic/Air/ConvertedIC) — a
-/// rendering detail rather than something worth round-tripping until a real
-/// need for it shows up.
+/// <see cref="FormId"/> (<c>formid</c>) is captured too, specifically so
+/// <c>form import</c> can match the exact live record rather than relying
+/// on <see cref="Name"/>/<see cref="Entity"/> — a name is still this asset's
+/// most human-readable identity (kept, and still the fallback for a file
+/// exported before this field existed), but it's no longer the only one
+/// that matters for matching a server-side form. <c>formidunique</c> is
+/// still excluded — a second, redundant GUID Dataverse doesn't actually use
+/// for lookups. Also excluded: <c>formpresentation</c> (Classic/Air/
+/// ConvertedIC) — a rendering detail rather than something worth
+/// round-tripping until a real need for it shows up.
 ///
 /// This model was audited property-by-property against Microsoft's own
 /// FormXML schema (https://learn.microsoft.com/power-apps/developer/model-driven-apps/form-xml-schema)
@@ -67,7 +71,22 @@ public sealed class FormDefinition
     [YamlMember(Order = 1)]
     public required string Entity { get; init; }
 
+    /// <summary>
+    /// The systemform's own <c>formid</c> — unlike <see cref="Name"/>, this
+    /// is what <c>form import</c> actually matches against the live form
+    /// with, so a local rename (or two forms sharing a name — see
+    /// <see cref="Dataverse.AmbiguousSystemFormException"/>) can never send
+    /// an update to the wrong record. <see cref="Name"/>/<see cref="Entity"/>
+    /// are still kept for readability and as the fallback lookup for a
+    /// pre-existing exported file from before this field existed; once
+    /// present, they're purely informational — editing them locally never
+    /// changes which form gets updated. Absent only for a form export
+    /// predating this field.
+    /// </summary>
     [YamlMember(Order = 2)]
+    public Guid? FormId { get; init; }
+
+    [YamlMember(Order = 3)]
     public string? Description { get; init; }
 
     /// <summary>
@@ -78,7 +97,7 @@ public sealed class FormDefinition
     /// main form, and by far the most common case. Omit for a Main form;
     /// applying this file back won't change its type.
     /// </summary>
-    [YamlMember(Order = 3)]
+    [YamlMember(Order = 4)]
     public string? Type { get; init; }
 
     /// <summary>
@@ -87,7 +106,7 @@ public sealed class FormDefinition
     /// Omit to leave this as a non-default form; applying this file back
     /// won't make it the default.
     /// </summary>
-    [YamlMember(Order = 4)]
+    [YamlMember(Order = 5)]
     public bool? IsDefault { get; init; }
 
     /// <summary>
@@ -96,7 +115,7 @@ public sealed class FormDefinition
     /// form that's actually in use. Omit to leave this form active;
     /// applying this file back won't deactivate it.
     /// </summary>
-    [YamlMember(Order = 5)]
+    [YamlMember(Order = 6)]
     public string? FormActivationState { get; init; }
 
     /// <summary>
@@ -104,7 +123,7 @@ public sealed class FormDefinition
     /// see <see cref="DefaultValueConventions.FalseOrNull"/>. Omit to leave
     /// this form customizable; applying this file back won't lock it down.
     /// </summary>
-    [YamlMember(Order = 6)]
+    [YamlMember(Order = 7)]
     public bool? IsCustomizable { get; init; }
 
     /// <summary>
@@ -113,15 +132,15 @@ public sealed class FormDefinition
     /// tool doesn't decompose at all yet (dashboards) or whose FormXML
     /// Dataverse didn't return.
     /// </summary>
-    [YamlMember(Order = 7)]
+    [YamlMember(Order = 8)]
     public IReadOnlyList<FormTab> Tabs { get; init; } = [];
 
     /// <summary>Controls pinned to the form's header bar, outside any tab. Absent when the form has none.</summary>
-    [YamlMember(Order = 8)]
+    [YamlMember(Order = 9)]
     public IReadOnlyList<FormControl>? HeaderControls { get; init; }
 
     /// <summary>Controls pinned to the form's footer bar, outside any tab. Absent when the form has none.</summary>
-    [YamlMember(Order = 9)]
+    [YamlMember(Order = 10)]
     public IReadOnlyList<FormControl>? FooterControls { get; init; }
 
     /// <summary>
@@ -129,22 +148,22 @@ public sealed class FormDefinition
     /// common on an Interactive-experience-style form built from an older
     /// one. Absent when this form has no ancestor.
     /// </summary>
-    [YamlMember(Order = 10)]
+    [YamlMember(Order = 11)]
     public string? Ancestor { get; init; }
 
     /// <summary>Fields the form tracks but never renders on any tab — see <see cref="FormHiddenField"/>. Absent when there are none.</summary>
-    [YamlMember(Order = 11)]
+    [YamlMember(Order = 12)]
     public IReadOnlyList<FormHiddenField>? HiddenFields { get; init; }
 
     /// <summary>When this form is offered as a choice for a record, and to whom — see <see cref="FormDisplayCondition"/>. Absent when the form has none (every published Main form seen has one, but not every form type does).</summary>
-    [YamlMember(Order = 12)]
+    [YamlMember(Order = 13)]
     public FormDisplayCondition? DisplayCondition { get; init; }
 
     /// <summary>JavaScript libraries this form loads. Absent when there are none.</summary>
-    [YamlMember(Order = 13)]
+    [YamlMember(Order = 14)]
     public IReadOnlyList<FormLibrary>? Libraries { get; init; }
 
     /// <summary>The form's business logic — event/handler bindings, not layout. See <see cref="FormEvent"/>. Absent when there are none.</summary>
-    [YamlMember(Order = 14)]
+    [YamlMember(Order = 15)]
     public IReadOnlyList<FormEvent>? Events { get; init; }
 }

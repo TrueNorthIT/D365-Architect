@@ -136,9 +136,14 @@ public sealed class FormJsonDefinitionReader
         var formXmlRoot = TryParseFormXml(GetString(form, "formxml"));
         var additionalControls = ParseControlDescriptions(formXmlRoot);
 
+        var formId = form.TryGetProperty("formid", out var idProperty) && idProperty.ValueKind == JsonValueKind.String && Guid.TryParse(idProperty.GetString(), out var id)
+            ? id
+            : (Guid?)null;
+
         return new FormDefinition
         {
             Name = name,
+            FormId = formId,
             Entity = GetString(form, "objecttypecode") ?? throw new InvalidDataException($"Form '{name}' is missing its 'objecttypecode' property."),
             Description = GetString(form, "description"),
             Type = TypeOrNull(GetInt(form, "type")),

@@ -355,21 +355,34 @@ what it is and why it doesn't lose anything.
 --input x.form.yml [--yes]`) writes a `*.form.yml` file's rebuilt FormXML
 back into Dataverse — directly from the YAML. It does **not** call `form
 build-xml` or `IFormXmlBuildService` first, and never shares a call path
-with either: it does its own independent lookup (`IDataverseClient.
-TryGetSystemFormAsync`, which — unlike `TryGetSystemFormXmlAsync` — also
-returns the form's own id, since import has to know which record to
-update) and its own `FormXmlWriter.Write(form, existingRoot)` call. This
-was a deliberate design choice, not an oversight: `build-xml` is a
-standalone tool for a human to inspect and validate what would get built,
-on demand — never plumbing something else is required to route through.
+with either: it does its own independent lookup and its own
+`FormXmlWriter.Write(form, existingRoot)` call. This was a deliberate
+design choice, not an oversight: `build-xml` is a standalone tool for a
+human to inspect and validate what would get built, on demand — never
+plumbing something else is required to route through.
 
-**Only ever updates a form that already exists.** No form matching the
-YAML's table + name yet throws `FormNotFoundException` rather than
-creating one — creating a brand-new form isn't supported yet (it would need
-a fair bit more: minimum required systemform properties beyond just
-`formxml`, and likely solution-context registration). Refuses a dashboard
-outright too, same as `build-xml`, for the same reason (`FormXmlWriter`
-itself refuses).
+**Looks the form up by `FormId` when the YAML has one** (`IDataverseClient.
+TryGetSystemFormByIdAsync`) — the ordinary case for anything that's been
+through `form export` since `FormId` was added. An id can't go stale or
+ambiguous the way table + name can (a rename, or two forms sharing a name —
+see `AmbiguousSystemFormException`), so once present it's what's actually
+imported onto; `Entity`/`Name` become purely informational at that point.
+Falls back to the old table + name lookup (`TryGetSystemFormAsync`) only
+for a `*.form.yml` exported before `FormId` existed. If the id resolves to
+a form whose live table/name no longer match the YAML's own `Entity`/
+`Name` — copied into the wrong file, or renamed live since export — a
+warning is printed before the diff; it doesn't block, since the id is
+still authoritative, but it's worth a second look. A `FormId` that no
+longer resolves to anything (the form was deleted) throws
+`FormNotFoundException` with that id in the message, distinct from the
+table + name variant of the same exception.
+
+**Only ever updates a form that already exists.** Nothing matching throws
+`FormNotFoundException` rather than creating one — creating a brand-new
+form isn't supported yet (it would need a fair bit more: minimum required
+systemform properties beyond just `formxml`, and likely solution-context
+registration). Refuses a dashboard outright too, same as `build-xml`, for
+the same reason (`FormXmlWriter` itself refuses).
 
 **"Must have a way to check differences between client and server"** (this
 feature's own originating requirement) is `TextDiff`, applied to the actual

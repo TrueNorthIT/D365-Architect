@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -198,6 +199,29 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         var formId = results[0].GetProperty("formid").GetGuid();
         var formXml = results[0].GetProperty("formxml").GetString() ?? "";
         return new ExistingSystemForm(formId, formXml);
+    }
+
+    public async Task<ExistingSystemForm?> TryGetSystemFormByIdAsync(Uri environmentUrl, string accessToken, Guid formId, CancellationToken cancellationToken)
+    {
+        var relativePath = $"systemforms({formId})?$select=formid,formxml,objecttypecode,name";
+
+        using var request = CreateRequest(environmentUrl, relativePath, accessToken);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+
+        await EnsureSuccessAsync(response, cancellationToken);
+
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        using var doc = JsonDocument.Parse(json);
+
+        var formXml = doc.RootElement.GetProperty("formxml").GetString() ?? "";
+        var entityLogicalName = doc.RootElement.GetProperty("objecttypecode").GetString() ?? "";
+        var name = doc.RootElement.GetProperty("name").GetString() ?? "";
+        return new ExistingSystemForm(formId, formXml, entityLogicalName, name);
     }
 
     public async Task UpdateSystemFormXmlAsync(Uri environmentUrl, string accessToken, Guid formId, string formXml, CancellationToken cancellationToken)

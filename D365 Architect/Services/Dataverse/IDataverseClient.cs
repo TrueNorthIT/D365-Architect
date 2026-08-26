@@ -70,15 +70,13 @@ public interface IDataverseClient
 
     /// <summary>
     /// Looks up a single form's current, live <c>formxml</c> by table +
-    /// display name — the same identity <c>form export</c> itself uses (see
-    /// <see cref="Conversion.Models.FormDefinition"/>'s own doc comment on
-    /// why <c>formid</c> isn't part of this tool's YAML). Used by
-    /// <c>form build-xml</c> to patch onto the live document rather than
-    /// building one from scratch — see
-    /// <see cref="Conversion.FormXmlWriter"/>. Returns null when no form by
-    /// that name exists yet on that table — the expected case for a form
-    /// this tool's YAML describes but that hasn't been created in Dataverse
-    /// yet.
+    /// display name — the fallback identity for a <c>*.form.yml</c>
+    /// exported before <see cref="Conversion.Models.FormDefinition.FormId"/>
+    /// existed; <c>form build-xml</c> uses it unconditionally, since it only
+    /// ever patches onto the live document to write a local file and has
+    /// never needed a form's id at all. Returns null when no form by that
+    /// name exists yet on that table — the expected case for a form this
+    /// tool's YAML describes but that hasn't been created in Dataverse yet.
     /// </summary>
     /// <exception cref="AmbiguousSystemFormException">More than one form on <paramref name="entityLogicalName"/> is named <paramref name="formName"/> — this tool won't guess which one to patch.</exception>
     Task<string?> TryGetSystemFormXmlAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string formName, CancellationToken cancellationToken);
@@ -87,10 +85,29 @@ public interface IDataverseClient
     /// As <see cref="TryGetSystemFormXmlAsync"/>, but also returns the
     /// form's own id — what <c>form import</c> needs (to know which record
     /// to update) that <c>form build-xml</c> never did (it only ever writes
-    /// a local file). See <see cref="ExistingSystemForm"/>.
+    /// a local file). See <see cref="ExistingSystemForm"/>. Used by
+    /// <c>form import</c> only as a fallback, for a <c>*.form.yml</c> with
+    /// no <c>FormId</c> of its own yet — see
+    /// <see cref="TryGetSystemFormByIdAsync"/> for the ordinary, preferred
+    /// path.
     /// </summary>
     /// <exception cref="AmbiguousSystemFormException">More than one form on <paramref name="entityLogicalName"/> is named <paramref name="formName"/> — this tool won't guess which one to import onto.</exception>
     Task<ExistingSystemForm?> TryGetSystemFormAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string formName, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Looks up a single form directly by its <c>formid</c> — what
+    /// <c>form import</c> prefers whenever the local YAML has one (see
+    /// <see cref="Conversion.Models.FormDefinition.FormId"/>), since an id
+    /// can't go ambiguous or stale the way a table + display name lookup
+    /// can (a rename, or two forms sharing a name). Also returns the live
+    /// record's own table/name (see <see cref="ExistingSystemForm.EntityLogicalName"/>/
+    /// <see cref="ExistingSystemForm.Name"/>) so a caller can flag it if
+    /// they've drifted from the YAML's own <c>Entity</c>/<c>Name</c> — a
+    /// sign the id was copied into the wrong file, since nothing else here
+    /// would otherwise catch that. Returns null when no form has that id —
+    /// most likely it was deleted since this YAML was last exported.
+    /// </summary>
+    Task<ExistingSystemForm?> TryGetSystemFormByIdAsync(Uri environmentUrl, string accessToken, Guid formId, CancellationToken cancellationToken);
 
     /// <summary>
     /// Updates an existing <c>systemform</c>'s <c>formxml</c> via a PATCH

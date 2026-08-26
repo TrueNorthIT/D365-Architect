@@ -331,7 +331,10 @@ d365architect form export --table account --solution examplesolution
 
 The form is written as `<form-name>.form.yml`, following the same
 `<name>.<asset type>.yml` convention as `table export`/`view export` — e.g.
-"Account Main Form" becomes `account-main-form.form.yml`.
+"Account Main Form" becomes `account-main-form.form.yml`. The YAML carries
+the form's own `formId` — `form import` (below) matches against that
+directly, so a local rename or two forms sharing a name never risks
+sending an update to the wrong record.
 
 Unlike a view's FetchXML/LayoutXML, a form's FormXML isn't kept verbatim —
 it's decomposed into `tabs` → `columns` → `sections` → `controls` (plus
@@ -438,8 +441,11 @@ d365architect form import --input account-main-form.form.yml
 | `-i, --input` | Path to the `*.form.yml` file to import                       | Yes      |
 | `-y, --yes`   | Skip the confirmation prompt and import immediately            | No       |
 
-Before writing anything, this looks up the form's current live FormXML,
-rebuilds it (the same patch-onto-the-live-document mechanism as
+Before writing anything, this looks up the form — by the YAML's own
+`formId` when it has one (the ordinary case for anything exported since
+that field was added; immune to a rename or a name shared with another
+form), falling back to table + name for an older file. Then it rebuilds
+the FormXML (the same patch-onto-the-live-document mechanism as
 `build-xml`), validates it against Microsoft's own FormXML schema, and
 prints a line-level diff between what's live now and what's about to
 replace it — the concrete answer to "must have a way to check differences
@@ -449,8 +455,8 @@ get a confirmation prompt (defaulting to "no") before anything actually
 changes in Dataverse.
 
 Only ever updates a form that already exists — it refuses (rather than
-creating one) when no form matches the YAML's table + name yet, and
-refuses outright for a dashboard, same as `build-xml`.
+creating one) when nothing matches, and refuses outright for a dashboard,
+same as `build-xml`.
 
 **What this doesn't do yet**: publish the change (Dataverse customizations
 still need publishing separately — e.g. in the maker portal — before end

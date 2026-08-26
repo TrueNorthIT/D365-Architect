@@ -97,6 +97,11 @@ public static class YamlSchemaGenerator
             _ when type == typeof(int) => new JsonObject { ["type"] = "integer" },
             _ when type == typeof(double) => new JsonObject { ["type"] = "number" },
             _ when type == typeof(bool) => new JsonObject { ["type"] = "boolean" },
+            // YamlDotNet (and this tool's own YAML) renders a Guid as a plain
+            // hyphenated string, same as everywhere else this tool writes
+            // one out — "format": "uuid" is JSON Schema's own annotation for
+            // that shape, not a stricter type of its own.
+            _ when type == typeof(Guid) => new JsonObject { ["type"] = "string", ["format"] = "uuid" },
             // A genuinely dynamic shape (e.g. FormControl.Parameters, converted
             // structurally from arbitrary XML rather than a fixed model) has no
             // fixed schema of its own to describe — an empty schema is JSON

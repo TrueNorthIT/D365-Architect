@@ -9,8 +9,13 @@ public sealed class FormImportService(IDataverseClient dataverseClient, FormJson
 {
     public async Task<FormImportPreview> PreviewAsync(Uri environmentUrl, string accessToken, FormDefinition form, CancellationToken cancellationToken)
     {
-        var existing = await dataverseClient.TryGetSystemFormAsync(environmentUrl, accessToken, form.Entity, form.Name, cancellationToken)
-            ?? throw new FormNotFoundException(form.Entity, form.Name);
+        var existing = form.FormId is { } formId
+            ? await dataverseClient.TryGetSystemFormByIdAsync(environmentUrl, accessToken, formId, cancellationToken)
+                ?? throw new FormNotFoundException(form.Entity, form.Name, formId)
+            : await dataverseClient.TryGetSystemFormAsync(environmentUrl, accessToken, form.Entity, form.Name, cancellationToken)
+                ?? throw new FormNotFoundException(form.Entity, form.Name);
+
+        var identityMismatchWarning = BuildIdentityMismatchWarning(form, existing);
 
         var existingRoot = XElement.Parse(existing.FormXml);
         var newFormXml = FormXmlWriter.Write(form, existingRoot);
@@ -25,7 +30,32 @@ public sealed class FormImportService(IDataverseClient dataverseClient, FormJson
         var existingForm = DecomposeExisting(form, existing.FormXml);
         var existingComparableFormXml = FormXmlWriter.Write(existingForm, existingRoot);
 
-        return new FormImportPreview(existing.FormId, existing.FormXml, newFormXml, existingComparableFormXml, violations);
+        return new FormImportPreview(existing.FormId, existing.FormXml, newFormXml, existingComparableFormXml, violations, identityMismatchWarning);
+    }
+
+    /// <summary>
+    /// Only ever non-null for a by-id lookup (<see cref="ExistingSystemForm.EntityLogicalName"/>/
+    /// <see cref="ExistingSystemForm.Name"/> are null otherwise — see that
+    /// record's own doc comment) — a by-name lookup already filtered on
+    /// exactly these two fields, so there's nothing left to have drifted.
+    /// </summary>
+    private static string? BuildIdentityMismatchWarning(FormDefinition form, ExistingSystemForm existing)
+    {
+        if (existing.EntityLogicalName is null && existing.Name is null)
+        {
+            return null;
+        }
+
+        var entityMismatch = existing.EntityLogicalName is not null && !string.Equals(existing.EntityLogicalName, form.Entity, StringComparison.OrdinalIgnoreCase);
+        var nameMismatch = existing.Name is not null && existing.Name != form.Name;
+
+        if (!entityMismatch && !nameMismatch)
+        {
+            return null;
+        }
+
+        return $"This YAML's FormId resolves to '{existing.Name}' on '{existing.EntityLogicalName}', not this file's own '{form.Name}' on '{form.Entity}' — " +
+            "the id is still what's being imported onto (it's authoritative, not the name), but double-check this is the file you meant to import.";
     }
 
     public Task ApplyAsync(Uri environmentUrl, string accessToken, FormImportPreview preview, CancellationToken cancellationToken) =>

@@ -11,10 +11,12 @@ namespace D365Architect.Services.Conversion;
 /// <see cref="FormXmlWriter"/> and <see cref="FormXmlValidator"/> are used
 /// there, but never shares state or a call path with it.
 ///
-/// Only ever updates a form that already exists (by table + name — see
-/// <see cref="FormDefinition"/>'s own doc comment on why that's this tool's
-/// only identity for one); creating a brand-new form isn't supported yet
-/// (see <see cref="Dataverse.FormNotFoundException"/>).
+/// Only ever updates a form that already exists — by its <c>FormId</c> when
+/// the YAML has one (the ordinary case, and immune to a rename or a shared
+/// name — see <see cref="FormDefinition.FormId"/>'s own doc comment), or by
+/// table + name as a fallback for a file exported before that field
+/// existed; creating a brand-new form isn't supported yet (see
+/// <see cref="Dataverse.FormNotFoundException"/>).
 /// </summary>
 public interface IFormImportService
 {
@@ -23,8 +25,8 @@ public interface IFormImportService
     /// writing anything, so the caller can show a diff and validation
     /// warnings and get explicit confirmation before <see cref="ApplyAsync"/>.
     /// </summary>
-    /// <exception cref="Dataverse.FormNotFoundException">No form named <c>form.Name</c> exists yet on <c>form.Entity</c>.</exception>
-    /// <exception cref="Dataverse.AmbiguousSystemFormException">More than one form matches that table + name.</exception>
+    /// <exception cref="Dataverse.FormNotFoundException">No form matches <c>form.FormId</c> (or, lacking one, <c>form.Entity</c>/<c>form.Name</c>).</exception>
+    /// <exception cref="Dataverse.AmbiguousSystemFormException"><c>form.FormId</c> is absent and more than one form matches that table + name.</exception>
     /// <exception cref="NotSupportedException"><paramref name="form"/> is a dashboard.</exception>
     Task<FormImportPreview> PreviewAsync(Uri environmentUrl, string accessToken, FormDefinition form, CancellationToken cancellationToken);
 
@@ -68,7 +70,18 @@ public interface IFormImportService
 /// last-applied payload.
 /// </param>
 /// <param name="Violations"><see cref="FormXmlValidator"/>'s findings against <paramref name="NewFormXml"/>.</param>
-public sealed record FormImportPreview(Guid FormId, string ExistingFormXml, string NewFormXml, string ExistingComparableFormXml, IReadOnlyList<FormXmlValidationMessage> Violations)
+/// <param name="IdentityMismatchWarning">
+/// Set when the YAML's own <c>FormId</c> resolved to a live form whose
+/// table and/or name no longer match the YAML's <c>Entity</c>/<c>Name</c> —
+/// most likely the id was copied into the wrong file, or the form was
+/// renamed live since this YAML was last exported. Never blocks the
+/// import (the id is still authoritative — see
+/// <see cref="Dataverse.IDataverseClient.TryGetSystemFormByIdAsync"/>), but
+/// worth a human's attention before confirming. Null whenever the lookup
+/// was by table + name instead (nothing to compare against) or when it
+/// matched.
+/// </param>
+public sealed record FormImportPreview(Guid FormId, string ExistingFormXml, string NewFormXml, string ExistingComparableFormXml, IReadOnlyList<FormXmlValidationMessage> Violations, string? IdentityMismatchWarning = null)
 {
     /// <summary>False when <see cref="ExistingComparableFormXml"/> and <see cref="NewFormXml"/> are identical — see that parameter's own doc comment for why comparing those two, not the raw live document, is what makes this accurate rather than "true" almost every time.</summary>
     public bool HasChanges => ExistingComparableFormXml != NewFormXml;
