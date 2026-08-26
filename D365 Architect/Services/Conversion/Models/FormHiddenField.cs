@@ -16,7 +16,7 @@ public sealed class FormHiddenField
     [YamlMember(Order = 0)]
     public required string Field { get; init; }
 
-    /// <summary>Raw control class id, kept for the same reason as <see cref="FormControl.ClassId"/>.</summary>
+    /// <summary>The field's raw control class id, if Dataverse records one for it.</summary>
     [YamlMember(Order = 1)]
     public string? ClassId { get; init; }
 }

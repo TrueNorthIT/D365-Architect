@@ -12,24 +12,25 @@ public sealed class FormSection
     [YamlMember(Order = 0)]
     public string? Name { get; init; }
 
+    /// <summary>The section's display label.</summary>
     [YamlMember(Order = 1)]
     public string? Label { get; init; }
 
     /// <summary>
-    /// How many side-by-side sub-columns this section itself renders its
-    /// rows into — a section can lay its own cells out into more than one
-    /// column independently of <see cref="FormColumn"/> (a tab's own
-    /// columns). <see cref="Controls"/> stays a flat, row-major list either
-    /// way (row 1's cells left-to-right, then row 2's, ...), so this is the
-    /// piece of information that says how to regroup them back into a
-    /// grid — the cell/row structure itself isn't otherwise represented.
-    /// Only present when greater than 1 — a single column is the common
-    /// case; applying this file back won't change a section's own column
-    /// count.
+    /// How many side-by-side sub-columns this section lays its own fields
+    /// into — independent of the tab's own columns. Only present when
+    /// greater than 1 — a single column is the common case; applying this
+    /// file back won't change a section's own column count.
     /// </summary>
+    /// <remarks>
+    /// <see cref="Controls"/> stays a flat, row-major list either way (row
+    /// 1's cells left-to-right, then row 2's, ...); this is what says how
+    /// to regroup them back into a grid.
+    /// </remarks>
     [YamlMember(Order = 2)]
     public int? Columns { get; init; }
 
+    /// <summary>The section's fields, in reading order (left to right, top to bottom).</summary>
     [YamlMember(Order = 3)]
     public IReadOnlyList<FormControl> Controls { get; init; } = [];
 }

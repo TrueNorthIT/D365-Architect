@@ -10,7 +10,7 @@ namespace D365Architect.Services.Conversion.Models;
 /// </summary>
 public sealed class FormEvent
 {
-    /// <summary>The event's own name, e.g. "onload", or a custom name for a field-level event tied to <see cref="Attribute"/>.</summary>
+    /// <summary>The event's own name, e.g. "onload", or a custom name for a field-level event tied to attribute.</summary>
     [YamlMember(Order = 0)]
     public string? Name { get; init; }
 
@@ -18,11 +18,7 @@ public sealed class FormEvent
     [YamlMember(Order = 1)]
     public string? Attribute { get; init; }
 
-    /// <summary>
-    /// Whether this event is active. Shown whenever FormXML states it
-    /// explicitly, same reasoning as <see cref="FormEventHandler.Enabled"/>
-    /// — no observed unset case to know what it would default to.
-    /// </summary>
+    /// <summary>Whether this event is active.</summary>
     [YamlMember(Order = 2)]
     public bool? Active { get; init; }
 

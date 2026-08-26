@@ -39,18 +39,20 @@ public sealed class AttributeDefinition
     [YamlMember(Order = 2)]
     public required string Type { get; init; }
 
+    /// <summary>The column's display name.</summary>
     [YamlMember(Order = 3)]
     public string? DisplayName { get; init; }
 
+    /// <summary>The column's description.</summary>
     [YamlMember(Order = 4)]
     public string? Description { get; init; }
 
     /// <summary>
-    /// The underlying SQL column name from a legacy unpacked solution's
-    /// Entity.xml, when it differs from <see cref="Name"/> in more than
-    /// casing. Only ever set by <see cref="EntityXmlDefinitionReader"/> — the
-    /// live Web API has no equivalent concept (Dataverse manages its own
-    /// storage rather than mapping columns onto SQL Server directly).
+    /// The underlying SQL column name, when it differs from the logical
+    /// name in more than casing — only present when exported from a legacy
+    /// unpacked solution's <c>Entity.xml</c>; live exports never set this,
+    /// since Dataverse manages its own storage rather than mapping columns
+    /// onto SQL Server directly.
     /// </summary>
     [YamlMember(Order = 5)]
     public string? PhysicalName { get; init; }
@@ -68,11 +70,11 @@ public sealed class AttributeDefinition
     [YamlMember(Order = 7)]
     public int? MaxLength { get; init; }
 
-    /// <summary>Decimal places. For Money, only meaningful when <see cref="PrecisionSource"/> is 2 (attribute-specific).</summary>
+    /// <summary>Decimal places. For Money, only meaningful when precisionSource is 2 (this column's own).</summary>
     [YamlMember(Order = 8)]
     public int? Precision { get; init; }
 
-    /// <summary>Money only: 0 = currency-specific, 1 = organization setting, 2 = this attribute's own <see cref="Precision"/>.</summary>
+    /// <summary>Money only: 0 = currency-specific, 1 = organization setting, 2 = this column's own precision.</summary>
     [YamlMember(Order = 9)]
     public int? PrecisionSource { get; init; }
 
@@ -96,6 +98,7 @@ public sealed class AttributeDefinition
     [YamlMember(Order = 14)]
     public bool? IsCustomField { get; init; }
 
+    /// <summary>Whether this column can be used in Advanced Find.</summary>
     [YamlMember(Order = 15)]
     public bool? ValidForAdvancedFind { get; init; }
 }

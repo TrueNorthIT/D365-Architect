@@ -25,7 +25,7 @@ namespace D365Architect.Services.Conversion.Models;
 /// </summary>
 public sealed class ViewDefinition
 {
-    /// <summary>The view's display name, e.g. "Active Accounts". Serialises as the top-level "view" key.</summary>
+    /// <summary>The view's display name, e.g. "Active Accounts" — written as the top-level "view" key.</summary>
     [YamlMember(Alias = "view", Order = 0)]
     public required string Name { get; init; }
 
@@ -33,25 +33,26 @@ public sealed class ViewDefinition
     [YamlMember(Order = 1)]
     public required string Entity { get; init; }
 
+    /// <summary>The view's description.</summary>
     [YamlMember(Order = 2)]
     public string? Description { get; init; }
 
     /// <summary>
-    /// The kind of view this is, e.g. "QuickFindSearch" or "LookupView" — named after
-    /// Microsoft.Crm.Sdk.SavedQueryQueryType's own constants (see
-    /// https://learn.microsoft.com/dotnet/api/microsoft.crm.sdk.savedqueryquerytype).
-    /// Only present when it's something other than "MainApplicationView" — an
-    /// ordinary system view, and by far the most common case. Omit for an
-    /// ordinary view; applying this file back won't change its type.
+    /// The kind of view this is, e.g. "QuickFindSearch" or "LookupView" —
+    /// see https://learn.microsoft.com/dotnet/api/microsoft.crm.sdk.savedqueryquerytype
+    /// for the full set of values. Only present when it's something other
+    /// than "MainApplicationView" — an ordinary system view, and by far the
+    /// most common case. Omit for an ordinary view; applying this file back
+    /// won't change its type.
     /// </summary>
     [YamlMember(Order = 3)]
     public string? QueryType { get; init; }
 
     /// <summary>
     /// Only present when true — a table typically has one default view per
-    /// <see cref="QueryType"/>, and false is the common case for any given
-    /// view. Omit to leave this as a non-default view; applying this file
-    /// back won't make it the default.
+    /// query type, and false is the common case for any given view. Omit
+    /// to leave this as a non-default view; applying this file back won't
+    /// make it the default.
     /// </summary>
     [YamlMember(Order = 4)]
     public bool? IsDefault { get; init; }
@@ -73,9 +74,9 @@ public sealed class ViewDefinition
     public bool? IsUserDefined { get; init; }
 
     /// <summary>
-    /// Only present when false — true (customizable) is the common case;
-    /// see <see cref="DefaultValueConventions.FalseOrNull"/>. Omit to leave
-    /// this view customizable; applying this file back won't lock it down.
+    /// Only present when false — true (customizable) is the common case.
+    /// Omit to leave this view customizable; applying this file back won't
+    /// lock it down.
     /// </summary>
     [YamlMember(Order = 7)]
     public bool? IsCustomizable { get; init; }
@@ -83,7 +84,7 @@ public sealed class ViewDefinition
     /// <summary>
     /// The view's query, as FetchXML. Null for a handful of internal system
     /// views (e.g. "{Entity} BulkOperation View") that Dataverse doesn't
-    /// populate this on — confirmed against a real tenant, not assumed.
+    /// populate this on.
     /// </summary>
     [YamlMember(Order = 8, ScalarStyle = ScalarStyle.Literal)]
     public string? FetchXml { get; init; }

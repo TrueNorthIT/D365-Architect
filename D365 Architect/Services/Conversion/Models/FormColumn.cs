@@ -15,6 +15,7 @@ public sealed class FormColumn
     [YamlMember(Order = 0)]
     public string? Width { get; init; }
 
+    /// <summary>The sections stacked in this column, top to bottom.</summary>
     [YamlMember(Order = 1)]
     public IReadOnlyList<FormSection> Sections { get; init; } = [];
 }

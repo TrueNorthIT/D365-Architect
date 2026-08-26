@@ -5,7 +5,7 @@
   "type": "object",
   "properties": {
     "entity": {
-      "description": "The table's logical name, e.g. \"account\". Serialises as the top-level \"entity\" key.",
+      "description": "The table's logical name, e.g. \"account\" — written as the top-level \"entity\" key.",
       "type": "string"
     },
     "schemaName": {
@@ -13,12 +13,15 @@
       "type": "string"
     },
     "displayName": {
+      "description": "The table's singular display name, e.g. \"Account\".",
       "type": "string"
     },
     "pluralDisplayName": {
+      "description": "The table's plural display name, e.g. \"Accounts\".",
       "type": "string"
     },
     "description": {
+      "description": "The table's description.",
       "type": "string"
     },
     "ownershipType": {
@@ -38,6 +41,7 @@
       "type": "boolean"
     },
     "attributes": {
+      "description": "The table's columns.",
       "type": "array",
       "items": {
         "type": "object",
@@ -55,13 +59,15 @@
             "type": "string"
           },
           "displayName": {
+            "description": "The column's display name.",
             "type": "string"
           },
           "description": {
+            "description": "The column's description.",
             "type": "string"
           },
           "physicalName": {
-            "description": "The underlying SQL column name from a legacy unpacked solution's Entity.xml, when it differs from Name in more than casing. Only ever set by EntityXmlDefinitionReader — the live Web API has no equivalent concept (Dataverse manages its own storage rather than mapping columns onto SQL Server directly).",
+            "description": "The underlying SQL column name, when it differs from the logical name in more than casing — only present when exported from a legacy unpacked solution's Entity.xml; live exports never set this, since Dataverse manages its own storage rather than mapping columns onto SQL Server directly.",
             "type": "string"
           },
           "requiredLevel": {
@@ -73,11 +79,11 @@
             "type": "integer"
           },
           "precision": {
-            "description": "Decimal places. For Money, only meaningful when PrecisionSource is 2 (attribute-specific).",
+            "description": "Decimal places. For Money, only meaningful when precisionSource is 2 (this column's own).",
             "type": "integer"
           },
           "precisionSource": {
-            "description": "Money only: 0 = currency-specific, 1 = organization setting, 2 = this attribute's own Precision.",
+            "description": "Money only: 0 = currency-specific, 1 = organization setting, 2 = this column's own precision.",
             "type": "integer"
           },
           "minValue": {
@@ -104,6 +110,7 @@
             "type": "boolean"
           },
           "validForAdvancedFind": {
+            "description": "Whether this column can be used in Advanced Find.",
             "type": "boolean"
           }
         },

@@ -63,7 +63,7 @@ namespace D365Architect.Services.Conversion.Models;
 /// </summary>
 public sealed class FormDefinition
 {
-    /// <summary>The form's display name, e.g. "Account Main Form". Serialises as the top-level "form" key.</summary>
+    /// <summary>The form's display name, e.g. "Account Main Form" — written as the top-level "form" key.</summary>
     [YamlMember(Alias = "form", Order = 0)]
     public required string Name { get; init; }
 
@@ -72,20 +72,24 @@ public sealed class FormDefinition
     public required string Entity { get; init; }
 
     /// <summary>
-    /// The systemform's own <c>formid</c> — unlike <see cref="Name"/>, this
-    /// is what <c>form import</c> actually matches against the live form
-    /// with, so a local rename (or two forms sharing a name — see
-    /// <see cref="Dataverse.AmbiguousSystemFormException"/>) can never send
-    /// an update to the wrong record. <see cref="Name"/>/<see cref="Entity"/>
-    /// are still kept for readability and as the fallback lookup for a
-    /// pre-existing exported file from before this field existed; once
-    /// present, they're purely informational — editing them locally never
-    /// changes which form gets updated. Absent only for a form export
-    /// predating this field.
+    /// The form's unique id in Dataverse. Used to match this file back to
+    /// the exact form on import/rebuild, even if it's since been renamed or
+    /// another form shares its name — leave as exported. Only absent for a
+    /// file exported before this field existed.
     /// </summary>
+    /// <remarks>
+    /// Preferred over <see cref="Name"/>/<see cref="Entity"/> for lookup
+    /// whenever present (see <see cref="Conversion.FormImportService"/>/
+    /// <see cref="Conversion.FormXmlBuildService"/>), which otherwise risk
+    /// matching the wrong record after a rename or when two forms share a
+    /// name (<see cref="Dataverse.AmbiguousSystemFormException"/>).
+    /// <see cref="Name"/>/<see cref="Entity"/> stay purely informational
+    /// once this is present.
+    /// </remarks>
     [YamlMember(Order = 2)]
     public Guid? FormId { get; init; }
 
+    /// <summary>A description of the form, shown in the form picker.</summary>
     [YamlMember(Order = 3)]
     public string? Description { get; init; }
 
@@ -102,7 +106,7 @@ public sealed class FormDefinition
 
     /// <summary>
     /// Only present when true — a table typically has one default form per
-    /// <see cref="Type"/>, and false is the common case for any given form.
+    /// type, and false is the common case for any given form.
     /// Omit to leave this as a non-default form; applying this file back
     /// won't make it the default.
     /// </summary>
@@ -119,18 +123,17 @@ public sealed class FormDefinition
     public string? FormActivationState { get; init; }
 
     /// <summary>
-    /// Only present when false — true (customizable) is the common case;
-    /// see <see cref="DefaultValueConventions.FalseOrNull"/>. Omit to leave
-    /// this form customizable; applying this file back won't lock it down.
+    /// Only present when false — true (customizable) is the common case.
+    /// Omit to leave this form customizable; applying this file back won't
+    /// lock it down.
     /// </summary>
     [YamlMember(Order = 7)]
     public bool? IsCustomizable { get; init; }
 
     /// <summary>
-    /// The form's tabs, decomposed from its FormXML — see this class's own
-    /// doc comment for what is (and isn't) captured. Empty for a form this
-    /// tool doesn't decompose at all yet (dashboards) or whose FormXML
-    /// Dataverse didn't return.
+    /// The form's tabs, each with its columns, sections, and controls.
+    /// Empty for a dashboard (not decomposed) or a form Dataverse returned
+    /// no layout for.
     /// </summary>
     [YamlMember(Order = 8)]
     public IReadOnlyList<FormTab> Tabs { get; init; } = [];
@@ -151,11 +154,15 @@ public sealed class FormDefinition
     [YamlMember(Order = 11)]
     public string? Ancestor { get; init; }
 
-    /// <summary>Fields the form tracks but never renders on any tab — see <see cref="FormHiddenField"/>. Absent when there are none.</summary>
+    /// <summary>Fields the form tracks but never renders on any tab. Absent when there are none.</summary>
     [YamlMember(Order = 12)]
     public IReadOnlyList<FormHiddenField>? HiddenFields { get; init; }
 
-    /// <summary>When this form is offered as a choice for a record, and to whom — see <see cref="FormDisplayCondition"/>. Absent when the form has none (every published Main form seen has one, but not every form type does).</summary>
+    /// <summary>
+    /// When this form is offered as a choice for a record, and to whom.
+    /// Absent when the form has none (every published Main form has one,
+    /// but not every form type does).
+    /// </summary>
     [YamlMember(Order = 13)]
     public FormDisplayCondition? DisplayCondition { get; init; }
 
@@ -163,7 +170,7 @@ public sealed class FormDefinition
     [YamlMember(Order = 14)]
     public IReadOnlyList<FormLibrary>? Libraries { get; init; }
 
-    /// <summary>The form's business logic — event/handler bindings, not layout. See <see cref="FormEvent"/>. Absent when there are none.</summary>
+    /// <summary>The form's business logic — event/handler bindings, not layout. Absent when there are none.</summary>
     [YamlMember(Order = 15)]
     public IReadOnlyList<FormEvent>? Events { get; init; }
 }
