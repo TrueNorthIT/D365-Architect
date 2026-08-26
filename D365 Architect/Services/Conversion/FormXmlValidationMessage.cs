@@ -54,7 +54,13 @@ public sealed record FormXmlValidationMessage(XmlSeverityType Severity, int Line
     /// confirmed live) was once waved through on the same "schema vs. real
     /// Dataverse output disagree sometimes" reasoning that only this one
     /// pattern actually earned, and Dataverse's own write-time validation
-    /// rejected it outright with a 400. So: this property is deliberately
+    /// rejected it outright with a 400. A second, separate incident showed
+    /// the same gap the other direction — Dataverse rejecting a control
+    /// with no <c>classid</c> ("The class id cannot be null for control
+    /// element...") even though the schema never declares it required at
+    /// all — see <see cref="FormControlValidator"/>, which produces its own
+    /// findings as this exact type specifically so they get the same
+    /// treatment. So: this property is deliberately
     /// narrow rather than a general severity signal, and callers that write
     /// to Dataverse (<c>form import</c>) should treat <em>every other</em>
     /// violation as blocking by default — see <see cref="FormXmlValidator"/>'s

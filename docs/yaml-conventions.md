@@ -319,6 +319,26 @@ default, and `FormXmlValidationConsole` prints a confirmed-safe one in
 yellow, everything else in red, so the distinction is visible at a glance
 before you ever reach `--allow-schema-violations`.
 
+**A second, different incident showed the same gap exists the other
+direction too — a missing attribute, not an extra element, and one the XSD
+never checks at all.** A control with no `classid` failed live with a
+different, non-schema Dataverse error (`0x80040203`, "The class id cannot
+be null for control element..."): `classid` isn't declared required by the
+FormXML XSD (so `FormXmlValidator` alone would never flag its absence),
+but Dataverse's write-time validation requires it anyway on every real
+control checked. `FormControlValidator` catches this specifically —
+walking every control on the form and flagging any with no `ClassId`,
+*unless* the existing live control with that same id also has none (the
+same "don't block on a value nobody's actually trying to change" carve-out
+as the Precision/MaxLength case above, needed here because
+`FormXmlWriter` always replaces `header`/`footer`/`tabs` wholesale rather
+than patching one control at a time, so an untouched classid-less control
+would otherwise get flagged every time something *else* on the form
+changed). Its findings are `FormXmlValidationMessage`s too, merged
+straight into the same list `FormXmlValidator` produces — so they get the
+identical `IsKnownHarmless`-gated blocking treatment, no separate
+mechanism needed.
+
 Each violation (`FormXmlValidationMessage`) also carries .NET's own
 `XmlSeverityType` (`Error`/`Warning`) alongside the message — checked
 empirically across every violation shape seen so far (an undeclared

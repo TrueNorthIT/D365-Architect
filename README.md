@@ -468,6 +468,14 @@ on the same reasoning, and a real import attempt with that exact shape
 failed live with a raw Dataverse 400. `--yes` does not imply
 `--allow-schema-violations`; they're deliberately separate opt-ins.
 
+This also catches a control with no `ClassId` before writing it — a second
+real, live-confirmed failure mode (`"The class id cannot be null for
+control element..."`) that Microsoft's own FormXML schema doesn't check at
+all (`classid` isn't declared required there), so no amount of schema
+validation alone would ever catch it. A control whose live counterpart
+already has no `ClassId` either is exempted, so re-importing a form
+unchanged never trips this — see `docs/yaml-conventions.md` for why.
+
 Only ever updates a form that already exists — it refuses (rather than
 creating one) when nothing matches, and refuses outright for a dashboard,
 same as `build-xml`.

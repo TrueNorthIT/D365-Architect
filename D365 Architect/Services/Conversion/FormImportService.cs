@@ -19,7 +19,18 @@ public sealed class FormImportService(IDataverseClient dataverseClient, FormJson
 
         var existingRoot = XElement.Parse(existing.FormXml);
         var newFormXml = FormXmlWriter.Write(form, existingRoot);
-        var violations = FormXmlValidator.Validate(newFormXml);
+
+        // FormControlValidator first: it needs the curated FormDefinition
+        // and the existing raw document directly (to tell a control that's
+        // always been classid-less from one newly losing or never getting
+        // one), neither of which survives into newFormXml alone. Its
+        // findings are FormXmlValidationMessage the same as FormXmlValidator's
+        // own — see that type's own doc comment — so both flow through the
+        // identical IsKnownHarmless-gated blocking `form import` already
+        // applies, with no separate plumbing needed.
+        var violations = FormControlValidator.Validate(form, existingRoot)
+            .Concat(FormXmlValidator.Validate(newFormXml))
+            .ToList();
 
         // Rebuild the EXISTING form's own content through the exact same
         // writer, base document, and deterministic id rules as newFormXml —

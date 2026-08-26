@@ -97,7 +97,7 @@ public sealed class ImportFormCommand(IAuthenticationService authenticationServi
             var blockingViolations = preview.Violations.Where(v => !v.IsKnownHarmless).ToList();
             if (blockingViolations.Count > 0 && !settings.AllowSchemaViolations)
             {
-                AnsiConsole.MarkupLine($"[red]Refusing to import.[/] {blockingViolations.Count} schema violation(s) above aren't a confirmed-safe pattern — one that looked the same but wasn't has already failed live with a raw Dataverse 400 ('parameters' rejecting an invalid child element), so this is blocked by default rather than left to a human to eyeball correctly every time. Pass [bold]--allow-schema-violations[/] to proceed anyway once you've checked these yourself.");
+                AnsiConsole.MarkupLine($"[red]Refusing to import.[/] {blockingViolations.Count} schema violation(s) above aren't a confirmed-safe pattern — two that looked similarly harmless have already failed live with a raw Dataverse 400 ('parameters' rejecting an invalid child element; a control's missing ClassId), so this is blocked by default rather than left to a human to eyeball correctly every time. Pass [bold]--allow-schema-violations[/] to proceed anyway once you've checked these yourself.");
                 return 1;
             }
 
