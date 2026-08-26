@@ -419,11 +419,14 @@ byte-identical output rather than a spurious diff every time.
 Before writing, the rebuilt FormXML is checked against Microsoft's own
 official FormXML XSD schema (vendored in this repo — see
 `D365 Architect/Resources/FormXmlSchema/NOTICE.md`); any violation is
-printed as a warning but doesn't stop the file from being written, since a
-violation isn't necessarily this tool's mistake — real, live Dataverse
-FormXML is confirmed to violate this same schema in at least one way
-(`headerdensity`/`showinformselector`), unrelated to anything `form
-build-xml` does.
+printed, and — since this command only ever writes a local file, with
+nothing live at stake — it never blocks the write regardless of what's
+found. Real, live Dataverse FormXML is confirmed to violate this same
+schema in at least one way (`headerdensity`/`showinformselector`),
+unrelated to anything `form build-xml` does. That confirmed-safe exception
+is narrow, though, and doesn't extend to other violations that merely look
+similar — see `form import` below for where that distinction actually
+matters.
 
 #### `form import`
 
@@ -436,10 +439,11 @@ the way here). Needs sign-in.
 d365architect form import --input account-main-form.form.yml
 ```
 
-| Option        | Description                                              | Required |
-|---------------|--------------------------------------------------------------|----------|
-| `-i, --input` | Path to the `*.form.yml` file to import                       | Yes      |
-| `-y, --yes`   | Skip the confirmation prompt and import immediately            | No       |
+| Option                       | Description                                              | Required |
+|------------------------------|--------------------------------------------------------------|----------|
+| `-i, --input`                | Path to the `*.form.yml` file to import                       | Yes      |
+| `-y, --yes`                  | Skip the confirmation prompt and import immediately            | No       |
+| `--allow-schema-violations`  | Proceed even with a schema violation that isn't a confirmed-safe pattern | No |
 
 Before writing anything, this looks up the form — by the YAML's own
 `formId` when it has one (the ordinary case for anything exported since
@@ -453,6 +457,16 @@ between client and server". If the rebuild is identical to what's already
 live, nothing is written at all. Otherwise, unless `--yes` is passed, you
 get a confirmation prompt (defaulting to "no") before anything actually
 changes in Dataverse.
+
+**Unlike `build-xml`, a schema violation here can genuinely block the
+import.** Only the one specific, confirmed-safe pattern (`headerdensity`/
+`showinformselector`) is treated as informational; every other violation
+refuses the import outright (before the confirmation prompt is even shown)
+unless `--allow-schema-violations` is passed. This isn't hypothetical
+caution — a different violation was once treated the same non-blocking way
+on the same reasoning, and a real import attempt with that exact shape
+failed live with a raw Dataverse 400. `--yes` does not imply
+`--allow-schema-violations`; they're deliberately separate opt-ins.
 
 Only ever updates a form that already exists — it refuses (rather than
 creating one) when nothing matches, and refuses outright for a dashboard,

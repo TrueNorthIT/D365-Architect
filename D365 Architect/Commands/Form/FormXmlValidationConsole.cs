@@ -18,11 +18,16 @@ internal static class FormXmlValidationConsole
             return;
         }
 
-        AnsiConsole.MarkupLine($"[yellow]{violations.Count} schema violation(s) against Microsoft's own FormXML schema — see FormXmlValidator's own doc comment for why this isn't necessarily a bug:[/]");
+        var blocking = violations.Count(v => !v.IsKnownHarmless);
+        AnsiConsole.MarkupLine(blocking > 0
+            ? $"[red]{violations.Count} schema violation(s) against Microsoft's own FormXML schema — {blocking} of them NOT a confirmed-safe pattern (see FormXmlValidationMessage.IsKnownHarmless):[/]"
+            : $"[yellow]{violations.Count} schema violation(s) against Microsoft's own FormXML schema — all of them the one confirmed-safe pattern (see FormXmlValidationMessage.IsKnownHarmless):[/]");
+
         foreach (var violation in violations)
         {
+            var color = violation.IsKnownHarmless ? "yellow" : "red";
             AnsiConsole.WriteLine();
-            AnsiConsole.MarkupLine($"[yellow]  [[{violation.Severity}]] Line {violation.LineNumber}, position {violation.LinePosition}: {violation.Message.EscapeMarkup()}[/]");
+            AnsiConsole.MarkupLine($"[{color}]  [[{violation.Severity}]] Line {violation.LineNumber}, position {violation.LinePosition}: {violation.Message.EscapeMarkup()}[/]");
             AnsiConsole.MarkupLine($"[grey]    {HighlightSnippet(violation.Snippet, violation.SnippetCaretOffset)}[/]");
         }
 

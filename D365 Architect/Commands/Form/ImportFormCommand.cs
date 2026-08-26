@@ -55,6 +55,10 @@ public sealed class ImportFormCommand(IAuthenticationService authenticationServi
         [CommandOption("-y|--yes")]
         [Description("Skip the confirmation prompt and import immediately.")]
         public bool Yes { get; init; }
+
+        [CommandOption("--allow-schema-violations")]
+        [Description("Proceed even if the rebuilt FormXML has a schema violation Dataverse might reject outright — see FormXmlValidationMessage.IsKnownHarmless. Off by default: a genuine 'invalid child element'/'invalid content' violation has been confirmed live to fail the write with a raw Dataverse 400, not just a cosmetic warning.")]
+        public bool AllowSchemaViolations { get; init; }
     }
 
     protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
@@ -89,6 +93,13 @@ public sealed class ImportFormCommand(IAuthenticationService authenticationServi
             AnsiConsole.WriteLine();
 
             FormXmlValidationConsole.PrintViolations(preview.Violations);
+
+            var blockingViolations = preview.Violations.Where(v => !v.IsKnownHarmless).ToList();
+            if (blockingViolations.Count > 0 && !settings.AllowSchemaViolations)
+            {
+                AnsiConsole.MarkupLine($"[red]Refusing to import.[/] {blockingViolations.Count} schema violation(s) above aren't a confirmed-safe pattern — one that looked the same but wasn't has already failed live with a raw Dataverse 400 ('parameters' rejecting an invalid child element), so this is blocked by default rather than left to a human to eyeball correctly every time. Pass [bold]--allow-schema-violations[/] to proceed anyway once you've checked these yourself.");
+                return 1;
+            }
 
             if (!settings.Yes && !AnsiConsole.Confirm("Import these changes into Dataverse?", defaultValue: false))
             {

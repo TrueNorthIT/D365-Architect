@@ -220,6 +220,15 @@ different claims, and a `form build-xml` validation warning about
 `headerdensity`/`showinformselector` reflects a real, pre-existing quirk of
 Dataverse itself, not a bug introduced by rebuilding it through this tool.
 
+**This specific pair of attributes is the only violation confirmed safe to
+treat this way — it does not generalize.** A different violation (an
+invalid child element inside a control's `<parameters>`) was once assumed
+harmless on the same "schema vs. real Dataverse output disagree sometimes"
+reasoning and turned out to make Dataverse's own write-time validation
+reject the request outright with a 400 — see `FormXmlValidationMessage.
+IsKnownHarmless` and the "Every rebuild is validated" section below for how
+that changed `form import`'s behavior.
+
 ## Rule 4: raw platform identifiers are never guessed at
 
 `AttributeDefinition`/`FormControl` keep some Dataverse identifiers as raw,
@@ -284,32 +293,53 @@ validate what would get built, on demand, not as plumbing.
 
 **Every rebuild is validated against Microsoft's own FormXML schema**
 (`FormXmlValidator`, see `Resources/FormXmlSchema/NOTICE.md` for exactly
-which files and where they came from) before being written, and any
-violation is printed as a warning — the file still gets written either
-way. This is deliberately a warning, not a gate: see "Where the published
-schema itself turned out to be wrong" above for a confirmed case
-(`headerdensity`/`showinformselector`) where real, live Dataverse FormXML
-already fails this exact validation, through no fault of anything this
-tool does. A violation is worth reading, not necessarily worth acting on.
+which files and where they came from) before being written. `form
+build-xml` itself only ever writes a local file, so every violation is
+printed and the file gets written regardless of what it finds — there's
+nothing live at stake for this command to gate on. **`form import` is
+different: it refuses to import at all when a non-confirmed-safe violation
+is found**, unless `--allow-schema-violations` is explicitly passed (see
+below) — the two commands share the exact same `FormXmlValidator` call and
+the exact same `FormXmlValidationConsole` rendering, but only one of them
+actually writes to a live environment, and only that one enforces anything
+off the back of what it finds.
 
-Each violation (`FormXmlValidationMessage`) carries .NET's own
+That split exists because of a real, live-confirmed incident, not
+speculatively: a violation ("the element 'parameters' has invalid child
+element 'X'") was once treated the same non-blocking way as the
+`headerdensity`/`showinformselector` case above, on the same "the schema
+and real Dataverse output disagree sometimes" reasoning — except this one
+wasn't actually safe, and a real `form import` attempt failed with a raw
+Dataverse 400 (`0x80048425`, "does not conform to the required schema").
+So `FormXmlValidationMessage.IsKnownHarmless` is deliberately narrow: true
+only for the one specific, confirmed-safe `headerdensity`/
+`showinformselector` pattern, never inferred for anything that merely looks
+similar. `form import` treats every other violation as blocking by
+default, and `FormXmlValidationConsole` prints a confirmed-safe one in
+yellow, everything else in red, so the distinction is visible at a glance
+before you ever reach `--allow-schema-violations`.
+
+Each violation (`FormXmlValidationMessage`) also carries .NET's own
 `XmlSeverityType` (`Error`/`Warning`) alongside the message — checked
 empirically across every violation shape seen so far (an undeclared
 attribute, an invalid child element, incomplete content, an invalid choice
 member): all of them come back `Error`. `Warning` is reserved for a small
 set of lax-wildcard cases this schema's own structure doesn't seem to hit
 anywhere this tool's output reaches, so it may never actually appear in
-practice — exposed anyway since .NET is the authority on it, not a guess,
-and either severity is still just a `form build-xml` warning regardless
-(see above). It also carries a `Snippet` of the offending FormXML plus a
-`SnippetCaretOffset` into it, so `form build-xml` can point at the exact
-spot rather than just printing a line/column pair — deliberately an offset
-for the *caller* to highlight (inline, inverse video) rather than a
-second line of spaces-and-a-caret baked into the snippet itself: FormXML
-is always one very long line, a console can wrap that onto several display
-lines, and a separate caret line's alignment would silently break the
-moment that happens, while an inline highlight travels with the character
-regardless.
+practice — exposed anyway since .NET is the authority on it, not a guess.
+Deliberately **not** what `IsKnownHarmless` is based on, though: both the
+confirmed-safe case and the confirmed-*unsafe* one that prompted this whole
+split come back as the identical `Error` severity, so severity alone was
+never a safe signal for whether Dataverse will actually reject the write —
+only the specific, named pattern is. It also carries a `Snippet` of the
+offending FormXML plus a `SnippetCaretOffset` into it, so both commands can
+point at the exact spot rather than just printing a line/column pair —
+deliberately an offset for the *caller* to highlight (inline, inverse
+video) rather than a second line of spaces-and-a-caret baked into the
+snippet itself: FormXML is always one very long line, a console can wrap
+that onto several display lines, and a separate caret line's alignment
+would silently break the moment that happens, while an inline highlight
+travels with the character regardless.
 
 **Record-level fields aren't FormXML's job.** `Name`, `Description`,
 `Type`, `IsDefault`, `FormActivationState`, and `IsCustomizable` live on
@@ -426,12 +456,22 @@ still the concrete, useful half of "checking differences", just not the
 whole of it.
 
 **Confirmation is the default, not an afterthought.** Unless `--yes` is
-passed, `form import` shows the diff and every `FormXmlValidator` warning
+passed, `form import` shows the diff and every `FormXmlValidator` finding
 (same rendering as `build-xml`, factored into `FormXmlValidationConsole` so
 both commands render it identically) and asks before writing anything,
 defaulting to "no" if you just press Enter — deliberately the safer
 default for a command that overwrites live configuration in a real
 Dataverse environment.
+
+**Before that prompt is even reached, though: a non-confirmed-safe
+violation refuses the import outright** (exit code 1, no prompt at all)
+unless `--allow-schema-violations` is passed — see "Every rebuild is
+validated" above for exactly which one violation is exempt from this and
+why. `--yes` alone does not bypass it; skipping the confirmation prompt and
+accepting a real risk of a raw Dataverse 400 are deliberately two separate
+opt-ins; this actually happened via `form build-xml`/`form import`'s shared
+validator being trusted as informational-only under the same reasoning as
+the `headerdensity` case, which turned out only to hold for that one case.
 
 **What this doesn't do yet**: publish the change. `UpdateSystemFormXmlAsync`
 only patches the `systemform` record's `formxml` column — Dataverse
