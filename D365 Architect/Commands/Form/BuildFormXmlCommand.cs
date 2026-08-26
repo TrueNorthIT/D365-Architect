@@ -10,14 +10,18 @@ namespace D365Architect.Commands.Form;
 /// <summary>
 /// `d365architect form build-xml --input account-main-form.form.yml [--output account-main-form.xml]`
 /// Rebuilds FormXML from one of this tool's curated `*.form.yml` files.
-/// Needs sign-in: it retrieves the form's current, live FormXML first (by
-/// table + name, matched against the currently signed-in environment) and
-/// patches only the elements this tool manages onto that document, rather
-/// than building a new `&lt;form&gt;` from scratch — see
-/// <see cref="Services.Conversion.FormXmlWriter"/>'s own doc comment for
-/// exactly what that does and doesn't preserve. When no form by that name
-/// exists yet (a brand-new form this YAML describes but hasn't been created
-/// in Dataverse), falls back to building fresh from just the YAML instead.
+/// Needs sign-in: it retrieves the form's current, live FormXML first — by
+/// the YAML's own `formId` when it has one (the ordinary case, and the
+/// only way to tell apart several forms sharing a display name — see
+/// <see cref="Services.Conversion.Models.FormDefinition.FormId"/>'s own
+/// doc comment), falling back to table + name for a file exported before
+/// that field existed — and patches only the elements this tool manages
+/// onto that document, rather than building a new `&lt;form&gt;` from
+/// scratch — see <see cref="Services.Conversion.FormXmlWriter"/>'s own doc
+/// comment for exactly what that does and doesn't preserve. When nothing
+/// matches (a brand-new form this YAML describes but hasn't been created
+/// in Dataverse, or a `formId` that no longer resolves to anything), falls
+/// back to building fresh from just the YAML instead.
 ///
 /// This is purely a local, read-only inspection/validation tool — it never
 /// writes anything back into Dataverse, and <c>form import</c> doesn't run
@@ -60,13 +64,18 @@ public sealed class BuildFormXmlCommand(IAuthenticationService authenticationSer
         {
             var auth = await authenticationService.GetCurrentContextAsync(cancellationToken);
 
-            var formXml = await AnsiConsole.Status().StartAsync($"Rebuilding FormXML for '{form.Name}'...",
+            var result = await AnsiConsole.Status().StartAsync($"Rebuilding FormXML for '{form.Name}'...",
                 async _ => await formXmlBuildService.BuildFormXmlAsync(auth.EnvironmentUrl, auth.AccessToken, form, cancellationToken));
 
-            FormXmlValidationConsole.PrintViolations(FormXmlValidator.Validate(formXml));
+            if (result.IdentityMismatchWarning is not null)
+            {
+                AnsiConsole.MarkupLine($"[yellow]Warning:[/] {result.IdentityMismatchWarning.EscapeMarkup()}");
+            }
+
+            FormXmlValidationConsole.PrintViolations(FormXmlValidator.Validate(result.FormXml));
 
             var outputPath = settings.Output ?? Path.ChangeExtension(settings.Input, ".xml");
-            await File.WriteAllTextAsync(outputPath, formXml, cancellationToken);
+            await File.WriteAllTextAsync(outputPath, result.FormXml, cancellationToken);
 
             AnsiConsole.MarkupLine($"[green]Wrote[/] {outputPath}");
             return 0;

@@ -269,11 +269,26 @@ always produces `control`/`customControlId` instead.
 
 `FormXmlWriter` (`d365architect form build-xml --input x.form.yml`) applies
 every rule above in reverse to rebuild a `<form>` element from a
-`FormDefinition`. Needs sign-in: before building anything, it calls
-`IDataverseClient.TryGetSystemFormXmlAsync` (via `IFormXmlBuildService`) to
-look the form up live, by table + name — the same identity `form export`
-itself uses, since `formid` was never part of this tool's YAML in the first
-place (see `FormDefinition`'s own doc comment).
+`FormDefinition`. Needs sign-in: before building anything, it looks the
+form up live via `IFormXmlBuildService` — by the YAML's own `FormId` when
+it has one (`IDataverseClient.TryGetSystemFormByIdAsync`), the same
+preference `form import` already had, and for the same reason: several
+forms can share a display name (confirmed live — a real table with three
+forms all named "Information"), and only an id tells them apart. Table +
+name (`TryGetSystemFormXmlAsync`) is the fallback, for a `*.form.yml`
+exported before `FormId` existed. This was a real, reported gap, not a
+hypothetical one: `build-xml` used to ignore `FormId` unconditionally even
+when present, so it was the one command left unusable in exactly the
+situation — duplicate names — where `FormId` matters most, forcing
+reliance on `form import`'s own dry-run (which already preferred `FormId`)
+as a workaround. A `FormId` that no longer resolves to anything (the form
+was deleted) falls back to building fresh from just the YAML, same as a
+table + name match finding nothing — never an error, consistent with this
+command's own "never refuses for a missing form" design. Like `form
+import`, a resolved id whose live table/name have drifted from the YAML's
+own prints a warning (`ExistingSystemForm.BuildIdentityMismatchWarning`,
+shared by both commands) rather than blocking — the id is still
+authoritative.
 
 **Two different modes, depending on what that lookup finds:**
 

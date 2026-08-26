@@ -385,16 +385,19 @@ tabs/columns/sections come back with no controls in them.
 #### `form build-xml`
 
 Rebuilds FormXML from a `*.form.yml` file — the reverse of `form export`'s
-decomposition. Needs sign-in: it looks up the form's current, live FormXML
-first (by table + name, the same identity `form export` uses) and patches
-only the elements this tool manages onto that document, rather than
-building a new `<form>` from scratch — so anything this tool has never
-decomposed (`Navigation`, `clientresources`, `RibbonDiffXml`, root chrome
-attributes, ...) survives untouched because it's never modified, not
-because this tool reconstructed it. When no form by that name exists yet
-(a brand-new form this YAML describes but hasn't been created in Dataverse),
-it falls back to building fresh from just the YAML instead. This is purely a local
-inspection/validation tool — `form import` (below) doesn't call this
+decomposition. Needs sign-in: it looks up the form's current, live
+FormXML first — by the YAML's own `formId` when it has one (the same
+preference `form import` uses, and needed for the same reason: several
+forms can share a display name, and only an id tells them apart), falling
+back to table + name for an older file — and patches only the elements
+this tool manages onto that document, rather than building a new `<form>`
+from scratch — so anything this tool has never decomposed (`Navigation`,
+`clientresources`, `RibbonDiffXml`, root chrome attributes, ...) survives
+untouched because it's never modified, not because this tool reconstructed
+it. When nothing matches (a brand-new form this YAML describes but hasn't
+been created in Dataverse, or a `formId` that no longer resolves to
+anything), it falls back to building fresh from just the YAML instead.
+This is purely a local inspection/validation tool — `form import` (below) doesn't call this
 command or depend on it in any way; it does its own independent
 retrieve-and-patch.
 
