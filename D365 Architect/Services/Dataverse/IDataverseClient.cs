@@ -112,14 +112,28 @@ public interface IDataverseClient
     /// <summary>
     /// Updates an existing <c>systemform</c>'s <c>formxml</c> via a PATCH
     /// request — the actual write <c>form import</c> performs. Doesn't
-    /// publish the change: Dataverse customizations still need publishing
-    /// separately before this is visible to end users (a deliberate,
-    /// documented gap in this first cut — see `docs/yaml-conventions.md`).
+    /// publish the change itself — <c>form import</c> follows this with its
+    /// own call to <see cref="PublishEntityAsync"/> before returning, so the
+    /// write is visible to end users without a separate manual publish step.
     /// Doesn't check for a concurrent modification either (no ETag/If-Match)
-    /// — see the same doc for what "checking differences" does and doesn't
-    /// cover today.
+    /// — see `docs/yaml-conventions.md` for what "checking differences" does
+    /// and doesn't cover today.
     /// </summary>
     Task UpdateSystemFormXmlAsync(Uri environmentUrl, string accessToken, Guid formId, string formXml, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Publishes every customization on one table — forms, views, ribbons,
+    /// and attributes alike — via the <c>PublishXml</c> action. Dataverse's
+    /// own documented <c>ParameterXml</c> schema has no finer-grained way to
+    /// publish a single <c>systemform</c> on its own: the <c>&lt;entities&gt;</c>
+    /// node only ever takes a whole table's logical name (confirmed against
+    /// Microsoft's own docs for <c>PublishXmlRequest.ParameterXml</c> — the
+    /// one per-record exception is <c>&lt;dashboards&gt;</c>, a different,
+    /// dashboard-only node that doesn't apply to an ordinary form), so
+    /// publishing "just the form" <c>form import</c> just wrote actually
+    /// means publishing its whole owning table.
+    /// </summary>
+    Task PublishEntityAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken);
 
     /// <summary>
     /// Looks up a single view's id, description, fetchxml, and layoutxml
@@ -140,8 +154,10 @@ public interface IDataverseClient
     /// means don't touch it" convention (see `docs/yaml-conventions.md`
     /// Rule 1) — pass null for anything the local YAML didn't have, not an
     /// empty string, or it would be cleared rather than left alone. Doesn't
-    /// publish the change; see <see cref="UpdateSystemFormXmlAsync"/> for
-    /// the same, already-documented gap.
+    /// publish the change itself, and unlike <see cref="UpdateSystemFormXmlAsync"/>
+    /// (which <c>form import</c> now follows with its own call to
+    /// <see cref="PublishEntityAsync"/>), <c>view import</c> doesn't call
+    /// that either yet — a still-open gap, not a closed one, for views.
     /// </summary>
     Task UpdateSavedQueryAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, string? description, string? fetchXml, string? layoutXml, CancellationToken cancellationToken);
 

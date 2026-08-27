@@ -37,11 +37,15 @@ namespace D365Architect.Commands.Form;
 /// nothing matches, and refuses outright for a dashboard, same as
 /// `build-xml`.
 ///
-/// What this doesn't do yet: publish the change (Dataverse customizations
-/// still need publishing separately before end users see it), or detect
-/// that the live form changed since this YAML was last exported (only that
-/// it differs from what's about to be written) — see
-/// `docs/yaml-conventions.md` for both.
+/// Publishes the form's owning table immediately after writing it — see
+/// <see cref="IFormImportService.ApplyAsync"/> and
+/// <see cref="Services.Dataverse.IDataverseClient.PublishEntityAsync"/> — so
+/// the change is visible to end users without a separate manual publish
+/// step.
+///
+/// What this doesn't do yet: detect that the live form changed since this
+/// YAML was last exported (only that it differs from what's about to be
+/// written) — see `docs/yaml-conventions.md`.
 /// </summary>
 public sealed class ImportFormCommand(IAuthenticationService authenticationService, IFormImportService formImportService)
     : AsyncCommand<ImportFormCommand.Settings>
@@ -107,11 +111,10 @@ public sealed class ImportFormCommand(IAuthenticationService authenticationServi
                 return 0;
             }
 
-            await AnsiConsole.Status().StartAsync("Importing...",
+            await AnsiConsole.Status().StartAsync("Importing and publishing...",
                 async _ => await formImportService.ApplyAsync(auth.EnvironmentUrl, auth.AccessToken, preview, cancellationToken));
 
-            AnsiConsole.MarkupLine($"[green]Imported.[/] '{form.Name}' updated in Dataverse.");
-            AnsiConsole.MarkupLine("[grey]Note: this only updates the form's FormXML — publish customizations separately (e.g. in the maker portal) before end users see the change; this tool doesn't publish yet.[/]");
+            AnsiConsole.MarkupLine($"[green]Imported and published.[/] '{form.Name}' updated in Dataverse.");
             return 0;
         }
         catch (AuthenticationRequiredException ex)

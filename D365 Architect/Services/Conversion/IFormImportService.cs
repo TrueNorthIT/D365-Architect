@@ -32,8 +32,9 @@ public interface IFormImportService
 
     /// <summary>
     /// Writes <paramref name="preview"/>'s already-built FormXML back to the
-    /// same form it was previewed against. Doesn't publish the change — see
-    /// <see cref="Dataverse.IDataverseClient.UpdateSystemFormXmlAsync"/>.
+    /// same form it was previewed against, then publishes it — see
+    /// <see cref="Dataverse.IDataverseClient.UpdateSystemFormXmlAsync"/> and
+    /// <see cref="Dataverse.IDataverseClient.PublishEntityAsync"/>.
     /// </summary>
     Task ApplyAsync(Uri environmentUrl, string accessToken, FormImportPreview preview, CancellationToken cancellationToken);
 }
@@ -45,6 +46,14 @@ public interface IFormImportService
 /// needs to decide whether to call it.
 /// </summary>
 /// <param name="FormId">The systemform's id — what <see cref="IFormImportService.ApplyAsync"/> updates.</param>
+/// <param name="Entity">
+/// The form's owning table's logical name — the live one when the form was
+/// resolved by id (see <see cref="Dataverse.ExistingSystemForm.EntityLogicalName"/>),
+/// falling back to the YAML's own <see cref="FormDefinition.Entity"/>
+/// otherwise. What <see cref="IFormImportService.ApplyAsync"/> passes to
+/// <see cref="Dataverse.IDataverseClient.PublishEntityAsync"/> after
+/// writing the new FormXML.
+/// </param>
 /// <param name="ExistingFormXml">The form's real, current, unmodified live FormXML, exactly as Dataverse returned it.</param>
 /// <param name="NewFormXml">The rebuilt FormXML <see cref="IFormImportService.ApplyAsync"/> will write — <see cref="FormXmlWriter"/>'s output, patched onto <paramref name="ExistingFormXml"/>.</param>
 /// <param name="ExistingComparableFormXml">
@@ -81,7 +90,7 @@ public interface IFormImportService
 /// was by table + name instead (nothing to compare against) or when it
 /// matched.
 /// </param>
-public sealed record FormImportPreview(Guid FormId, string ExistingFormXml, string NewFormXml, string ExistingComparableFormXml, IReadOnlyList<FormXmlValidationMessage> Violations, string? IdentityMismatchWarning = null)
+public sealed record FormImportPreview(Guid FormId, string Entity, string ExistingFormXml, string NewFormXml, string ExistingComparableFormXml, IReadOnlyList<FormXmlValidationMessage> Violations, string? IdentityMismatchWarning = null)
 {
     /// <summary>False when <see cref="ExistingComparableFormXml"/> and <see cref="NewFormXml"/> are identical — see that parameter's own doc comment for why comparing those two, not the raw live document, is what makes this accurate rather than "true" almost every time.</summary>
     public bool HasChanges => ExistingComparableFormXml != NewFormXml;

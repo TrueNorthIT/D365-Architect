@@ -41,11 +41,16 @@ public sealed class FormImportService(IDataverseClient dataverseClient, FormJson
         var existingForm = DecomposeExisting(form, existing.FormXml);
         var existingComparableFormXml = FormXmlWriter.Write(existingForm, existingRoot);
 
-        return new FormImportPreview(existing.FormId, existing.FormXml, newFormXml, existingComparableFormXml, violations, identityMismatchWarning);
+        var entity = existing.EntityLogicalName ?? form.Entity;
+
+        return new FormImportPreview(existing.FormId, entity, existing.FormXml, newFormXml, existingComparableFormXml, violations, identityMismatchWarning);
     }
 
-    public Task ApplyAsync(Uri environmentUrl, string accessToken, FormImportPreview preview, CancellationToken cancellationToken) =>
-        dataverseClient.UpdateSystemFormXmlAsync(environmentUrl, accessToken, preview.FormId, preview.NewFormXml, cancellationToken);
+    public async Task ApplyAsync(Uri environmentUrl, string accessToken, FormImportPreview preview, CancellationToken cancellationToken)
+    {
+        await dataverseClient.UpdateSystemFormXmlAsync(environmentUrl, accessToken, preview.FormId, preview.NewFormXml, cancellationToken);
+        await dataverseClient.PublishEntityAsync(environmentUrl, accessToken, preview.Entity, cancellationToken);
+    }
 
     /// <summary>
     /// Decomposes the form's current live FormXML the same way `form

@@ -279,8 +279,9 @@ ever updates a view that already exists; unless `--yes` is passed, you get
 a confirmation prompt (defaulting to "no") before anything actually changes
 in Dataverse.
 
-**What this doesn't do yet**: publish the change — same as `form
-import`/`table import`.
+**What this doesn't do yet**: publish the change — same as `table import`.
+Unlike `view import`, `form import` now does publish automatically after
+writing (see below).
 
 ### `form`
 
@@ -331,10 +332,19 @@ d365architect form export --table account --solution examplesolution
 
 The form is written as `<form-name>.form.yml`, following the same
 `<name>.<asset type>.yml` convention as `table export`/`view export` — e.g.
-"Account Main Form" becomes `account-main-form.form.yml`. The YAML carries
-the form's own `formId` — `form import` (below) matches against that
-directly, so a local rename or two forms sharing a name never risks
-sending an update to the wrong record.
+"Account Main Form" becomes `account-main-form.form.yml`. Unlike a view,
+two forms on the same table can easily share a display name — confirmed
+live, a real table with three forms all named "Information", one each of
+three different types — so the form's own type becomes its own extra
+dot-separated segment whenever it isn't an ordinary Main form (the common
+case, left exactly as before): "Information" (Quick View Form) becomes
+`information.quick-view-form.form.yml`, keeping the friendly name itself
+as just the first, plain segment rather than fusing name and type into one
+hyphenated blob — and not a same-named file silently overwriting the Main
+form's own export from an earlier run. The YAML
+carries the form's own `formId` too — `form import` (below) matches
+against that directly, so a local rename or two forms sharing a name never
+risks sending an update to the wrong record.
 
 Unlike a view's FetchXML/LayoutXML, a form's FormXML isn't kept verbatim —
 it's decomposed into `tabs` → `columns` → `sections` → `controls` (plus
@@ -492,14 +502,16 @@ Only ever updates a form that already exists — it refuses (rather than
 creating one) when nothing matches, and refuses outright for a dashboard,
 same as `build-xml`.
 
-**What this doesn't do yet**: publish the change (Dataverse customizations
-still need publishing separately — e.g. in the maker portal — before end
-users see it), or detect that the live form was changed by someone else
-since this YAML was last exported (it only compares the live document
-against what's about to be written, not against what it looked like at
-export time). See
+**Publishes the change automatically** — the form's owning table is
+published right after the write, so there's no separate manual publish
+step (e.g. in the maker portal) before end users see it.
+
+**What this doesn't do yet**: detect that the live form was changed by
+someone else since this YAML was last exported (it only compares the live
+document against what's about to be written, not against what it looked
+like at export time). See
 [`docs/yaml-conventions.md`](docs/yaml-conventions.md#importing-formxml-form-import)
-for the full detail on both.
+for the full detail.
 
 ### `schema`
 

@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using System.Xml.Linq;
 
 namespace D365Architect.Services.Dataverse;
 
@@ -228,6 +229,24 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
     {
         using var request = CreateRequest(environmentUrl, $"systemforms({formId})", accessToken, HttpMethod.Patch);
         request.Content = JsonContent.Create(new { formxml = formXml });
+
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+    }
+
+    public async Task PublishEntityAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken)
+    {
+        // Schema confirmed against Microsoft's own docs for
+        // PublishXmlRequest.ParameterXml: <entities><entity> takes the
+        // table's logical name and publishes everything on it (forms,
+        // views, ribbons, attributes) — there's no documented way to name
+        // just one systemform within it.
+        var parameterXml = new XElement("importexportxml",
+            new XElement("entities",
+                new XElement("entity", entityLogicalName))).ToString(SaveOptions.DisableFormatting);
+
+        using var request = CreateRequest(environmentUrl, "PublishXml", accessToken, HttpMethod.Post);
+        request.Content = JsonContent.Create(new { ParameterXml = parameterXml });
 
         using var response = await httpClient.SendAsync(request, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);

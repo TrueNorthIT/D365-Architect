@@ -536,11 +536,22 @@ opt-ins; this actually happened via `form build-xml`/`form import`'s shared
 validator being trusted as informational-only under the same reasoning as
 the `headerdensity` case, which turned out only to hold for that one case.
 
-**What this doesn't do yet**: publish the change. `UpdateSystemFormXmlAsync`
-only patches the `systemform` record's `formxml` column — Dataverse
-customizations still need publishing separately (e.g. in the maker portal)
-before end users see the change. `form import` says as much after a
-successful write rather than implying more happened than actually did.
+**Publishes after writing.** `UpdateSystemFormXmlAsync` only patches the
+`systemform` record's `formxml` column — Dataverse customizations still
+need publishing separately before end users see the change. `form import`
+does that itself: `FormImportService.ApplyAsync` follows the write with a
+call to `IDataverseClient.PublishEntityAsync`, the `PublishXml` action
+against the form's owning table. There's no finer-grained way to publish a
+single `systemform` on its own — confirmed against Microsoft's own docs for
+`PublishXmlRequest.ParameterXml`: the `<entities><entity>` node only ever
+takes a whole table's logical name (the one per-record exception,
+`<dashboards>`, is a different, dashboard-only node that doesn't apply
+here) — so "publish the form" necessarily means publishing everything on
+its table (forms, views, ribbons, attributes alike), not just the one form
+that changed. `preview.Entity` carries the table this publishes: the live
+one when the form was resolved by id (`ExistingSystemForm.EntityLogicalName`),
+falling back to the YAML's own `Entity` otherwise — see
+`FormImportPreview.Entity`'s own doc comment.
 
 ## Importing views (`view import`)
 
@@ -569,8 +580,10 @@ null means "don't touch this", never "clear it" — confirmed in
 `ViewImportPreview.HasChanges`, which only compares a field when the local
 YAML actually has a value there.
 
-**What this doesn't do yet**: publish the change — same, already-documented
-gap as `form import`.
+**What this doesn't do yet**: publish the change. Unlike `form import` (see
+above — it now calls `PublishEntityAsync` after writing), `view import`
+still only patches the `savedquery` record itself; Dataverse customizations
+still need publishing separately before end users see the change.
 
 ## Importing tables (`table import`)
 
