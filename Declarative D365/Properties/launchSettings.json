@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "Declarative D365": {
+      "commandName": "Project",
+      "commandLineArgs": "--help"
+    }
+  }
+}
