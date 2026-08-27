@@ -51,6 +51,7 @@ own options.
 | `whoami`      | Shows who you're currently signed in as, and to which environment. |
 | `environment` | Manage D365 environments.                                     |
 | `table`       | Work with D365 table definitions.                              |
+| `view`        | Work with D365 view (saved query) definitions.                 |
 | `schema`      | Work with this tool's YAML schema.                             |
 
 ### `auth`
@@ -139,7 +140,42 @@ d365architect table export --table account --solution examplesolution
 
 Exported files follow a `<name>.<asset type>.yml` naming convention (e.g.
 `account.table.yml`) so a folder of exports stays sortable and unambiguous
-once forms, views, and other asset types are supported.
+once forms and other asset types are supported.
+
+### `view`
+
+Work with D365 view (saved query) definitions.
+
+#### `view export`
+
+Fetches every view defined on a table from the currently signed-in
+environment and saves each one as its own YAML file. Requires `auth login`
+first.
+
+```
+d365architect view export --table account
+```
+
+By default this exports every view on the table — public views, Quick Find,
+lookup views, associated views, and so on. Pass `--solution` to scope the
+export down to just the views that solution actually customizes:
+
+```
+d365architect view export --table account --solution examplesolution
+```
+
+| Option            | Description                                                                | Required |
+|-------------------|------------------------------------------------------------------------------|----------|
+| `-t, --table`     | Logical name of the table whose views to export, e.g. `account`              | Yes      |
+| `-s, --solution`  | Unique name of a solution to scope the export to (only that solution's views)  | No   |
+| `-o, --output`    | Directory to write the exported YAML files into. Defaults to the current directory | No |
+
+Each view is written as `<view-name>.view.yml`, following the same
+`<name>.<asset type>.yml` convention as `table export` — e.g. "Active
+Accounts" becomes `active-accounts.view.yml`. A view's FetchXML and
+LayoutXML are kept verbatim rather than decomposed into a friendlier shape,
+since (unlike a table's columns) there's no bulk metadata endpoint to
+double-check that decomposition against.
 
 ### `schema`
 
@@ -147,37 +183,41 @@ Work with this tool's YAML schema.
 
 #### `schema export`
 
-Writes a [JSON Schema](https://json-schema.org/) describing the table YAML
-shape to disk — generated directly from this tool's own model (property
-names, required fields, and descriptions all come straight from the source),
-so it can't drift out of sync the way a hand-written copy could. No sign-in
-needed.
+Writes a [JSON Schema](https://json-schema.org/) describing one of this
+tool's curated YAML shapes to disk — generated directly from this tool's own
+model (property names, required fields, and descriptions all come straight
+from the source), so it can't drift out of sync the way a hand-written copy
+could. No sign-in needed.
 
 ```
-d365architect schema export
+d365architect schema export --for table
+d365architect schema export --for view
 ```
 
 | Option         | Description                                  | Required |
 |----------------|------------------------------------------------|----------|
-| `-o, --output` | Path to write the schema to. Defaults to `schema/table.schema.json` | No |
+| `-f, --for`    | Which asset type to generate a schema for: `table` or `view`. Defaults to `table` | No |
+| `-o, --output` | Path to write the schema to. Defaults to `schema/<asset-type>.schema.json` | No |
 
-This repository commits its generated schema at
-[`schema/table.schema.json`](schema/table.schema.json) and re-runs `schema
-export` whenever the model changes. D365 developers can point their editor
-at it for inline validation and autocomplete while hand-editing or reviewing
-`*.table.yml` files:
+This repository commits its generated schemas at
+[`schema/table.schema.json`](schema/table.schema.json) and
+[`schema/view.schema.json`](schema/view.schema.json), and re-runs `schema
+export` for both whenever a model changes. D365 developers can point their
+editor at them for inline validation and autocomplete while hand-editing or
+reviewing `*.table.yml`/`*.view.yml` files:
 
 - **If you have this repo cloned**, it's already wired up — `.vscode/settings.json`
-  maps `*.table.yml` files to the local schema, so VS Code's
+  maps `*.table.yml` and `*.view.yml` files to their local schemas, so VS Code's
   [YAML extension](https://marketplace.visualstudio.com/items?itemName=redhat.vscode-yaml)
   validates them automatically.
-- **From anywhere else**, add a workspace setting pointing at the raw file on
+- **From anywhere else**, add a workspace setting pointing at the raw files on
   GitHub:
 
   ```json
   {
     "yaml.schemas": {
-      "https://raw.githubusercontent.com/TrueNorthIT/D365-Architect/main/schema/table.schema.json": "*.table.yml"
+      "https://raw.githubusercontent.com/TrueNorthIT/D365-Architect/main/schema/table.schema.json": "*.table.yml",
+      "https://raw.githubusercontent.com/TrueNorthIT/D365-Architect/main/schema/view.schema.json": "*.view.yml"
     }
   }
   ```

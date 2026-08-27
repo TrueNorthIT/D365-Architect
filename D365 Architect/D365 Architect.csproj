@@ -7,9 +7,9 @@
     <AssemblyName>d365architect</AssemblyName>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <!-- Read by EntityDefinitionSchemaGenerator to pull property descriptions
-         straight from these classes' own doc comments into the generated
-         JSON Schema, rather than writing them out a second time. -->
+    <!-- Read by YamlSchemaGenerator to pull property descriptions straight
+         from these classes' own doc comments into the generated JSON
+         Schema, rather than writing them out a second time. -->
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
   </PropertyGroup>

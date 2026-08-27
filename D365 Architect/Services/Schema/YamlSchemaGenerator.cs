@@ -11,29 +11,33 @@ using YamlDotNet.Serialization.NamingConventions;
 namespace D365Architect.Services.Schema;
 
 /// <summary>
-/// Builds a JSON Schema describing the curated table YAML shape
-/// (<see cref="EntityDefinition"/>/<see cref="AttributeDefinition"/>) by
-/// reflecting over those classes directly, rather than hand-maintaining a
-/// second copy of the shape that could drift out of sync:
+/// Builds a JSON Schema describing one of this tool's curated YAML shapes
+/// (e.g. <see cref="EntityDefinition"/>/<see cref="AttributeDefinition"/> for
+/// tables, <see cref="ViewDefinition"/> for views) by reflecting over
+/// the model classes directly, rather than hand-maintaining a second copy of
+/// each shape that could drift out of sync:
 ///
 /// - Property names come from the same <see cref="YamlMemberAttribute"/>
-///   alias/casing <see cref="Conversion.EntityYamlSerializer"/> uses to
-///   write the YAML in the first place.
+///   alias/casing the matching <c>*YamlSerializer</c> uses to write the YAML
+///   in the first place.
 /// - "required" comes from the C# <c>required</c> modifier.
 /// - Descriptions come from this assembly's own XML doc comments (see
 ///   <c>GenerateDocumentationFile</c> in the project file) — the same text
 ///   a developer reading the model source already sees.
 /// </summary>
-public static class EntityDefinitionSchemaGenerator
+public static class YamlSchemaGenerator
 {
-    public static JsonObject Generate()
+    /// <param name="rootType">The curated model type to generate a schema for, e.g. <see cref="EntityDefinition"/>.</param>
+    /// <param name="title">The schema's "title".</param>
+    /// <param name="description">The schema's "description".</param>
+    public static JsonObject Generate(Type rootType, string title, string description)
     {
         var xmlDocs = TryLoadXmlDocs();
-        var schema = BuildObjectSchema(typeof(EntityDefinition), xmlDocs, []);
+        var schema = BuildObjectSchema(rootType, xmlDocs, []);
 
         schema.Insert(0, "$schema", "https://json-schema.org/draft/2020-12/schema");
-        schema.Insert(1, "title", "D365 Architect table definition");
-        schema.Insert(2, "description", "Declarative YAML shape for a Dynamics table, produced by `d365architect table export`.");
+        schema.Insert(1, "title", title);
+        schema.Insert(2, "description", description);
 
         return schema;
     }
@@ -93,7 +97,7 @@ public static class EntityDefinitionSchemaGenerator
             _ when type == typeof(double) => new JsonObject { ["type"] = "number" },
             _ when type == typeof(bool) => new JsonObject { ["type"] = "boolean" },
             _ when type != typeof(string) && typeof(IEnumerable).IsAssignableFrom(type) => BuildArraySchema(type, xmlDocs, ancestors),
-            _ => throw new NotSupportedException($"No JSON Schema mapping for type '{type}'. Extend {nameof(EntityDefinitionSchemaGenerator)} to handle it."),
+            _ => throw new NotSupportedException($"No JSON Schema mapping for type '{type}'. Extend {nameof(YamlSchemaGenerator)} to handle it."),
         };
 
         if (!string.IsNullOrWhiteSpace(description))
@@ -119,7 +123,7 @@ public static class EntityDefinitionSchemaGenerator
 
     private static XDocument? TryLoadXmlDocs()
     {
-        var path = Path.Combine(AppContext.BaseDirectory, $"{typeof(EntityDefinitionSchemaGenerator).Assembly.GetName().Name}.xml");
+        var path = Path.Combine(AppContext.BaseDirectory, $"{typeof(YamlSchemaGenerator).Assembly.GetName().Name}.xml");
         return File.Exists(path) ? XDocument.Load(path) : null;
     }
 
