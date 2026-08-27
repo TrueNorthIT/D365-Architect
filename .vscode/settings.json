@@ -1,0 +1,5 @@
+{
+  "yaml.schemas": {
+    "./schema/table.schema.json": "*.table.yml"
+  }
+}
