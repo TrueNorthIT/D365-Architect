@@ -1,3 +1,5 @@
+using D365Architect.Services.Conversion;
+using D365Architect.Services.Schema;
 using YamlDotNet.Serialization;
 
 namespace D365Architect.Services.Conversion.Models;
@@ -36,19 +38,46 @@ public sealed class FormControl
     [YamlMember(Order = 1)]
     public string? Field { get; init; }
 
+    /// <summary>The field's display label on the form.</summary>
     [YamlMember(Order = 2)]
     public string? Label { get; init; }
 
     /// <summary>
-    /// Dataverse's raw control class id (a GUID) — which control renders
-    /// this cell, e.g. distinguishing a non-default control override from a
-    /// field's usual one. Deliberately not mapped to a friendly name:
-    /// unlike a solutioncomponent componenttype (confirmed straight from
-    /// Microsoft's own docs), no equally authoritative source lists every
-    /// control class id, and guessing one wrong would be worse than showing
-    /// the raw id.
+    /// Which control renders this cell — a Dataverse standard control by
+    /// name, e.g. "SingleLineText", "Lookup", "Subgrid". Use
+    /// customControlId instead for a custom/PCF control or one not in this
+    /// list.
     /// </summary>
+    /// <remarks>
+    /// See <see cref="StandardFormControls"/> for the full list and how
+    /// each entry was confirmed against real, live Dataverse output rather
+    /// than guessed. Mutually exclusive with <see cref="CustomControlId"/>.
+    /// </remarks>
     [YamlMember(Order = 3)]
+    [SchemaEnum(typeof(StandardFormControls), nameof(StandardFormControls.FriendlyNames))]
+    public string? Control { get; init; }
+
+    /// <summary>
+    /// The control's raw Dataverse class id (a GUID), for a custom/PCF
+    /// control or a standard one not yet recognized by name. Use control
+    /// instead when the control is one of Dataverse's own standard ones.
+    /// </summary>
+    /// <remarks>
+    /// Kept raw rather than mapped to a friendly name here: unlike
+    /// Dataverse's own standard controls (a small, confirmed set — see
+    /// <see cref="StandardFormControls"/>), there's no source enumerating
+    /// every control ever registered on a real tenant, and a wrong guess
+    /// would misrepresent real data rather than just under-describe it.
+    /// </remarks>
+    [YamlMember(Order = 4)]
+    public string? CustomControlId { get; init; }
+
+    /// <summary>
+    /// Deprecated — use control or customControlId instead. Still
+    /// recognized for compatibility with a file exported before those
+    /// existed, but never written by a fresh export.
+    /// </summary>
+    [YamlMember(Alias = "classId", Order = 99)]
     public string? ClassId { get; init; }
 
     /// <summary>
@@ -60,66 +89,55 @@ public sealed class FormControl
     public bool? Disabled { get; init; }
 
     /// <summary>
-    /// Only present when false — most controls on a form are visible.
-    /// Confirmed live rather than assumed: a real, deliberately hidden
-    /// field (FormXML's `visible="false"`) is meaningfully different from
-    /// one simply not on the form at all, and this tool would otherwise
-    /// show them identically. Omit to leave this control visible; applying
-    /// this file back won't hide it.
+    /// Only present when false — a deliberately hidden field, distinct from
+    /// one simply not on the form at all. Omit to leave this control
+    /// visible; applying this file back won't hide it.
     /// </summary>
     [YamlMember(Order = 5)]
     public bool? Visible { get; init; }
 
     /// <summary>
-    /// How many of the section's own sub-columns this control's cell spans
-    /// (FormXML's `colspan`, an attribute of `&lt;cell&gt;`, not `&lt;control&gt;`).
+    /// How many of the section's own sub-columns this control's cell spans.
     /// Only present when greater than 1 — a single column is the common
     /// case; applying this file back won't change a cell's own span.
-    /// Confirmed live: real, non-default spans exist alongside the
-    /// overwhelmingly common `colspan="1"`, not just the trivial case.
     /// </summary>
     [YamlMember(Order = 6)]
     public int? ColumnSpan { get; init; }
 
     /// <summary>
-    /// How many rows this control's cell spans (FormXML's `rowspan`) —
-    /// genuinely structural, not cosmetic: a tall control like a subgrid or
-    /// notes timeline is laid out this way specifically so it visually
-    /// occupies several of its section's otherwise-empty rows rather than
-    /// being squeezed into one. Only present when greater than 1 — a single
-    /// row is the common case; applying this file back won't change a
-    /// cell's own span. Confirmed live: real spans up to 15 alongside the
-    /// overwhelmingly common `rowspan="1"`.
+    /// How many rows this control's cell spans — used to make a tall
+    /// control like a subgrid or notes timeline visually occupy several
+    /// otherwise-empty rows rather than being squeezed into one. Only
+    /// present when greater than 1 — a single row is the common case;
+    /// applying this file back won't change a cell's own span.
     /// </summary>
     [YamlMember(Order = 7)]
     public int? RowSpan { get; init; }
 
     /// <summary>
-    /// This control's own `&lt;parameters&gt;` block, converted structurally
-    /// (each XML element becomes a YAML map key, using the element's own
-    /// name; an attribute becomes a plain key under a nested `attributes`
-    /// map, its own text alongside those under `value`) rather than left as
-    /// raw XML text — e.g. a subgrid's target table, relationship, and
-    /// view; a web resource's name; a quick view control's source table and
-    /// form. A boolean value of `false` inside this block is left out —
-    /// every one of these parameters is an optional XML boolean with no
-    /// platform default declared, so an absent one and an explicit `false`
-    /// mean the same thing to Dataverse; omitting it here changes nothing
-    /// when applied back. `true` is always kept. This whole property is
-    /// absent when the control has no parameters at all, or when every one
-    /// it had was `false` (see `docs/yaml-conventions.md` for the full
-    /// reasoning). Unlike <see cref="ClassId"/>, none of this needs a
-    /// friendly-name lookup this tool would have to get right on its own:
-    /// the XML's own element/attribute names are kept as-is.
+    /// This control's own settings — e.g. a subgrid's target table,
+    /// relationship, and view; a web resource's name; a quick view
+    /// control's source table and form. Each setting keeps its own
+    /// platform name as its key; a setting with its own sub-settings
+    /// becomes a nested map. Absent when the control has none set.
     /// </summary>
+    /// <remarks>
+    /// Converted structurally from FormXML's `&lt;parameters&gt;` block
+    /// (each XML element becomes a YAML map key; an attribute becomes a
+    /// plain key under a nested `attributes` map, its own text alongside
+    /// those under `value`) rather than left as raw XML text — see
+    /// `docs/yaml-conventions.md` for the full conversion rules. A boolean
+    /// value of `false` inside this block is left out (an absent one and
+    /// an explicit `false` mean the same thing to Dataverse; omitting it
+    /// changes nothing when applied back), `true` is always kept.
+    /// </remarks>
     [YamlMember(Order = 8)]
     public object? Parameters { get; init; }
 
     /// <summary>
     /// Alternate controls attached to this one via the form designer's
     /// "add a component" feature — e.g. a Calendar control added to a
-    /// subgrid, or per-client (Web/Phone/Tablet) replacements. See
-    /// <see cref="FormAdditionalControl"/>'s own doc comment. Absent when
+    /// subgrid, or per-client (Web/Phone/Tablet) replacements. Absent when
     /// this control has none.
     /// </summary>
     [YamlMember(Order = 9)]
@@ -127,15 +145,9 @@ public sealed class FormControl
 
     /// <summary>
     /// Field-level event bindings scoped to this control specifically (e.g.
-    /// an "on change" handler for this one field) — distinct from
-    /// <see cref="FormDefinition.Events"/>, which are form-wide. Confirmed
-    /// live rather than assumed: Microsoft's own FormXML schema *documentation
-    /// page* doesn't mention `&lt;events&gt;` as a valid child of a cell at
-    /// all (only `&lt;labels&gt;`/`&lt;control&gt;` are) — the actual
-    /// downloadable XSD (see <see cref="FormXmlValidator"/>) already
-    /// declares it correctly, but the prose page doesn't, exactly the kind
-    /// of gap a docs-only audit would have missed. See
-    /// <see cref="FormEvent"/>. Absent when this control has none.
+    /// an "on change" handler for this one field) — distinct from the
+    /// form-wide event bindings at the top level. Absent when this control
+    /// has none.
     /// </summary>
     [YamlMember(Order = 10)]
     public IReadOnlyList<FormEvent>? Events { get; init; }

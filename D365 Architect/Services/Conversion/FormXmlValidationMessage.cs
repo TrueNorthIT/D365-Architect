@@ -15,10 +15,10 @@ namespace D365Architect.Services.Conversion;
 /// come back <c>Error</c> — this schema doesn't use lax/skip wildcards
 /// anywhere this tool's own output reaches, so <c>Warning</c> may never
 /// actually appear in practice. Exposed anyway, since it costs nothing and
-/// .NET is the authority on it, not this tool. Either severity is still
-/// just a warning as far as <c>form build-xml</c> itself is concerned — see
-/// <see cref="FormXmlValidator"/>'s own doc comment for why a violation
-/// isn't necessarily this tool's bug.
+/// .NET is the authority on it, not this tool. Deliberately NOT what
+/// <see cref="IsKnownHarmless"/> is based on — see that property's own doc
+/// comment for why this alone was never a safe signal for whether Dataverse
+/// will actually reject the write.
 /// </param>
 /// <param name="LineNumber">1-based line the violation was reported at.</param>
 /// <param name="LinePosition">1-based column on that line.</param>
@@ -38,4 +38,35 @@ namespace D365Architect.Services.Conversion;
 /// which would silently misalign a separate caret line but doesn't affect
 /// an inline highlight, since it travels with the character itself.
 /// </param>
-public sealed record FormXmlValidationMessage(XmlSeverityType Severity, int LineNumber, int LinePosition, string Message, string Snippet, int SnippetCaretOffset);
+public sealed record FormXmlValidationMessage(XmlSeverityType Severity, int LineNumber, int LinePosition, string Message, string Snippet, int SnippetCaretOffset)
+{
+    /// <summary>
+    /// True only for the exact, specifically-confirmed-safe violation
+    /// pattern: an undeclared <c>headerdensity</c>/<c>showinformselector</c>
+    /// attribute on the form root — real, live Dataverse-produced FormXML
+    /// already carries both on every form checked, and re-submitting them
+    /// unchanged (this tool never touches either) has been confirmed not to
+    /// be rejected. Every other violation — including one that looks
+    /// structurally similar, e.g. a different undeclared attribute
+    /// elsewhere, or any invalid child element — is <em>not</em> assumed
+    /// safe by extension: a genuine "invalid child element" violation (a
+    /// stray <c>TypeName</c> inside a control's own <c>&lt;parameters&gt;</c>,
+    /// confirmed live) was once waved through on the same "schema vs. real
+    /// Dataverse output disagree sometimes" reasoning that only this one
+    /// pattern actually earned, and Dataverse's own write-time validation
+    /// rejected it outright with a 400. A second, separate incident showed
+    /// the same gap the other direction — Dataverse rejecting a control
+    /// with no <c>classid</c> ("The class id cannot be null for control
+    /// element...") even though the schema never declares it required at
+    /// all — see <see cref="FormControlValidator"/>, which produces its own
+    /// findings as this exact type specifically so they get the same
+    /// treatment. So: this property is deliberately
+    /// narrow rather than a general severity signal, and callers that write
+    /// to Dataverse (<c>form import</c>) should treat <em>every other</em>
+    /// violation as blocking by default — see <see cref="FormXmlValidator"/>'s
+    /// own doc comment.
+    /// </summary>
+    public bool IsKnownHarmless =>
+        Message.Contains("'headerdensity'", StringComparison.Ordinal) ||
+        Message.Contains("'showinformselector'", StringComparison.Ordinal);
+}

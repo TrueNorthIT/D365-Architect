@@ -5,7 +5,7 @@
   "type": "object",
   "properties": {
     "view": {
-      "description": "The view's display name, e.g. \"Active Accounts\". Serialises as the top-level \"view\" key.",
+      "description": "The view's display name, e.g. \"Active Accounts\" — written as the top-level \"view\" key.",
       "type": "string"
     },
     "entity": {
@@ -13,14 +13,15 @@
       "type": "string"
     },
     "description": {
+      "description": "The view's description.",
       "type": "string"
     },
     "queryType": {
-      "description": "The kind of view this is, e.g. \"QuickFindSearch\" or \"LookupView\" — named after Microsoft.Crm.Sdk.SavedQueryQueryType's own constants (see https://learn.microsoft.com/dotnet/api/microsoft.crm.sdk.savedqueryquerytype). Only present when it's something other than \"MainApplicationView\" — an ordinary system view, and by far the most common case. Omit for an ordinary view; applying this file back won't change its type.",
+      "description": "The kind of view this is, e.g. \"QuickFindSearch\" or \"LookupView\" — see https://learn.microsoft.com/dotnet/api/microsoft.crm.sdk.savedqueryquerytype for the full set of values. Only present when it's something other than \"MainApplicationView\" — an ordinary system view, and by far the most common case. Omit for an ordinary view; applying this file back won't change its type.",
       "type": "string"
     },
     "isDefault": {
-      "description": "Only present when true — a table typically has one default view per QueryType, and false is the common case for any given view. Omit to leave this as a non-default view; applying this file back won't make it the default.",
+      "description": "Only present when true — a table typically has one default view per query type, and false is the common case for any given view. Omit to leave this as a non-default view; applying this file back won't make it the default.",
       "type": "boolean"
     },
     "isQuickFindQuery": {
@@ -32,11 +33,11 @@
       "type": "boolean"
     },
     "isCustomizable": {
-      "description": "Only present when false — true (customizable) is the common case; see FalseOrNull. Omit to leave this view customizable; applying this file back won't lock it down.",
+      "description": "Only present when false — true (customizable) is the common case. Omit to leave this view customizable; applying this file back won't lock it down.",
       "type": "boolean"
     },
     "fetchXml": {
-      "description": "The view's query, as FetchXML. Null for a handful of internal system views (e.g. \"{Entity} BulkOperation View\") that Dataverse doesn't populate this on — confirmed against a real tenant, not assumed.",
+      "description": "The view's query, as FetchXML. Null for a handful of internal system views (e.g. \"{Entity} BulkOperation View\") that Dataverse doesn't populate this on.",
       "type": "string"
     },
     "layoutXml": {

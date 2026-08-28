@@ -5,14 +5,20 @@
   "type": "object",
   "properties": {
     "form": {
-      "description": "The form's display name, e.g. \"Account Main Form\". Serialises as the top-level \"form\" key.",
+      "description": "The form's display name, e.g. \"Account Main Form\" — written as the top-level \"form\" key.",
       "type": "string"
     },
     "entity": {
       "description": "Logical name of the table this form belongs to, e.g. \"account\" (the systemform's objecttypecode).",
       "type": "string"
     },
+    "formId": {
+      "description": "The form's unique id in Dataverse. Used to match this file back to the exact form on import/rebuild, even if it's since been renamed or another form shares its name — leave as exported. Only absent for a file exported before this field existed.",
+      "type": "string",
+      "format": "uuid"
+    },
     "description": {
+      "description": "A description of the form, shown in the form picker.",
       "type": "string"
     },
     "type": {
@@ -20,7 +26,7 @@
       "type": "string"
     },
     "isDefault": {
-      "description": "Only present when true — a table typically has one default form per Type, and false is the common case for any given form. Omit to leave this as a non-default form; applying this file back won't make it the default.",
+      "description": "Only present when true — a table typically has one default form per type, and false is the common case for any given form. Omit to leave this as a non-default form; applying this file back won't make it the default.",
       "type": "boolean"
     },
     "formActivationState": {
@@ -28,11 +34,11 @@
       "type": "string"
     },
     "isCustomizable": {
-      "description": "Only present when false — true (customizable) is the common case; see FalseOrNull. Omit to leave this form customizable; applying this file back won't lock it down.",
+      "description": "Only present when false — true (customizable) is the common case. Omit to leave this form customizable; applying this file back won't lock it down.",
       "type": "boolean"
     },
     "tabs": {
-      "description": "The form's tabs, decomposed from its FormXML — see this class's own doc comment for what is (and isn't) captured. Empty for a form this tool doesn't decompose at all yet (dashboards) or whose FormXML Dataverse didn't return.",
+      "description": "The form's tabs, each with its columns, sections, and controls. Empty for a dashboard (not decomposed) or a form Dataverse returned no layout for.",
       "type": "array",
       "items": {
         "type": "object",
@@ -42,9 +48,11 @@
             "type": "string"
           },
           "label": {
+            "description": "The tab's display label.",
             "type": "string"
           },
           "columns": {
+            "description": "The tab's side-by-side columns, left to right.",
             "type": "array",
             "items": {
               "type": "object",
@@ -54,6 +62,7 @@
                   "type": "string"
                 },
                 "sections": {
+                  "description": "The sections stacked in this column, top to bottom.",
                   "type": "array",
                   "items": {
                     "type": "object",
@@ -63,13 +72,15 @@
                         "type": "string"
                       },
                       "label": {
+                        "description": "The section's display label.",
                         "type": "string"
                       },
                       "columns": {
-                        "description": "How many side-by-side sub-columns this section itself renders its rows into — a section can lay its own cells out into more than one column independently of FormColumn (a tab's own columns). Controls stays a flat, row-major list either way (row 1's cells left-to-right, then row 2's, ...), so this is the piece of information that says how to regroup them back into a grid — the cell/row structure itself isn't otherwise represented. Only present when greater than 1 — a single column is the common case; applying this file back won't change a section's own column count.",
+                        "description": "How many side-by-side sub-columns this section lays its own fields into — independent of the tab's own columns. Only present when greater than 1 — a single column is the common case; applying this file back won't change a section's own column count.",
                         "type": "integer"
                       },
                       "controls": {
+                        "description": "The section's fields, in reading order (left to right, top to bottom).",
                         "type": "array",
                         "items": {
                           "type": "object",
@@ -83,10 +94,42 @@
                               "type": "string"
                             },
                             "label": {
+                              "description": "The field's display label on the form.",
                               "type": "string"
                             },
-                            "classId": {
-                              "description": "Dataverse's raw control class id (a GUID) — which control renders this cell, e.g. distinguishing a non-default control override from a field's usual one. Deliberately not mapped to a friendly name: unlike a solutioncomponent componenttype (confirmed straight from Microsoft's own docs), no equally authoritative source lists every control class id, and guessing one wrong would be worse than showing the raw id.",
+                            "control": {
+                              "description": "Which control renders this cell — a Dataverse standard control by name, e.g. \"SingleLineText\", \"Lookup\", \"Subgrid\". Use customControlId instead for a custom/PCF control or one not in this list.",
+                              "type": "string",
+                              "enum": [
+                                "ActivitiesGrid",
+                                "Currency",
+                                "DateAndTime",
+                                "Decimal",
+                                "Email",
+                                "IFrame",
+                                "Lookup",
+                                "MultiSelectOptionSet",
+                                "MultilineText",
+                                "Notes",
+                                "OptionSet",
+                                "PartyList",
+                                "Phone",
+                                "QuickViewForm",
+                                "SingleLineText",
+                                "Subgrid",
+                                "TickerSymbol",
+                                "Timeline",
+                                "TwoOptions",
+                                "TwoOptionsCheckbox",
+                                "Url",
+                                "WebResource",
+                                "WebResourceImage",
+                                "WebResourceSilverlight",
+                                "WholeNumber"
+                              ]
+                            },
+                            "customControlId": {
+                              "description": "The control's raw Dataverse class id (a GUID), for a custom/PCF control or a standard one not yet recognized by name. Use control instead when the control is one of Dataverse's own standard ones.",
                               "type": "string"
                             },
                             "disabled": {
@@ -94,48 +137,57 @@
                               "type": "boolean"
                             },
                             "visible": {
-                              "description": "Only present when false — most controls on a form are visible. Confirmed live rather than assumed: a real, deliberately hidden field (FormXML's `visible=\"false\"`) is meaningfully different from one simply not on the form at all, and this tool would otherwise show them identically. Omit to leave this control visible; applying this file back won't hide it.",
+                              "description": "Only present when false — a deliberately hidden field, distinct from one simply not on the form at all. Omit to leave this control visible; applying this file back won't hide it.",
                               "type": "boolean"
                             },
+                            "columnSpan": {
+                              "description": "How many of the section's own sub-columns this control's cell spans. Only present when greater than 1 — a single column is the common case; applying this file back won't change a cell's own span.",
+                              "type": "integer"
+                            },
+                            "rowSpan": {
+                              "description": "How many rows this control's cell spans — used to make a tall control like a subgrid or notes timeline visually occupy several otherwise-empty rows rather than being squeezed into one. Only present when greater than 1 — a single row is the common case; applying this file back won't change a cell's own span.",
+                              "type": "integer"
+                            },
                             "parameters": {
-                              "description": "This control's own `<parameters>` block, converted structurally (each XML element becomes a YAML map key, using the element's own name; an attribute becomes a plain key under a nested `attributes` map, its own text alongside those under `value`) rather than left as raw XML text — e.g. a subgrid's target table, relationship, and view; a web resource's name; a quick view control's source table and form. A boolean value of `false` inside this block is left out — every one of these parameters is an optional XML boolean with no platform default declared, so an absent one and an explicit `false` mean the same thing to Dataverse; omitting it here changes nothing when applied back. `true` is always kept. This whole property is absent when the control has no parameters at all, or when every one it had was `false` (see `docs/yaml-conventions.md` for the full reasoning). Unlike ClassId, none of this needs a friendly-name lookup this tool would have to get right on its own: the XML's own element/attribute names are kept as-is."
+                              "description": "This control's own settings — e.g. a subgrid's target table, relationship, and view; a web resource's name; a quick view control's source table and form. Each setting keeps its own platform name as its key; a setting with its own sub-settings becomes a nested map. Absent when the control has none set."
                             },
                             "additionalControls": {
-                              "description": "Alternate controls attached to this one via the form designer's \"add a component\" feature — e.g. a Calendar control added to a subgrid, or per-client (Web/Phone/Tablet) replacements. See FormAdditionalControl's own doc comment. Absent when this control has none.",
+                              "description": "Alternate controls attached to this one via the form designer's \"add a component\" feature — e.g. a Calendar control added to a subgrid, or per-client (Web/Phone/Tablet) replacements. Absent when this control has none.",
                               "type": "array",
                               "items": {
                                 "type": "object",
                                 "properties": {
                                   "id": {
-                                    "description": "This alternate's own class id, when it's identified that way (a GUID) — mutually exclusive with Name in every sample seen so far. Kept raw for the same reason as ClassId.",
+                                    "description": "This alternate's own class id (a GUID), when it's identified that way — mutually exclusive with name.",
                                     "type": "string"
                                   },
                                   "name": {
-                                    "description": "This alternate's fully-qualified PCF control name, e.g. \"MscrmControls.FieldControls.RecentRecords\" — mutually exclusive with Id in every sample seen so far.",
+                                    "description": "This alternate's fully-qualified PCF control name, e.g. \"MscrmControls.FieldControls.RecentRecords\" — mutually exclusive with id.",
                                     "type": "string"
                                   },
                                   "formFactor": {
-                                    "description": "Which client this alternate applies to (Web/Phone/Tablet), as Dataverse's raw integer. Not mapped to a friendly name: no authoritative option set documenting the values was found, same caution as ClassId.",
+                                    "description": "Which client this alternate applies to (Web/Phone/Tablet), as Dataverse's raw integer — not mapped to a friendly name, since no authoritative reference for the values was found.",
                                     "type": "integer"
                                   },
                                   "version": {
+                                    "description": "The alternate control's version.",
                                     "type": "string"
                                   },
                                   "parameters": {
-                                    "description": "This alternate's own parameters, converted the same structural way as Parameters (including the same false-stripping rule)."
+                                    "description": "This alternate's own settings, same shape as a control's own parameters."
                                   }
                                 },
                                 "additionalProperties": false
                               }
                             },
                             "events": {
-                              "description": "Field-level event bindings scoped to this control specifically (e.g. an \"on change\" handler for this one field) — distinct from Events, which are form-wide. Confirmed live rather than assumed: Microsoft's own published FormXML schema doesn't document `<events>` as a valid child of a cell at all (only `<labels>`/`<control>` are), yet real forms have it — exactly the kind of gap a schema-only audit would have missed. See FormEvent. Absent when this control has none.",
+                              "description": "Field-level event bindings scoped to this control specifically (e.g. an \"on change\" handler for this one field) — distinct from the form-wide event bindings at the top level. Absent when this control has none.",
                               "type": "array",
                               "items": {
                                 "type": "object",
                                 "properties": {
                                   "name": {
-                                    "description": "The event's own name, e.g. \"onload\", or a custom name for a field-level event tied to Attribute.",
+                                    "description": "The event's own name, e.g. \"onload\", or a custom name for a field-level event tied to attribute.",
                                     "type": "string"
                                   },
                                   "attribute": {
@@ -143,7 +195,7 @@
                                     "type": "string"
                                   },
                                   "active": {
-                                    "description": "Whether this event is active. Shown whenever FormXML states it explicitly, same reasoning as Enabled — no observed unset case to know what it would default to.",
+                                    "description": "Whether this event is active.",
                                     "type": "boolean"
                                   },
                                   "handlers": {
@@ -161,11 +213,11 @@
                                           "type": "string"
                                         },
                                         "enabled": {
-                                          "description": "Whether this handler is enabled. Shown whenever FormXML states it explicitly (every sample seen states it, always as true) rather than only when it deviates from a default — unlike most other booleans this tool exports, no unset/omitted case has been observed to know what it would default to.",
+                                          "description": "Whether this handler is enabled.",
                                           "type": "boolean"
                                         },
                                         "passExecutionContext": {
-                                          "description": "Whether the platform passes its execution context as this function's first argument. Shown whenever FormXML states it explicitly, for the same reason as Enabled.",
+                                          "description": "Whether the platform passes its execution context as this function's first argument.",
                                           "type": "boolean"
                                         }
                                       },
@@ -191,11 +243,11 @@
                                           "type": "string"
                                         },
                                         "enabled": {
-                                          "description": "Whether this handler is enabled. Shown whenever FormXML states it explicitly (every sample seen states it, always as true) rather than only when it deviates from a default — unlike most other booleans this tool exports, no unset/omitted case has been observed to know what it would default to.",
+                                          "description": "Whether this handler is enabled.",
                                           "type": "boolean"
                                         },
                                         "passExecutionContext": {
-                                          "description": "Whether the platform passes its execution context as this function's first argument. Shown whenever FormXML states it explicitly, for the same reason as Enabled.",
+                                          "description": "Whether the platform passes its execution context as this function's first argument.",
                                           "type": "boolean"
                                         }
                                       },
@@ -209,6 +261,10 @@
                                 },
                                 "additionalProperties": false
                               }
+                            },
+                            "classId": {
+                              "description": "Deprecated — use control or customControlId instead. Still recognized for compatibility with a file exported before those existed, but never written by a fresh export.",
+                              "type": "string"
                             }
                           },
                           "additionalProperties": false,
@@ -244,10 +300,42 @@
             "type": "string"
           },
           "label": {
+            "description": "The field's display label on the form.",
             "type": "string"
           },
-          "classId": {
-            "description": "Dataverse's raw control class id (a GUID) — which control renders this cell, e.g. distinguishing a non-default control override from a field's usual one. Deliberately not mapped to a friendly name: unlike a solutioncomponent componenttype (confirmed straight from Microsoft's own docs), no equally authoritative source lists every control class id, and guessing one wrong would be worse than showing the raw id.",
+          "control": {
+            "description": "Which control renders this cell — a Dataverse standard control by name, e.g. \"SingleLineText\", \"Lookup\", \"Subgrid\". Use customControlId instead for a custom/PCF control or one not in this list.",
+            "type": "string",
+            "enum": [
+              "ActivitiesGrid",
+              "Currency",
+              "DateAndTime",
+              "Decimal",
+              "Email",
+              "IFrame",
+              "Lookup",
+              "MultiSelectOptionSet",
+              "MultilineText",
+              "Notes",
+              "OptionSet",
+              "PartyList",
+              "Phone",
+              "QuickViewForm",
+              "SingleLineText",
+              "Subgrid",
+              "TickerSymbol",
+              "Timeline",
+              "TwoOptions",
+              "TwoOptionsCheckbox",
+              "Url",
+              "WebResource",
+              "WebResourceImage",
+              "WebResourceSilverlight",
+              "WholeNumber"
+            ]
+          },
+          "customControlId": {
+            "description": "The control's raw Dataverse class id (a GUID), for a custom/PCF control or a standard one not yet recognized by name. Use control instead when the control is one of Dataverse's own standard ones.",
             "type": "string"
           },
           "disabled": {
@@ -255,48 +343,57 @@
             "type": "boolean"
           },
           "visible": {
-            "description": "Only present when false — most controls on a form are visible. Confirmed live rather than assumed: a real, deliberately hidden field (FormXML's `visible=\"false\"`) is meaningfully different from one simply not on the form at all, and this tool would otherwise show them identically. Omit to leave this control visible; applying this file back won't hide it.",
+            "description": "Only present when false — a deliberately hidden field, distinct from one simply not on the form at all. Omit to leave this control visible; applying this file back won't hide it.",
             "type": "boolean"
           },
+          "columnSpan": {
+            "description": "How many of the section's own sub-columns this control's cell spans. Only present when greater than 1 — a single column is the common case; applying this file back won't change a cell's own span.",
+            "type": "integer"
+          },
+          "rowSpan": {
+            "description": "How many rows this control's cell spans — used to make a tall control like a subgrid or notes timeline visually occupy several otherwise-empty rows rather than being squeezed into one. Only present when greater than 1 — a single row is the common case; applying this file back won't change a cell's own span.",
+            "type": "integer"
+          },
           "parameters": {
-            "description": "This control's own `<parameters>` block, converted structurally (each XML element becomes a YAML map key, using the element's own name; an attribute becomes a plain key under a nested `attributes` map, its own text alongside those under `value`) rather than left as raw XML text — e.g. a subgrid's target table, relationship, and view; a web resource's name; a quick view control's source table and form. A boolean value of `false` inside this block is left out — every one of these parameters is an optional XML boolean with no platform default declared, so an absent one and an explicit `false` mean the same thing to Dataverse; omitting it here changes nothing when applied back. `true` is always kept. This whole property is absent when the control has no parameters at all, or when every one it had was `false` (see `docs/yaml-conventions.md` for the full reasoning). Unlike ClassId, none of this needs a friendly-name lookup this tool would have to get right on its own: the XML's own element/attribute names are kept as-is."
+            "description": "This control's own settings — e.g. a subgrid's target table, relationship, and view; a web resource's name; a quick view control's source table and form. Each setting keeps its own platform name as its key; a setting with its own sub-settings becomes a nested map. Absent when the control has none set."
           },
           "additionalControls": {
-            "description": "Alternate controls attached to this one via the form designer's \"add a component\" feature — e.g. a Calendar control added to a subgrid, or per-client (Web/Phone/Tablet) replacements. See FormAdditionalControl's own doc comment. Absent when this control has none.",
+            "description": "Alternate controls attached to this one via the form designer's \"add a component\" feature — e.g. a Calendar control added to a subgrid, or per-client (Web/Phone/Tablet) replacements. Absent when this control has none.",
             "type": "array",
             "items": {
               "type": "object",
               "properties": {
                 "id": {
-                  "description": "This alternate's own class id, when it's identified that way (a GUID) — mutually exclusive with Name in every sample seen so far. Kept raw for the same reason as ClassId.",
+                  "description": "This alternate's own class id (a GUID), when it's identified that way — mutually exclusive with name.",
                   "type": "string"
                 },
                 "name": {
-                  "description": "This alternate's fully-qualified PCF control name, e.g. \"MscrmControls.FieldControls.RecentRecords\" — mutually exclusive with Id in every sample seen so far.",
+                  "description": "This alternate's fully-qualified PCF control name, e.g. \"MscrmControls.FieldControls.RecentRecords\" — mutually exclusive with id.",
                   "type": "string"
                 },
                 "formFactor": {
-                  "description": "Which client this alternate applies to (Web/Phone/Tablet), as Dataverse's raw integer. Not mapped to a friendly name: no authoritative option set documenting the values was found, same caution as ClassId.",
+                  "description": "Which client this alternate applies to (Web/Phone/Tablet), as Dataverse's raw integer — not mapped to a friendly name, since no authoritative reference for the values was found.",
                   "type": "integer"
                 },
                 "version": {
+                  "description": "The alternate control's version.",
                   "type": "string"
                 },
                 "parameters": {
-                  "description": "This alternate's own parameters, converted the same structural way as Parameters (including the same false-stripping rule)."
+                  "description": "This alternate's own settings, same shape as a control's own parameters."
                 }
               },
               "additionalProperties": false
             }
           },
           "events": {
-            "description": "Field-level event bindings scoped to this control specifically (e.g. an \"on change\" handler for this one field) — distinct from Events, which are form-wide. Confirmed live rather than assumed: Microsoft's own published FormXML schema doesn't document `<events>` as a valid child of a cell at all (only `<labels>`/`<control>` are), yet real forms have it — exactly the kind of gap a schema-only audit would have missed. See FormEvent. Absent when this control has none.",
+            "description": "Field-level event bindings scoped to this control specifically (e.g. an \"on change\" handler for this one field) — distinct from the form-wide event bindings at the top level. Absent when this control has none.",
             "type": "array",
             "items": {
               "type": "object",
               "properties": {
                 "name": {
-                  "description": "The event's own name, e.g. \"onload\", or a custom name for a field-level event tied to Attribute.",
+                  "description": "The event's own name, e.g. \"onload\", or a custom name for a field-level event tied to attribute.",
                   "type": "string"
                 },
                 "attribute": {
@@ -304,7 +401,7 @@
                   "type": "string"
                 },
                 "active": {
-                  "description": "Whether this event is active. Shown whenever FormXML states it explicitly, same reasoning as Enabled — no observed unset case to know what it would default to.",
+                  "description": "Whether this event is active.",
                   "type": "boolean"
                 },
                 "handlers": {
@@ -322,11 +419,11 @@
                         "type": "string"
                       },
                       "enabled": {
-                        "description": "Whether this handler is enabled. Shown whenever FormXML states it explicitly (every sample seen states it, always as true) rather than only when it deviates from a default — unlike most other booleans this tool exports, no unset/omitted case has been observed to know what it would default to.",
+                        "description": "Whether this handler is enabled.",
                         "type": "boolean"
                       },
                       "passExecutionContext": {
-                        "description": "Whether the platform passes its execution context as this function's first argument. Shown whenever FormXML states it explicitly, for the same reason as Enabled.",
+                        "description": "Whether the platform passes its execution context as this function's first argument.",
                         "type": "boolean"
                       }
                     },
@@ -352,11 +449,11 @@
                         "type": "string"
                       },
                       "enabled": {
-                        "description": "Whether this handler is enabled. Shown whenever FormXML states it explicitly (every sample seen states it, always as true) rather than only when it deviates from a default — unlike most other booleans this tool exports, no unset/omitted case has been observed to know what it would default to.",
+                        "description": "Whether this handler is enabled.",
                         "type": "boolean"
                       },
                       "passExecutionContext": {
-                        "description": "Whether the platform passes its execution context as this function's first argument. Shown whenever FormXML states it explicitly, for the same reason as Enabled.",
+                        "description": "Whether the platform passes its execution context as this function's first argument.",
                         "type": "boolean"
                       }
                     },
@@ -370,6 +467,10 @@
               },
               "additionalProperties": false
             }
+          },
+          "classId": {
+            "description": "Deprecated — use control or customControlId instead. Still recognized for compatibility with a file exported before those existed, but never written by a fresh export.",
+            "type": "string"
           }
         },
         "additionalProperties": false,
@@ -393,10 +494,42 @@
             "type": "string"
           },
           "label": {
+            "description": "The field's display label on the form.",
             "type": "string"
           },
-          "classId": {
-            "description": "Dataverse's raw control class id (a GUID) — which control renders this cell, e.g. distinguishing a non-default control override from a field's usual one. Deliberately not mapped to a friendly name: unlike a solutioncomponent componenttype (confirmed straight from Microsoft's own docs), no equally authoritative source lists every control class id, and guessing one wrong would be worse than showing the raw id.",
+          "control": {
+            "description": "Which control renders this cell — a Dataverse standard control by name, e.g. \"SingleLineText\", \"Lookup\", \"Subgrid\". Use customControlId instead for a custom/PCF control or one not in this list.",
+            "type": "string",
+            "enum": [
+              "ActivitiesGrid",
+              "Currency",
+              "DateAndTime",
+              "Decimal",
+              "Email",
+              "IFrame",
+              "Lookup",
+              "MultiSelectOptionSet",
+              "MultilineText",
+              "Notes",
+              "OptionSet",
+              "PartyList",
+              "Phone",
+              "QuickViewForm",
+              "SingleLineText",
+              "Subgrid",
+              "TickerSymbol",
+              "Timeline",
+              "TwoOptions",
+              "TwoOptionsCheckbox",
+              "Url",
+              "WebResource",
+              "WebResourceImage",
+              "WebResourceSilverlight",
+              "WholeNumber"
+            ]
+          },
+          "customControlId": {
+            "description": "The control's raw Dataverse class id (a GUID), for a custom/PCF control or a standard one not yet recognized by name. Use control instead when the control is one of Dataverse's own standard ones.",
             "type": "string"
           },
           "disabled": {
@@ -404,48 +537,57 @@
             "type": "boolean"
           },
           "visible": {
-            "description": "Only present when false — most controls on a form are visible. Confirmed live rather than assumed: a real, deliberately hidden field (FormXML's `visible=\"false\"`) is meaningfully different from one simply not on the form at all, and this tool would otherwise show them identically. Omit to leave this control visible; applying this file back won't hide it.",
+            "description": "Only present when false — a deliberately hidden field, distinct from one simply not on the form at all. Omit to leave this control visible; applying this file back won't hide it.",
             "type": "boolean"
           },
+          "columnSpan": {
+            "description": "How many of the section's own sub-columns this control's cell spans. Only present when greater than 1 — a single column is the common case; applying this file back won't change a cell's own span.",
+            "type": "integer"
+          },
+          "rowSpan": {
+            "description": "How many rows this control's cell spans — used to make a tall control like a subgrid or notes timeline visually occupy several otherwise-empty rows rather than being squeezed into one. Only present when greater than 1 — a single row is the common case; applying this file back won't change a cell's own span.",
+            "type": "integer"
+          },
           "parameters": {
-            "description": "This control's own `<parameters>` block, converted structurally (each XML element becomes a YAML map key, using the element's own name; an attribute becomes a plain key under a nested `attributes` map, its own text alongside those under `value`) rather than left as raw XML text — e.g. a subgrid's target table, relationship, and view; a web resource's name; a quick view control's source table and form. A boolean value of `false` inside this block is left out — every one of these parameters is an optional XML boolean with no platform default declared, so an absent one and an explicit `false` mean the same thing to Dataverse; omitting it here changes nothing when applied back. `true` is always kept. This whole property is absent when the control has no parameters at all, or when every one it had was `false` (see `docs/yaml-conventions.md` for the full reasoning). Unlike ClassId, none of this needs a friendly-name lookup this tool would have to get right on its own: the XML's own element/attribute names are kept as-is."
+            "description": "This control's own settings — e.g. a subgrid's target table, relationship, and view; a web resource's name; a quick view control's source table and form. Each setting keeps its own platform name as its key; a setting with its own sub-settings becomes a nested map. Absent when the control has none set."
           },
           "additionalControls": {
-            "description": "Alternate controls attached to this one via the form designer's \"add a component\" feature — e.g. a Calendar control added to a subgrid, or per-client (Web/Phone/Tablet) replacements. See FormAdditionalControl's own doc comment. Absent when this control has none.",
+            "description": "Alternate controls attached to this one via the form designer's \"add a component\" feature — e.g. a Calendar control added to a subgrid, or per-client (Web/Phone/Tablet) replacements. Absent when this control has none.",
             "type": "array",
             "items": {
               "type": "object",
               "properties": {
                 "id": {
-                  "description": "This alternate's own class id, when it's identified that way (a GUID) — mutually exclusive with Name in every sample seen so far. Kept raw for the same reason as ClassId.",
+                  "description": "This alternate's own class id (a GUID), when it's identified that way — mutually exclusive with name.",
                   "type": "string"
                 },
                 "name": {
-                  "description": "This alternate's fully-qualified PCF control name, e.g. \"MscrmControls.FieldControls.RecentRecords\" — mutually exclusive with Id in every sample seen so far.",
+                  "description": "This alternate's fully-qualified PCF control name, e.g. \"MscrmControls.FieldControls.RecentRecords\" — mutually exclusive with id.",
                   "type": "string"
                 },
                 "formFactor": {
-                  "description": "Which client this alternate applies to (Web/Phone/Tablet), as Dataverse's raw integer. Not mapped to a friendly name: no authoritative option set documenting the values was found, same caution as ClassId.",
+                  "description": "Which client this alternate applies to (Web/Phone/Tablet), as Dataverse's raw integer — not mapped to a friendly name, since no authoritative reference for the values was found.",
                   "type": "integer"
                 },
                 "version": {
+                  "description": "The alternate control's version.",
                   "type": "string"
                 },
                 "parameters": {
-                  "description": "This alternate's own parameters, converted the same structural way as Parameters (including the same false-stripping rule)."
+                  "description": "This alternate's own settings, same shape as a control's own parameters."
                 }
               },
               "additionalProperties": false
             }
           },
           "events": {
-            "description": "Field-level event bindings scoped to this control specifically (e.g. an \"on change\" handler for this one field) — distinct from Events, which are form-wide. Confirmed live rather than assumed: Microsoft's own published FormXML schema doesn't document `<events>` as a valid child of a cell at all (only `<labels>`/`<control>` are), yet real forms have it — exactly the kind of gap a schema-only audit would have missed. See FormEvent. Absent when this control has none.",
+            "description": "Field-level event bindings scoped to this control specifically (e.g. an \"on change\" handler for this one field) — distinct from the form-wide event bindings at the top level. Absent when this control has none.",
             "type": "array",
             "items": {
               "type": "object",
               "properties": {
                 "name": {
-                  "description": "The event's own name, e.g. \"onload\", or a custom name for a field-level event tied to Attribute.",
+                  "description": "The event's own name, e.g. \"onload\", or a custom name for a field-level event tied to attribute.",
                   "type": "string"
                 },
                 "attribute": {
@@ -453,7 +595,7 @@
                   "type": "string"
                 },
                 "active": {
-                  "description": "Whether this event is active. Shown whenever FormXML states it explicitly, same reasoning as Enabled — no observed unset case to know what it would default to.",
+                  "description": "Whether this event is active.",
                   "type": "boolean"
                 },
                 "handlers": {
@@ -471,11 +613,11 @@
                         "type": "string"
                       },
                       "enabled": {
-                        "description": "Whether this handler is enabled. Shown whenever FormXML states it explicitly (every sample seen states it, always as true) rather than only when it deviates from a default — unlike most other booleans this tool exports, no unset/omitted case has been observed to know what it would default to.",
+                        "description": "Whether this handler is enabled.",
                         "type": "boolean"
                       },
                       "passExecutionContext": {
-                        "description": "Whether the platform passes its execution context as this function's first argument. Shown whenever FormXML states it explicitly, for the same reason as Enabled.",
+                        "description": "Whether the platform passes its execution context as this function's first argument.",
                         "type": "boolean"
                       }
                     },
@@ -501,11 +643,11 @@
                         "type": "string"
                       },
                       "enabled": {
-                        "description": "Whether this handler is enabled. Shown whenever FormXML states it explicitly (every sample seen states it, always as true) rather than only when it deviates from a default — unlike most other booleans this tool exports, no unset/omitted case has been observed to know what it would default to.",
+                        "description": "Whether this handler is enabled.",
                         "type": "boolean"
                       },
                       "passExecutionContext": {
-                        "description": "Whether the platform passes its execution context as this function's first argument. Shown whenever FormXML states it explicitly, for the same reason as Enabled.",
+                        "description": "Whether the platform passes its execution context as this function's first argument.",
                         "type": "boolean"
                       }
                     },
@@ -519,6 +661,10 @@
               },
               "additionalProperties": false
             }
+          },
+          "classId": {
+            "description": "Deprecated — use control or customControlId instead. Still recognized for compatibility with a file exported before those existed, but never written by a fresh export.",
+            "type": "string"
           }
         },
         "additionalProperties": false,
@@ -532,7 +678,7 @@
       "type": "string"
     },
     "hiddenFields": {
-      "description": "Fields the form tracks but never renders on any tab — see FormHiddenField. Absent when there are none.",
+      "description": "Fields the form tracks but never renders on any tab. Absent when there are none.",
       "type": "array",
       "items": {
         "type": "object",
@@ -542,7 +688,7 @@
             "type": "string"
           },
           "classId": {
-            "description": "Raw control class id, kept for the same reason as ClassId.",
+            "description": "The field's raw control class id, if Dataverse records one for it.",
             "type": "string"
           }
         },
@@ -553,7 +699,7 @@
       }
     },
     "displayCondition": {
-      "description": "When this form is offered as a choice for a record, and to whom — see FormDisplayCondition. Absent when the form has none (every published Main form seen has one, but not every form type does).",
+      "description": "When this form is offered as a choice for a record, and to whom. Absent when the form has none (every published Main form has one, but not every form type does).",
       "type": "object",
       "properties": {
         "fallbackForm": {
@@ -592,13 +738,13 @@
       }
     },
     "events": {
-      "description": "The form's business logic — event/handler bindings, not layout. See FormEvent. Absent when there are none.",
+      "description": "The form's business logic — event/handler bindings, not layout. Absent when there are none.",
       "type": "array",
       "items": {
         "type": "object",
         "properties": {
           "name": {
-            "description": "The event's own name, e.g. \"onload\", or a custom name for a field-level event tied to Attribute.",
+            "description": "The event's own name, e.g. \"onload\", or a custom name for a field-level event tied to attribute.",
             "type": "string"
           },
           "attribute": {
@@ -606,7 +752,7 @@
             "type": "string"
           },
           "active": {
-            "description": "Whether this event is active. Shown whenever FormXML states it explicitly, same reasoning as Enabled — no observed unset case to know what it would default to.",
+            "description": "Whether this event is active.",
             "type": "boolean"
           },
           "handlers": {
@@ -624,11 +770,11 @@
                   "type": "string"
                 },
                 "enabled": {
-                  "description": "Whether this handler is enabled. Shown whenever FormXML states it explicitly (every sample seen states it, always as true) rather than only when it deviates from a default — unlike most other booleans this tool exports, no unset/omitted case has been observed to know what it would default to.",
+                  "description": "Whether this handler is enabled.",
                   "type": "boolean"
                 },
                 "passExecutionContext": {
-                  "description": "Whether the platform passes its execution context as this function's first argument. Shown whenever FormXML states it explicitly, for the same reason as Enabled.",
+                  "description": "Whether the platform passes its execution context as this function's first argument.",
                   "type": "boolean"
                 }
               },
@@ -654,11 +800,11 @@
                   "type": "string"
                 },
                 "enabled": {
-                  "description": "Whether this handler is enabled. Shown whenever FormXML states it explicitly (every sample seen states it, always as true) rather than only when it deviates from a default — unlike most other booleans this tool exports, no unset/omitted case has been observed to know what it would default to.",
+                  "description": "Whether this handler is enabled.",
                   "type": "boolean"
                 },
                 "passExecutionContext": {
-                  "description": "Whether the platform passes its execution context as this function's first argument. Shown whenever FormXML states it explicitly, for the same reason as Enabled.",
+                  "description": "Whether the platform passes its execution context as this function's first argument.",
                   "type": "boolean"
                 }
               },

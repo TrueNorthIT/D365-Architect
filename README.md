@@ -44,11 +44,14 @@ dotnet publish "D365 Architect/D365 Architect.csproj" -c Release -p:PublishProfi
 
 Produces `d365architect.exe` under
 `D365 Architect/bin/Release/net10.0/publish/win-x64/` — that one file is
-everything; copy just it wherever you like. It's larger (~75 MB, since the
-whole runtime travels with it) and doesn't need the `.xml`/`.pdb` sitting
-next to it for normal use — those two are only for `schema export`'s
-descriptions and crash symbols respectively, both dev-time concerns (see
-`schema`, below). The `win-x64` profile lives at
+everything the tool itself needs to run; copy just it wherever you like.
+This README is copied alongside it too, so anyone who receives just that
+folder still has the command reference; it's not needed for the exe to
+work. It's larger (~75 MB, since the whole runtime travels with it) and
+doesn't need the `.xml`/`.pdb` sitting next to it for normal use — those
+two are only for `schema export`'s descriptions and crash symbols
+respectively, both dev-time concerns (see `schema`, below). The `win-x64`
+profile lives at
 `D365 Architect/Properties/PublishProfiles/win-x64.pubxml`; add another
 `.pubxml` alongside it (with a different `RuntimeIdentifier` and
 `PublishDir`) for another platform, e.g. `linux-x64` or `osx-arm64`.
@@ -163,6 +166,61 @@ Exported files follow a `<name>.<asset type>.yml` naming convention (e.g.
 `account.table.yml`) so a folder of exports stays sortable and unambiguous
 across tables, views, forms, and any asset type that joins them later.
 
+#### `table import`
+
+Writes a `*.table.yml` file's table-level properties (`displayName`/
+`pluralDisplayName`/`description`) and columns back into Dataverse. Needs
+sign-in.
+
+```
+d365architect table import --input account.table.yml
+```
+
+| Option        | Description                                              | Required |
+|---------------|--------------------------------------------------------------|----------|
+| `-i, --input` | Path to the `*.table.yml` file to import                       | Yes      |
+| `-y, --yes`   | Skip the confirmation prompt and import immediately            | No       |
+
+Before writing anything, this prints the full diff between the local file
+and re-exporting the table right now, plus a separate **column plan**
+listing exactly what will happen to each column: `create`, `update`, or —
+just as important — why nothing will happen for one that's different in
+the diff but not actually touched. Only these column types can be created
+or updated: `String`, `Memo`, `Integer`, `BigInt`, `Decimal`, `Money`,
+`DateTime` — anything else (`Picklist`, `Boolean`, `Lookup`, and several
+more) shows up in the plan as not applied, with the reason, rather than
+being guessed at. **Columns are never deleted automatically**, no matter
+what the local YAML says or doesn't say — a column missing from the file
+just shows up in the plan as "not applied", nothing more. The table itself
+is never created if it doesn't exist yet, either. Unless `--yes` is passed,
+you get a confirmation prompt (defaulting to "no") before anything actually
+changes in Dataverse, and if there's genuinely nothing to apply, nothing is
+written at all.
+
+Every create/update is also checked for common invalid changes *before*
+anything is sent — changing a column's type or SchemaName after creation,
+creating a column whose SchemaName has no customization prefix or contains
+an invalid character (e.g. `BankName` or `new_Bank Name` instead of
+`new_BankName`), a `Name` that won't match the logical name Dataverse
+actually derives from SchemaName, two new columns claiming the same
+SchemaName, an invalid `RequiredLevel`, a MaxLength outside 1–4000
+(String/Memo), an Integer MinValue/MaxValue outside -2147483648 to
+2147483647, a Decimal/Money Precision outside 1–10, or MinValue greater
+than MaxValue — all show up in the plan as `invalid` with the specific
+reason, rather than being attempted and failing with a raw Dataverse API
+error. See `docs/yaml-conventions.md` for which of these are confirmed
+against Microsoft's own documented bounds versus a reasonable, same-shape
+extension. A few things Dataverse allows but warns against (lowering
+`MaxLength`/`Precision` below what existing data might exceed) still plan
+as a normal update, just with a warning printed alongside.
+
+**What this doesn't do yet**: publish the change — Dataverse's own docs
+confirm this is required for a table/column change to take effect in
+model-driven apps, and this tool doesn't call it automatically. See
+[`docs/yaml-conventions.md`](docs/yaml-conventions.md#importing-tables-table-import)
+for the full detail, including exactly why each excluded column type is
+excluded.
+
 ### `view`
 
 Work with D365 view (saved query) definitions.
@@ -197,6 +255,33 @@ Accounts" becomes `active-accounts.view.yml`. A view's FetchXML and
 LayoutXML are kept verbatim rather than decomposed into a friendlier shape,
 since (unlike a table's columns) there's no bulk metadata endpoint to
 double-check that decomposition against.
+
+#### `view import`
+
+Writes a `*.view.yml` file's description/FetchXML/LayoutXML directly back
+into Dataverse. Needs sign-in.
+
+```
+d365architect view import --input active-accounts.view.yml
+```
+
+| Option        | Description                                              | Required |
+|---------------|--------------------------------------------------------------|----------|
+| `-i, --input` | Path to the `*.view.yml` file to import                        | Yes      |
+| `-y, --yes`   | Skip the confirmation prompt and import immediately             | No       |
+
+Simpler than `form import`: since FetchXML/LayoutXML are kept verbatim
+(never decomposed and rebuilt), the diff compares the live values against
+the local YAML directly, with no canonicalization step needed first. Only
+`description`/`fetchXml`/`layoutXml` are ever written — a view's type,
+default status, and Quick Find flag are never changed by this command. Only
+ever updates a view that already exists; unless `--yes` is passed, you get
+a confirmation prompt (defaulting to "no") before anything actually changes
+in Dataverse.
+
+**What this doesn't do yet**: publish the change — same as `table import`.
+Unlike `view import`, `form import` now does publish automatically after
+writing (see below).
 
 ### `form`
 
@@ -247,7 +332,19 @@ d365architect form export --table account --solution examplesolution
 
 The form is written as `<form-name>.form.yml`, following the same
 `<name>.<asset type>.yml` convention as `table export`/`view export` — e.g.
-"Account Main Form" becomes `account-main-form.form.yml`.
+"Account Main Form" becomes `account-main-form.form.yml`. Unlike a view,
+two forms on the same table can easily share a display name — confirmed
+live, a real table with three forms all named "Information", one each of
+three different types — so the form's own type becomes its own extra
+dot-separated segment whenever it isn't an ordinary Main form (the common
+case, left exactly as before): "Information" (Quick View Form) becomes
+`information.quick-view-form.form.yml`, keeping the friendly name itself
+as just the first, plain segment rather than fusing name and type into one
+hyphenated blob — and not a same-named file silently overwriting the Main
+form's own export from an earlier run. The YAML
+carries the form's own `formId` too — `form import` (below) matches
+against that directly, so a local rename or two forms sharing a name never
+risks sending an update to the wrong record.
 
 Unlike a view's FetchXML/LayoutXML, a form's FormXML isn't kept verbatim —
 it's decomposed into `tabs` → `columns` → `sections` → `controls` (plus
@@ -259,8 +356,13 @@ distinction, since two sections in different tab-columns render next to
 each other rather than stacked, and a section's own multi-column layout
 changes how its fields group visually even though the field list itself is
 still just one flat, row-major list either way. Each control lists its id,
-the attribute it's bound to (when it's bound to one), its label, and its
-raw control class id. A raw XML blob of a form's layout markup isn't
+the attribute it's bound to (when it's bound to one), its label, and which
+control renders it — as a friendly name (`control: SingleLineText`,
+`Lookup`, `Subgrid`, ...) for one of Dataverse's own confirmed standard
+controls, or the raw class id (`customControlId`) for a custom/PCF control
+or one not yet in that list — see `docs/yaml-conventions.md`'s Rule 4 and
+`StandardFormControls` for the full set and how each entry was confirmed
+rather than guessed. A raw XML blob of a form's layout markup isn't
 something you can usefully review, diff, or drive a bulk change from; this
 structure is. Every control is captured this way, not just simple fields —
 a subgrid's target table/relationship/view, a web resource's name, a quick
@@ -293,17 +395,21 @@ tabs/columns/sections come back with no controls in them.
 #### `form build-xml`
 
 Rebuilds FormXML from a `*.form.yml` file — the reverse of `form export`'s
-decomposition. Needs sign-in: it looks up the form's current, live FormXML
-first (by table + name, the same identity `form export` uses) and patches
-only the elements this tool manages onto that document, rather than
-building a new `<form>` from scratch — so anything this tool has never
-decomposed (`Navigation`, `clientresources`, `RibbonDiffXml`, root chrome
-attributes, ...) survives untouched because it's never modified, not
-because this tool reconstructed it. When no form by that name exists yet
-(a brand-new form this YAML describes but hasn't been created in Dataverse),
-it falls back to building fresh from just the YAML instead. This is one
-building block toward a future `form import`, which would actually write
-the result back — this command only ever reads.
+decomposition. Needs sign-in: it looks up the form's current, live
+FormXML first — by the YAML's own `formId` when it has one (the same
+preference `form import` uses, and needed for the same reason: several
+forms can share a display name, and only an id tells them apart), falling
+back to table + name for an older file — and patches only the elements
+this tool manages onto that document, rather than building a new `<form>`
+from scratch — so anything this tool has never decomposed (`Navigation`,
+`clientresources`, `RibbonDiffXml`, root chrome attributes, ...) survives
+untouched because it's never modified, not because this tool reconstructed
+it. When nothing matches (a brand-new form this YAML describes but hasn't
+been created in Dataverse, or a `formId` that no longer resolves to
+anything), it falls back to building fresh from just the YAML instead.
+This is purely a local inspection/validation tool — `form import` (below) doesn't call this
+command or depend on it in any way; it does its own independent
+retrieve-and-patch.
 
 ```
 d365architect form build-xml --input account-main-form.form.yml
@@ -331,11 +437,81 @@ byte-identical output rather than a spurious diff every time.
 Before writing, the rebuilt FormXML is checked against Microsoft's own
 official FormXML XSD schema (vendored in this repo — see
 `D365 Architect/Resources/FormXmlSchema/NOTICE.md`); any violation is
-printed as a warning but doesn't stop the file from being written, since a
-violation isn't necessarily this tool's mistake — real, live Dataverse
-FormXML is confirmed to violate this same schema in at least one way
-(`headerdensity`/`showinformselector`), unrelated to anything `form
-build-xml` does.
+printed, and — since this command only ever writes a local file, with
+nothing live at stake — it never blocks the write regardless of what's
+found. Real, live Dataverse FormXML is confirmed to violate this same
+schema in at least one way (`headerdensity`/`showinformselector`),
+unrelated to anything `form build-xml` does. That confirmed-safe exception
+is narrow, though, and doesn't extend to other violations that merely look
+similar — see `form import` below for where that distinction actually
+matters.
+
+#### `form import`
+
+Writes a `*.form.yml` file's rebuilt FormXML directly back into
+Dataverse — straight from the YAML, not through `form build-xml` first (see
+that command's own description above for why it's never a required step on
+the way here). Needs sign-in.
+
+```
+d365architect form import --input account-main-form.form.yml
+```
+
+| Option                       | Description                                              | Required |
+|------------------------------|--------------------------------------------------------------|----------|
+| `-i, --input`                | Path to the `*.form.yml` file to import                       | Yes      |
+| `-y, --yes`                  | Skip the confirmation prompt and import immediately            | No       |
+| `--allow-schema-violations`  | Proceed even with a schema violation that isn't a confirmed-safe pattern | No |
+
+Before writing anything, this looks up the form — by the YAML's own
+`formId` when it has one (the ordinary case for anything exported since
+that field was added; immune to a rename or a name shared with another
+form), falling back to table + name for an older file. Then it rebuilds
+the FormXML (the same patch-onto-the-live-document mechanism as
+`build-xml`), validates it against Microsoft's own FormXML schema, and
+prints a line-level diff between what's live now and what's about to
+replace it — the concrete answer to "must have a way to check differences
+between client and server". If the rebuild is identical to what's already
+live, nothing is written at all. Otherwise, unless `--yes` is passed, you
+get a confirmation prompt (defaulting to "no") before anything actually
+changes in Dataverse.
+
+**Unlike `build-xml`, a schema violation here can genuinely block the
+import.** Only the one specific, confirmed-safe pattern (`headerdensity`/
+`showinformselector`) is treated as informational; every other violation
+refuses the import outright (before the confirmation prompt is even shown)
+unless `--allow-schema-violations` is passed. This isn't hypothetical
+caution — a different violation was once treated the same non-blocking way
+on the same reasoning, and a real import attempt with that exact shape
+failed live with a raw Dataverse 400. `--yes` does not imply
+`--allow-schema-violations`; they're deliberately separate opt-ins.
+
+This also catches a control with no resolvable `control`/`customControlId`
+before writing it — a second real, live-confirmed failure mode (`"The
+class id cannot be null for control element..."`) that Microsoft's own
+FormXML schema doesn't check at all (`classid` isn't declared required
+there), so no amount of schema validation alone would ever catch it. A
+control whose live counterpart already has no classid either is exempted,
+so re-importing a form unchanged never trips this — see
+`docs/yaml-conventions.md` for why. Also catches a `control` value that's
+not one of `StandardFormControls`' recognized names (a likely typo) and
+`control`/`customControlId` both set at once (mutually exclusive) — see
+below.
+
+Only ever updates a form that already exists — it refuses (rather than
+creating one) when nothing matches, and refuses outright for a dashboard,
+same as `build-xml`.
+
+**Publishes the change automatically** — the form's owning table is
+published right after the write, so there's no separate manual publish
+step (e.g. in the maker portal) before end users see it.
+
+**What this doesn't do yet**: detect that the live form was changed by
+someone else since this YAML was last exported (it only compares the live
+document against what's about to be written, not against what it looked
+like at export time). See
+[`docs/yaml-conventions.md`](docs/yaml-conventions.md#importing-formxml-form-import)
+for the full detail.
 
 ### `schema`
 

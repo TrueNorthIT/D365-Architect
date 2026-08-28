@@ -23,6 +23,17 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Copied into the publish output only (CopyToPublishDirectory, not
+         CopyToOutputDirectory) so a standalone win-x64 build carries the
+         README documenting every command alongside d365architect.exe,
+         without adding a copy step to the ordinary "dotnet build"/"dotnet
+         run" inner loop. README.md lives one level up from this project,
+         outside its own directory cone, so Link is needed to place it at
+         the output root rather than mirroring that "../" relative path. -->
+    <None Include="../README.md" Link="README.md" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.11" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.11" />
     <PackageReference Include="Microsoft.Identity.Client" Version="4.88.0" />

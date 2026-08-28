@@ -13,17 +13,11 @@ public sealed class FormEventHandler
     [YamlMember(Order = 1)]
     public required string LibraryName { get; init; }
 
-    /// <summary>
-    /// Whether this handler is enabled. Shown whenever FormXML states it
-    /// explicitly (every sample seen states it, always as true) rather than
-    /// only when it deviates from a default — unlike most other booleans
-    /// this tool exports, no unset/omitted case has been observed to know
-    /// what it would default to.
-    /// </summary>
+    /// <summary>Whether this handler is enabled.</summary>
     [YamlMember(Order = 2)]
     public bool? Enabled { get; init; }
 
-    /// <summary>Whether the platform passes its execution context as this function's first argument. Shown whenever FormXML states it explicitly, for the same reason as <see cref="Enabled"/>.</summary>
+    /// <summary>Whether the platform passes its execution context as this function's first argument.</summary>
     [YamlMember(Order = 3)]
     public bool? PassExecutionContext { get; init; }
 }

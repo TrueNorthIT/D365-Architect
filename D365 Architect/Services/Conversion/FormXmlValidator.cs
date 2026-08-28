@@ -12,13 +12,25 @@ namespace D365Architect.Services.Conversion;
 /// disagrees with real, live Dataverse output (a form's own
 /// <c>headerdensity</c>/<c>showinformselector</c> attributes, present on
 /// every real form checked, aren't declared anywhere in the schema and
-/// there's no wildcard attribute to fall back on). That means a violation
-/// here isn't necessarily a bug in this tool's own output — callers should
-/// surface these as warnings, not a reason to refuse writing the file.
-/// Each result is a <see cref="FormXmlValidationMessage"/> — the validator's
-/// own severity, position, message, and a ready-to-print snippet of the
-/// offending FormXML (see that type's own doc comment for why a snippet
-/// matters here specifically).
+/// there's no wildcard attribute to fall back on) — a violation here isn't
+/// automatically a bug in this tool's own output.
+///
+/// That does NOT generalise to every violation, though — see
+/// <see cref="FormXmlValidationMessage.IsKnownHarmless"/>'s own doc comment
+/// for a confirmed case where the opposite happened: a different violation
+/// (an invalid child element inside a control's <c>&lt;parameters&gt;</c>)
+/// was once assumed similarly harmless on this same reasoning and turned
+/// out to make Dataverse's own write-time validation reject the request
+/// outright with a 400. So only the one specifically-confirmed pattern is
+/// safe to treat as a non-blocking warning; every other violation should be
+/// treated as a real reason to refuse writing the file until a human has
+/// actually looked at it — <c>form import</c> does exactly that (see
+/// <c>ImportFormCommand</c>'s own <c>--allow-schema-violations</c> escape
+/// hatch for once they have). Each result is a
+/// <see cref="FormXmlValidationMessage"/> — the validator's own severity,
+/// position, message, and a ready-to-print snippet of the offending FormXML
+/// (see that type's own doc comment for why a snippet matters here
+/// specifically).
 /// </summary>
 public static class FormXmlValidator
 {

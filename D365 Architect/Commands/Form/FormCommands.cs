@@ -21,8 +21,12 @@ internal static class FormCommands
                 .WithExample("form", "export", "--table", "account", "--form-id", "00000000-0000-0000-0000-000000000000");
 
             branch.AddCommand<BuildFormXmlCommand>("build-xml")
-                .WithDescription("Rebuilds FormXML from a *.form.yml file, patched onto the form's current live FormXML.")
+                .WithDescription("Rebuilds FormXML from a *.form.yml file for local inspection/validation, patched onto the form's current live FormXML. Never writes to Dataverse.")
                 .WithExample("form", "build-xml", "--input", "account-main-form.form.yml");
+
+            branch.AddCommand<ImportFormCommand>("import")
+                .WithDescription("Writes a *.form.yml file's rebuilt FormXML back into Dataverse, after showing a diff and asking for confirmation.")
+                .WithExample("form", "import", "--input", "account-main-form.form.yml");
         });
     }
 }

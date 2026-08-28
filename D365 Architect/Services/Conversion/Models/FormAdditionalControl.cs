@@ -18,10 +18,8 @@ namespace D365Architect.Services.Conversion.Models;
 public sealed class FormAdditionalControl
 {
     /// <summary>
-    /// This alternate's own class id, when it's identified that way (a
-    /// GUID) — mutually exclusive with <see cref="Name"/> in every sample
-    /// seen so far. Kept raw for the same reason as
-    /// <see cref="FormControl.ClassId"/>.
+    /// This alternate's own class id (a GUID), when it's identified that
+    /// way — mutually exclusive with name.
     /// </summary>
     [YamlMember(Order = 0)]
     public string? Id { get; init; }
@@ -29,24 +27,24 @@ public sealed class FormAdditionalControl
     /// <summary>
     /// This alternate's fully-qualified PCF control name, e.g.
     /// "MscrmControls.FieldControls.RecentRecords" — mutually exclusive
-    /// with <see cref="Id"/> in every sample seen so far.
+    /// with id.
     /// </summary>
     [YamlMember(Order = 1)]
     public string? Name { get; init; }
 
     /// <summary>
     /// Which client this alternate applies to (Web/Phone/Tablet), as
-    /// Dataverse's raw integer. Not mapped to a friendly name: no
-    /// authoritative option set documenting the values was found, same
-    /// caution as <see cref="FormControl.ClassId"/>.
+    /// Dataverse's raw integer — not mapped to a friendly name, since no
+    /// authoritative reference for the values was found.
     /// </summary>
     [YamlMember(Order = 2)]
     public int? FormFactor { get; init; }
 
+    /// <summary>The alternate control's version.</summary>
     [YamlMember(Order = 3)]
     public string? Version { get; init; }
 
-    /// <summary>This alternate's own parameters, converted the same structural way as <see cref="FormControl.Parameters"/> (including the same false-stripping rule).</summary>
+    /// <summary>This alternate's own settings, same shape as a control's own <c>parameters</c>.</summary>
     [YamlMember(Order = 4)]
     public object? Parameters { get; init; }
 }

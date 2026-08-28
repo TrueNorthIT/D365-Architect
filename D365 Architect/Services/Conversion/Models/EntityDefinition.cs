@@ -26,7 +26,7 @@ namespace D365Architect.Services.Conversion.Models;
 /// </summary>
 public sealed class EntityDefinition
 {
-    /// <summary>The table's logical name, e.g. "account". Serialises as the top-level "entity" key.</summary>
+    /// <summary>The table's logical name, e.g. "account" — written as the top-level "entity" key.</summary>
     [YamlMember(Alias = "entity", Order = 0)]
     public required string LogicalName { get; init; }
 
@@ -37,12 +37,15 @@ public sealed class EntityDefinition
     [YamlMember(Order = 1)]
     public string? SchemaName { get; init; }
 
+    /// <summary>The table's singular display name, e.g. "Account".</summary>
     [YamlMember(Order = 2)]
     public string? DisplayName { get; init; }
 
+    /// <summary>The table's plural display name, e.g. "Accounts".</summary>
     [YamlMember(Order = 3)]
     public string? PluralDisplayName { get; init; }
 
+    /// <summary>The table's description.</summary>
     [YamlMember(Order = 4)]
     public string? Description { get; init; }
 
@@ -62,6 +65,7 @@ public sealed class EntityDefinition
     [YamlMember(Order = 8)]
     public bool? HasNotes { get; init; }
 
+    /// <summary>The table's columns.</summary>
     [YamlMember(Order = 9)]
     public IReadOnlyList<AttributeDefinition> Attributes { get; init; } = [];
 }

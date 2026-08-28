@@ -1,3 +1,5 @@
+using System.Text.Json.Nodes;
+
 namespace D365Architect.Services.Dataverse;
 
 /// <summary>
@@ -68,16 +70,146 @@ public interface IDataverseClient
 
     /// <summary>
     /// Looks up a single form's current, live <c>formxml</c> by table +
-    /// display name — the same identity <c>form export</c> itself uses (see
-    /// <see cref="Conversion.Models.FormDefinition"/>'s own doc comment on
-    /// why <c>formid</c> isn't part of this tool's YAML). Used by
-    /// <c>form build-xml</c> to patch onto the live document rather than
-    /// building one from scratch — see
-    /// <see cref="Conversion.FormXmlWriter"/>. Returns null when no form by
-    /// that name exists yet on that table — the expected case for a form
-    /// this tool's YAML describes but that hasn't been created in Dataverse
-    /// yet.
+    /// display name — the fallback identity for a <c>*.form.yml</c>
+    /// exported before <see cref="Conversion.Models.FormDefinition.FormId"/>
+    /// existed; <c>form build-xml</c> uses it unconditionally, since it only
+    /// ever patches onto the live document to write a local file and has
+    /// never needed a form's id at all. Returns null when no form by that
+    /// name exists yet on that table — the expected case for a form this
+    /// tool's YAML describes but that hasn't been created in Dataverse yet.
     /// </summary>
     /// <exception cref="AmbiguousSystemFormException">More than one form on <paramref name="entityLogicalName"/> is named <paramref name="formName"/> — this tool won't guess which one to patch.</exception>
     Task<string?> TryGetSystemFormXmlAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string formName, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// As <see cref="TryGetSystemFormXmlAsync"/>, but also returns the
+    /// form's own id — what <c>form import</c> needs (to know which record
+    /// to update) that <c>form build-xml</c> never did (it only ever writes
+    /// a local file). See <see cref="ExistingSystemForm"/>. Used by
+    /// <c>form import</c> only as a fallback, for a <c>*.form.yml</c> with
+    /// no <c>FormId</c> of its own yet — see
+    /// <see cref="TryGetSystemFormByIdAsync"/> for the ordinary, preferred
+    /// path.
+    /// </summary>
+    /// <exception cref="AmbiguousSystemFormException">More than one form on <paramref name="entityLogicalName"/> is named <paramref name="formName"/> — this tool won't guess which one to import onto.</exception>
+    Task<ExistingSystemForm?> TryGetSystemFormAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string formName, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Looks up a single form directly by its <c>formid</c> — what
+    /// <c>form import</c> prefers whenever the local YAML has one (see
+    /// <see cref="Conversion.Models.FormDefinition.FormId"/>), since an id
+    /// can't go ambiguous or stale the way a table + display name lookup
+    /// can (a rename, or two forms sharing a name). Also returns the live
+    /// record's own table/name (see <see cref="ExistingSystemForm.EntityLogicalName"/>/
+    /// <see cref="ExistingSystemForm.Name"/>) so a caller can flag it if
+    /// they've drifted from the YAML's own <c>Entity</c>/<c>Name</c> — a
+    /// sign the id was copied into the wrong file, since nothing else here
+    /// would otherwise catch that. Returns null when no form has that id —
+    /// most likely it was deleted since this YAML was last exported.
+    /// </summary>
+    Task<ExistingSystemForm?> TryGetSystemFormByIdAsync(Uri environmentUrl, string accessToken, Guid formId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Updates an existing <c>systemform</c>'s <c>formxml</c> via a PATCH
+    /// request — the actual write <c>form import</c> performs. Doesn't
+    /// publish the change itself — <c>form import</c> follows this with its
+    /// own call to <see cref="PublishEntityAsync"/> before returning, so the
+    /// write is visible to end users without a separate manual publish step.
+    /// Doesn't check for a concurrent modification either (no ETag/If-Match)
+    /// — see `docs/yaml-conventions.md` for what "checking differences" does
+    /// and doesn't cover today.
+    /// </summary>
+    Task UpdateSystemFormXmlAsync(Uri environmentUrl, string accessToken, Guid formId, string formXml, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Publishes every customization on one table — forms, views, ribbons,
+    /// and attributes alike — via the <c>PublishXml</c> action. Dataverse's
+    /// own documented <c>ParameterXml</c> schema has no finer-grained way to
+    /// publish a single <c>systemform</c> on its own: the <c>&lt;entities&gt;</c>
+    /// node only ever takes a whole table's logical name (confirmed against
+    /// Microsoft's own docs for <c>PublishXmlRequest.ParameterXml</c> — the
+    /// one per-record exception is <c>&lt;dashboards&gt;</c>, a different,
+    /// dashboard-only node that doesn't apply to an ordinary form), so
+    /// publishing "just the form" <c>form import</c> just wrote actually
+    /// means publishing its whole owning table.
+    /// </summary>
+    Task PublishEntityAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Looks up a single view's id, description, fetchxml, and layoutxml
+    /// together by table + display name — the same identity <c>view
+    /// export</c> uses (see <see cref="Conversion.Models.ViewDefinition"/>'s
+    /// own doc comment on why <c>savedqueryid</c> isn't part of this tool's
+    /// YAML). Returns null when no view by that name exists yet on that
+    /// table.
+    /// </summary>
+    /// <exception cref="AmbiguousSavedQueryException">More than one view on <paramref name="entityLogicalName"/> is named <paramref name="viewName"/> — this tool won't guess which one to update.</exception>
+    Task<ExistingSavedQuery?> TryGetSavedQueryAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string viewName, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Updates an existing <c>savedquery</c>'s <c>description</c>/
+    /// <c>fetchxml</c>/<c>layoutxml</c> via a PATCH request — the actual
+    /// write <c>view import</c> performs. Only the non-null arguments are
+    /// included in the request, matching this tool's own "an absent field
+    /// means don't touch it" convention (see `docs/yaml-conventions.md`
+    /// Rule 1) — pass null for anything the local YAML didn't have, not an
+    /// empty string, or it would be cleared rather than left alone. Doesn't
+    /// publish the change itself, and unlike <see cref="UpdateSystemFormXmlAsync"/>
+    /// (which <c>form import</c> now follows with its own call to
+    /// <see cref="PublishEntityAsync"/>), <c>view import</c> doesn't call
+    /// that either yet — a still-open gap, not a closed one, for views.
+    /// </summary>
+    Task UpdateSavedQueryAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, string? description, string? fetchXml, string? layoutXml, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Fetches a table's own metadata — no <c>$expand=Attributes</c>, unlike
+    /// <see cref="GetEntityDefinitionJsonAsync"/> — so the result is a clean
+    /// round-trippable <c>EntityMetadata</c> object <c>table import</c> can
+    /// mutate a couple of fields on and PUT straight back, rather than one
+    /// carrying a navigation property (the expanded attribute collection)
+    /// that Dataverse's own update API was never asked to accept back.
+    /// </summary>
+    Task<string> GetEntityMetadataJsonAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Replaces a table's own metadata via a full-object PUT — Dataverse's
+    /// documented update mechanism for entity/attribute definitions alike;
+    /// there's no partial-update PATCH for these. <paramref name="entityMetadata"/>
+    /// should be <see cref="GetEntityMetadataJsonAsync"/>'s own result,
+    /// parsed and mutated in place — see <see cref="AttributeMetadataJsonBuilder"/>'s
+    /// own doc comment for why a full-object round trip, not a freshly
+    /// built partial body, is how this has to work. Sends
+    /// <c>MSCRM.MergeLabels: true</c> so an edited display name doesn't wipe
+    /// out other languages' labels this tool never touched. Doesn't publish
+    /// the change — Dataverse customizations still need publishing
+    /// separately (confirmed required, unlike form/view import's still-open
+    /// question — see `docs/yaml-conventions.md`).
+    /// </summary>
+    Task UpdateEntityAsync(Uri environmentUrl, string accessToken, string entityLogicalName, JsonObject entityMetadata, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Fetches one attribute's full, type-specific metadata (via the
+    /// type-cast URL, e.g. <c>.../Attributes(LogicalName='x')/Microsoft.Dynamics.CRM.StringAttributeMetadata</c>) —
+    /// the object <c>table import</c> mutates in place and PUTs back for an
+    /// update, same reasoning as <see cref="GetEntityMetadataJsonAsync"/>.
+    /// </summary>
+    Task<string> GetAttributeMetadataJsonAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string attributeLogicalName, string attributeType, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Replaces an existing attribute's full metadata via PUT — see
+    /// <see cref="UpdateEntityAsync"/> for why this has to be a full-object
+    /// round trip via <see cref="GetAttributeMetadataJsonAsync"/> first, not
+    /// a freshly built body. Unlike the GET, the PUT URL itself carries no
+    /// type-cast segment — confirmed against Microsoft's own documented
+    /// example: the type is declared by <paramref name="attributeMetadata"/>'s
+    /// own <c>@odata.type</c>, not the URL.
+    /// </summary>
+    Task UpdateAttributeAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string attributeLogicalName, JsonObject attributeMetadata, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Creates a brand-new attribute — see <see cref="AttributeMetadataJsonBuilder.BuildCreateBody"/>
+    /// for how <paramref name="attributeMetadata"/> gets built. Only ever
+    /// called for a type in <see cref="AttributeMetadataJsonBuilder.SupportedTypes"/>.
+    /// </summary>
+    Task CreateAttributeAsync(Uri environmentUrl, string accessToken, string entityLogicalName, JsonObject attributeMetadata, CancellationToken cancellationToken);
 }

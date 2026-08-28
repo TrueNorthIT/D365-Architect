@@ -16,9 +16,11 @@ public sealed class FormTab
     [YamlMember(Order = 0)]
     public string? Name { get; init; }
 
+    /// <summary>The tab's display label.</summary>
     [YamlMember(Order = 1)]
     public string? Label { get; init; }
 
+    /// <summary>The tab's side-by-side columns, left to right.</summary>
     [YamlMember(Order = 2)]
     public IReadOnlyList<FormColumn> Columns { get; init; } = [];
 }

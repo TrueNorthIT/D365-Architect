@@ -254,9 +254,17 @@ public static class FormXmlWriter
             controlElement.SetAttributeValue("datafieldname", control.Field);
         }
 
-        if (control.ClassId is not null)
+        // Control (a recognized standard control's friendly name, reversed
+        // back to its classid) takes priority over CustomControlId, which
+        // in turn takes priority over the legacy ClassId — see
+        // StandardFormControls.Resolve's own doc comment. FormControlValidator
+        // already confirmed Control names something recognized (and that
+        // at most one of the three is actually set) before this ever runs,
+        // so an unrecognized name silently produces no classid here rather
+        // than throwing — the validator's job, not this writer's.
+        if (StandardFormControls.Resolve(control) is { } resolvedClassId)
         {
-            controlElement.SetAttributeValue("classid", control.ClassId);
+            controlElement.SetAttributeValue("classid", resolvedClassId);
         }
 
         if (control.Disabled == true)

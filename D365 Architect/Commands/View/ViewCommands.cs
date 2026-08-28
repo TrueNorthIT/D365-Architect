@@ -18,6 +18,10 @@ internal static class ViewCommands
             branch.AddCommand<ExportViewCommand>("export")
                 .WithDescription("Fetches every view defined on a table and saves each as its own YAML file.")
                 .WithExample("view", "export", "--table", "account");
+
+            branch.AddCommand<ImportViewCommand>("import")
+                .WithDescription("Writes a *.view.yml file's description/FetchXml/LayoutXml back into Dataverse, after showing a diff and asking for confirmation.")
+                .WithExample("view", "import", "--input", "account-active.view.yml");
         });
     }
 }

@@ -52,6 +52,17 @@ services.AddSingleton<IFormExportService, FormExportService>();
 // see FormXmlWriter's own doc comment.
 services.AddSingleton<IFormXmlBuildService, FormXmlBuildService>();
 
+// `form import` writes a rebuilt FormXML back into Dataverse. Deliberately
+// its own independent service, not layered on IFormXmlBuildService — see
+// IFormImportService's own doc comment for why build-xml is never an
+// intermediary step on the way to importing something.
+services.AddSingleton<IFormImportService, FormImportService>();
+
+// `view import`/`table import` write back into Dataverse the same way —
+// see each interface's own doc comment for exactly what's covered.
+services.AddSingleton<IViewImportService, ViewImportService>();
+services.AddSingleton<ITableImportService, TableImportService>();
+
 // 2. Hand that container to Spectre.Console.Cli via the TypeRegistrar/
 //    TypeResolver adapter, so every command is itself resolved through DI
 //    (constructor injection), rather than newed up directly.
