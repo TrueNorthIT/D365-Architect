@@ -12,9 +12,14 @@ A command-line tool for managing Dynamics 365 environments.
 
 ## Getting the tool
 
-This tool isn't published as a ready-made download yet, so for now you build
-it from source. Two ways to do that, depending on whether the machine you're
-running it on has the .NET runtime installed:
+Every push to `main` and `develop` publishes a standalone `d365architect.exe`
+build to [GitHub Releases](https://github.com/TrueNorthIT/D365-Architect/releases) —
+`main` builds are full releases, `develop` builds are marked "Pre-release".
+Grab the `d365architect-<version>-win-x64.zip` asset from there if you just
+want to run the tool.
+
+To build it from source instead, there are two ways, depending on whether
+the machine you're running it on has the .NET runtime installed:
 
 **Framework-dependent** (needs the [.NET 10 runtime](#requirements) already
 installed wherever you run it, but is the faster everyday build):

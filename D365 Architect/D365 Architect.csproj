@@ -12,6 +12,12 @@
          Schema, rather than writing them out a second time. -->
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <!-- MinVer derives Version/AssemblyVersion/FileVersion from git tags at
+         build time (see .github/workflows/publish-release.yml): an
+         annotated "v1.2.3" tag on main yields a clean release version,
+         while any other commit (e.g. on develop) auto-increments the patch
+         and appends a "-alpha.0.{commits since tag}" pre-release suffix. -->
+    <MinVerTagPrefix>v</MinVerTagPrefix>
   </PropertyGroup>
 
   <ItemGroup>
@@ -40,6 +46,9 @@
     <PackageReference Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.88.0" />
     <PackageReference Include="Spectre.Console.Cli" Version="0.55.0" />
     <PackageReference Include="YamlDotNet" Version="18.1.0" />
+    <!-- Build-time only: computes Version/AssemblyVersion/FileVersion from
+         git tags, contributes nothing to the published output itself. -->
+    <PackageReference Include="MinVer" Version="7.0.0" PrivateAssets="All" />
   </ItemGroup>
 
 </Project>

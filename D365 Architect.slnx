@@ -2,5 +2,8 @@
   <Folder Name="/Solution Items/">
     <File Path="README.md" />
   </Folder>
+  <Folder Name="/.github/workflows/">
+    <File Path=".github/workflows/publish-release.yml" />
+  </Folder>
   <Project Path="D365 Architect/D365 Architect.csproj" />
 </Solution>
