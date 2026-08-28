@@ -1,6 +1,7 @@
 using D365Architect.Commands;
 using D365Architect.Commands.Auth;
 using D365Architect.Commands.Environments;
+using D365Architect.Commands.Form;
 using D365Architect.Commands.Schema;
 using D365Architect.Commands.Table;
 using D365Architect.Commands.View;
@@ -28,9 +29,11 @@ services.AddHttpClient<IDataverseClient, DataverseClient>();
 services.AddSingleton<EntityXmlDefinitionReader>();
 services.AddSingleton<EntityJsonDefinitionReader>();
 
-// Views only ever need one strategy — see ViewDefinition's doc comment for
-// why the XML-vs-JSON split that entities need doesn't apply here.
+// Views and forms only ever need one strategy each — see ViewDefinition's
+// doc comment for why the XML-vs-JSON split that entities need doesn't
+// apply here.
 services.AddSingleton<ViewJsonDefinitionReader>();
+services.AddSingleton<FormJsonDefinitionReader>();
 
 // Component-specific XML->YAML converters. Add one registration per
 // component type (FormXml, SavedQuery, Ribbon, ...) as support grows;
@@ -42,6 +45,12 @@ services.AddSingleton<IXmlToYamlConverterService, XmlToYamlConverterService>();
 // converts it with the same curated model/YAML output as the XML pipeline.
 services.AddSingleton<ITableExportService, TableExportService>();
 services.AddSingleton<IViewExportService, ViewExportService>();
+services.AddSingleton<IFormExportService, FormExportService>();
+
+// `form build-xml` reads the form's current live FormXML (when it already
+// exists) so it can patch onto it instead of building one from scratch —
+// see FormXmlWriter's own doc comment.
+services.AddSingleton<IFormXmlBuildService, FormXmlBuildService>();
 
 // 2. Hand that container to Spectre.Console.Cli via the TypeRegistrar/
 //    TypeResolver adapter, so every command is itself resolved through DI
@@ -62,6 +71,7 @@ app.Configure(config =>
     EnvironmentCommands.Configure(config);
     TableCommands.Configure(config);
     ViewCommands.Configure(config);
+    FormCommands.Configure(config);
     SchemaCommands.Configure(config);
 });
 

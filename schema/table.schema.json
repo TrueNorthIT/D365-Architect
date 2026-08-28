@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "D365 Architect table definition",
-  "description": "Declarative YAML shape for a Dynamics table, produced by `d365architect table export`.",
+  "description": "Declarative YAML shape for a Dynamics table, produced by `d365architect table export`. A field left out of this file was left at Dataverse's own default, not \"unknown\" — see each field's own description for what that default is. Editing this file back into Dataverse (not yet supported) will leave an omitted field at that default rather than whatever it happened to be before.",
   "type": "object",
   "properties": {
     "entity": {
@@ -26,15 +26,15 @@
       "type": "string"
     },
     "isActivity": {
-      "description": "Only present when true — false is the platform default for a table.",
+      "description": "Only present when true — false is the platform default for a table. Omit to leave it as an ordinary table; applying this file back won't make it an activity type.",
       "type": "boolean"
     },
     "hasActivities": {
-      "description": "Only present when true — false is the platform default for a table.",
+      "description": "Only present when true — false is the platform default for a table. Omit to leave activities off for this table; applying this file back won't turn them on.",
       "type": "boolean"
     },
     "hasNotes": {
-      "description": "Only present when true — false is the platform default for a table.",
+      "description": "Only present when true — false is the platform default for a table. Omit to leave notes off for this table; applying this file back won't turn them on.",
       "type": "boolean"
     },
     "attributes": {
@@ -65,7 +65,7 @@
             "type": "string"
           },
           "requiredLevel": {
-            "description": "\"recommended\", \"applicationrequired\" or \"systemrequired\". Only present when set to something other than \"none\" — that's Dataverse's default for every column type.",
+            "description": "\"recommended\", \"applicationrequired\" or \"systemrequired\". Only present when set to something other than \"none\" — that's Dataverse's default for every column type. Omit for an optional column; applying this file back won't add a requirement level.",
             "type": "string"
           },
           "maxLength": {
@@ -100,7 +100,7 @@
             }
           },
           "isCustomField": {
-            "description": "Only present when true — false (a standard, non-custom field) is by far the common case.",
+            "description": "Only present when true — false (a standard, non-custom field) is by far the common case. Purely informational: applying this file back never changes it either way — whether a column is custom is determined by how it was created, not something re-set on update.",
             "type": "boolean"
           },
           "validForAdvancedFind": {

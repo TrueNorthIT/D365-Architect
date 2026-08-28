@@ -50,15 +50,15 @@ public sealed class EntityDefinition
     [YamlMember(Order = 5)]
     public string? OwnershipType { get; init; }
 
-    /// <summary>Only present when true — false is the platform default for a table.</summary>
+    /// <summary>Only present when true — false is the platform default for a table. Omit to leave it as an ordinary table; applying this file back won't make it an activity type.</summary>
     [YamlMember(Order = 6)]
     public bool? IsActivity { get; init; }
 
-    /// <summary>Only present when true — false is the platform default for a table.</summary>
+    /// <summary>Only present when true — false is the platform default for a table. Omit to leave activities off for this table; applying this file back won't turn them on.</summary>
     [YamlMember(Order = 7)]
     public bool? HasActivities { get; init; }
 
-    /// <summary>Only present when true — false is the platform default for a table.</summary>
+    /// <summary>Only present when true — false is the platform default for a table. Omit to leave notes off for this table; applying this file back won't turn them on.</summary>
     [YamlMember(Order = 8)]
     public bool? HasNotes { get; init; }
 

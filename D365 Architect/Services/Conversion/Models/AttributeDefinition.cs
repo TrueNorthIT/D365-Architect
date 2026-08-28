@@ -58,7 +58,8 @@ public sealed class AttributeDefinition
     /// <summary>
     /// "recommended", "applicationrequired" or "systemrequired". Only present
     /// when set to something other than "none" — that's Dataverse's default
-    /// for every column type.
+    /// for every column type. Omit for an optional column; applying this
+    /// file back won't add a requirement level.
     /// </summary>
     [YamlMember(Order = 6)]
     public string? RequiredLevel { get; init; }
@@ -91,7 +92,7 @@ public sealed class AttributeDefinition
     [YamlMember(Order = 13)]
     public IReadOnlyList<string>? Targets { get; init; }
 
-    /// <summary>Only present when true — false (a standard, non-custom field) is by far the common case.</summary>
+    /// <summary>Only present when true — false (a standard, non-custom field) is by far the common case. Purely informational: applying this file back never changes it either way — whether a column is custom is determined by how it was created, not something re-set on update.</summary>
     [YamlMember(Order = 14)]
     public bool? IsCustomField { get; init; }
 

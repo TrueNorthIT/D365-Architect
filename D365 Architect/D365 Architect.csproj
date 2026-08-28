@@ -15,6 +15,14 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Microsoft's own official FormXML XSD schema, vendored verbatim: see
+         Resources/FormXmlSchema/NOTICE.md. Embedded (not just copied to the
+         output directory) so FormXmlValidator still has it available from
+         the standalone single-file build. -->
+    <EmbeddedResource Include="Resources/FormXmlSchema/*.xsd" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.11" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.11" />
     <PackageReference Include="Microsoft.Identity.Client" Version="4.88.0" />

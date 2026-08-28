@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "D365 Architect view definition",
-  "description": "Declarative YAML shape for a Dynamics view, produced by `d365architect view export`.",
+  "description": "Declarative YAML shape for a Dynamics view, produced by `d365architect view export`. A field left out of this file was left at Dataverse's own default, not \"unknown\" — see each field's own description for what that default is. Editing this file back into Dataverse (not yet supported) will leave an omitted field at that default rather than whatever it happened to be before.",
   "type": "object",
   "properties": {
     "view": {
@@ -16,23 +16,23 @@
       "type": "string"
     },
     "queryType": {
-      "description": "The kind of view this is, e.g. \"QuickFindSearch\" or \"LookupView\" — named after Microsoft.Crm.Sdk.SavedQueryQueryType's own constants (see https://learn.microsoft.com/dotnet/api/microsoft.crm.sdk.savedqueryquerytype). Only present when it's something other than \"MainApplicationView\" — an ordinary system view, and by far the most common case.",
+      "description": "The kind of view this is, e.g. \"QuickFindSearch\" or \"LookupView\" — named after Microsoft.Crm.Sdk.SavedQueryQueryType's own constants (see https://learn.microsoft.com/dotnet/api/microsoft.crm.sdk.savedqueryquerytype). Only present when it's something other than \"MainApplicationView\" — an ordinary system view, and by far the most common case. Omit for an ordinary view; applying this file back won't change its type.",
       "type": "string"
     },
     "isDefault": {
-      "description": "Only present when true — a table typically has one default view per QueryType, and false is the common case for any given view.",
+      "description": "Only present when true — a table typically has one default view per QueryType, and false is the common case for any given view. Omit to leave this as a non-default view; applying this file back won't make it the default.",
       "type": "boolean"
     },
     "isQuickFindQuery": {
-      "description": "Whether this view's columns are searched by Quick Find. Only present when true.",
+      "description": "Whether this view's columns are searched by Quick Find. Only present when true. Omit to leave Quick Find search off for this view; applying this file back won't turn it on.",
       "type": "boolean"
     },
     "isUserDefined": {
-      "description": "Only present when true — most views ship as part of the platform or a solution, not hand-created by a user.",
+      "description": "Only present when true — most views ship as part of the platform or a solution, not hand-created by a user. Purely informational: applying this file back never changes it either way.",
       "type": "boolean"
     },
     "isCustomizable": {
-      "description": "Whether this view can be customized. Absent when Dataverse doesn't report it.",
+      "description": "Only present when false — true (customizable) is the common case; see FalseOrNull. Omit to leave this view customizable; applying this file back won't lock it down.",
       "type": "boolean"
     },
     "fetchXml": {
