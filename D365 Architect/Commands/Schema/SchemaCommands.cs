@@ -20,6 +20,11 @@ internal static class SchemaCommands
                 .WithExample("schema", "export", "--for", "table")
                 .WithExample("schema", "export", "--for", "view")
                 .WithExample("schema", "export", "--for", "form");
+
+            branch.AddCommand<ConfigureVsCodeCommand>("configure-vscode")
+                .WithDescription("Wires up VS Code YAML validation for *.table.yml/*.view.yml/*.form.yml in a folder.")
+                .WithExample("schema", "configure-vscode")
+                .WithExample("schema", "configure-vscode", "--pre-release");
         });
     }
 }

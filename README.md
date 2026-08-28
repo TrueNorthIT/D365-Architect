@@ -12,9 +12,14 @@ A command-line tool for managing Dynamics 365 environments.
 
 ## Getting the tool
 
-This tool isn't published as a ready-made download yet, so for now you build
-it from source. Two ways to do that, depending on whether the machine you're
-running it on has the .NET runtime installed:
+Every push to `main` and `develop` publishes a standalone `d365architect.exe`
+build to [GitHub Releases](https://github.com/TrueNorthIT/D365-Architect/releases) —
+`main` builds are full releases, `develop` builds are marked "Pre-release".
+Grab the `d365architect-<version>-win-x64.zip` asset from there if you just
+want to run the tool.
+
+To build it from source instead, there are two ways, depending on whether
+the machine you're running it on has the .NET runtime installed:
 
 **Framework-dependent** (needs the [.NET 10 runtime](#requirements) already
 installed wherever you run it, but is the faster everyday build):
@@ -557,41 +562,79 @@ hand-editing or reviewing `*.table.yml`/`*.view.yml`/`*.form.yml` files:
   schemas, so VS Code's
   [YAML extension](https://marketplace.visualstudio.com/items?itemName=redhat.vscode-yaml)
   validates them automatically.
-- **From anywhere else**, add a workspace setting pointing at the raw files on
-  GitHub:
+- **Anywhere else** (a project folder that's never had this repo cloned into
+  it — the common case if you only have `d365architect.exe` on your system
+  PATH), run `schema configure-vscode` (below) to wire up VS Code for that
+  folder in one step — see [Setting this up without the CLI](#setting-this-up-without-the-cli)
+  instead for doing it by hand, or for an editor other than VS Code.
 
-  ```json
-  {
-    "yaml.schemas": {
-      "https://raw.githubusercontent.com/TrueNorthIT/D365-Architect/main/schema/table.schema.json": "*.table.yml",
-      "https://raw.githubusercontent.com/TrueNorthIT/D365-Architect/main/schema/view.schema.json": "*.view.yml",
-      "https://raw.githubusercontent.com/TrueNorthIT/D365-Architect/main/schema/form.schema.json": "*.form.yml"
-    }
+#### `schema configure-vscode`
+
+Writes (or merges into) `.vscode/settings.json` in a folder so VS Code's YAML
+extension validates `*.table.yml`/`*.view.yml`/`*.form.yml` files there
+automatically — no sign-in needed, and no local clone of this repo required
+either: it points at this repository's raw schema files on GitHub, the same
+URLs documented under [Setting this up without the CLI](#setting-this-up-without-the-cli)
+below, rather than a local path, since a `d365architect.exe` installed on the
+system PATH could be run from any folder with no schema files anywhere near it.
+
+```
+d365architect schema configure-vscode
+d365architect schema configure-vscode --pre-release
+```
+
+| Option           | Description                                                        | Required |
+|------------------|------------------------------------------------------------------------|----------|
+| `--release`      | Point at the latest stable release (the `main` branch's schemas). The default | No |
+| `--pre-release`  | Point at the latest pre-release (the `develop` branch's schemas) instead | No |
+| `-p, --path`     | Folder to write `.vscode/settings.json` into. Defaults to the current directory | No |
+
+Only ever touches the three `yaml.schemas` entries for `*.table.yml`/
+`*.view.yml`/`*.form.yml` — any other setting already in the file, and any
+other `yaml.schemas` entry (your own schemas for other file types), is left
+alone. Re-running it (e.g. switching from `--release` to `--pre-release`)
+replaces just those three entries rather than adding duplicates. One
+trade-off worth knowing: if `.vscode/settings.json` already exists, this
+rewrites it as plain JSON — any comments in the existing file won't survive
+(you'll see a note printed when that happens).
+
+#### Setting this up without the CLI
+
+For an editor other than VS Code, or to see exactly what `configure-vscode`
+above writes: add a workspace setting pointing at the raw files on GitHub:
+
+```json
+{
+  "yaml.schemas": {
+    "https://raw.githubusercontent.com/TrueNorthIT/D365-Architect/main/schema/table.schema.json": "*.table.yml",
+    "https://raw.githubusercontent.com/TrueNorthIT/D365-Architect/main/schema/view.schema.json": "*.view.yml",
+    "https://raw.githubusercontent.com/TrueNorthIT/D365-Architect/main/schema/form.schema.json": "*.form.yml"
   }
-  ```
+}
+```
 
-  or reference it per-file with a leading comment:
+or reference it per-file with a leading comment:
 
-  ```yaml
-  # yaml-language-server: $schema=https://raw.githubusercontent.com/TrueNorthIT/D365-Architect/main/schema/table.schema.json
-  entity: account
-  ```
+```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/TrueNorthIT/D365-Architect/main/schema/table.schema.json
+entity: account
+```
 
-  This works in any editor that speaks the `yaml-language-server` protocol
-  (not just VS Code), fetched over plain HTTPS with no clone, no CLI, and no
-  auth needed — the repository is public.
+This works in any editor that speaks the `yaml-language-server` protocol
+(not just VS Code), fetched over plain HTTPS with no clone, no CLI, and no
+auth needed — the repository is public.
 
-  Which branch to point at depends on how current you want to be:
+Which branch to point at depends on how current you want to be:
 
-  | Branch    | Use for                                                        |
-  |-----------|------------------------------------------------------------------|
-  | `main`    | The latest stable release.                                     |
-  | `develop` | Pre-release — schema changes that have landed ahead of the next release. |
+| Branch    | Use for                                                        |
+|-----------|------------------------------------------------------------------|
+| `main`    | The latest stable release.                                     |
+| `develop` | Pre-release — schema changes that have landed ahead of the next release. |
 
-  Swap `main` for `develop` in either URL above to track pre-release schema
-  changes as they land. Either way, pointing at a branch means the schema
-  can change under you whenever that branch does; pin the URL to a tag or
-  commit SHA instead if you want it to stay fixed.
+Swap `main` for `develop` in either URL above to track pre-release schema
+changes as they land. Either way, pointing at a branch means the schema
+can change under you whenever that branch does; pin the URL to a tag or
+commit SHA instead if you want it to stay fixed.
 
 ## Getting help
 
@@ -600,8 +643,10 @@ hand-editing or reviewing `*.table.yml`/`*.view.yml`/`*.form.yml` files:
 
 ## Contributing
 
-See [`docs/yaml-conventions.md`](docs/yaml-conventions.md) for the design
-rules the exported YAML follows — what an absent field means, and how a
-converted structure (e.g. a form control's parameters) maps back to its
-source shape. That's written for whoever builds the eventual import
-direction, not end users of the CLI.
+See [`docs/DEVELOPING.md`](docs/DEVELOPING.md) for the architecture, service
+breakdown, and conventions this codebase follows, and
+[`docs/yaml-conventions.md`](docs/yaml-conventions.md) for the design rules
+the exported YAML follows — what an absent field means, and how a converted
+structure (e.g. a form control's parameters) maps back to its source shape.
+Both are written for whoever's working on the tool itself, not end users of
+the CLI.

@@ -1,0 +1,127 @@
+name: Publish release
+
+# Builds the standalone win-x64 d365architect.exe and publishes it as a
+# GitHub Release asset on every push to main/develop.
+#
+# Versioning (via MinVer, see the MinVer* properties in the .csproj):
+#   - main:    each push is a real release. If the pushed commit is already
+#              tagged "vX.Y.Z" (pushed manually to control a major/minor
+#              bump), that version is used as-is. Otherwise the patch
+#              version is auto-incremented and the workflow tags+pushes it
+#              itself. Published as a full (non-prerelease) GitHub Release.
+#   - develop: each push is a pre-release. MinVer computes a semver
+#              pre-release version from the commit height since the last
+#              release tag on main (e.g. 1.2.4-alpha.0.7). Published as a
+#              GitHub Release marked "Pre-release", tagged with that raw
+#              version string (no "v" prefix, so it can never collide with
+#              or be picked up by MinVer's own "v"-prefixed tag search).
+on:
+  push:
+    branches: [main, develop]
+  # Lets a run be kicked off by hand (e.g. `gh workflow run publish-release.yml
+  # --ref <branch>`) against any branch, for testing or to retry a failed
+  # publish without needing a new commit. Branch behavior is unchanged: only
+  # an actual push to main is treated as a release, every other ref
+  # (including a manual run on a feature branch) takes the pre-release path.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  PROJECT: D365 Architect/D365 Architect.csproj
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          # MinVer needs full history to find the nearest version tag.
+          fetch-depth: 0
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore
+        run: dotnet restore "$PROJECT"
+
+      - name: Read MinVer-computed version
+        id: current_version
+        run: |
+          # -t:Build must be explicit: bare -getProperty (even under
+          # `dotnet build`) skips target execution entirely, so MinVer's
+          # own version-computing task never runs and this silently falls
+          # back to the SDK's default "1.0.0" instead of the real value.
+          version=$(dotnet build "$PROJECT" -c Release --no-restore -t:Build -getProperty:Version)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Tag release version (main only)
+        id: main_tag
+        if: github.ref_name == 'main'
+        run: |
+          version="${{ steps.current_version.outputs.version }}"
+          if [[ "$version" == *-* ]]; then
+            # HEAD isn't manually tagged: auto-cut a release from MinVer's
+            # own auto-incremented (pre-release-suffixed) version.
+            tag="v${version%%-*}"
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag -a "$tag" -m "Release $tag"
+            git push origin "$tag"
+          else
+            # HEAD is already tagged (a maintainer pushed it manually to
+            # control a major/minor bump) - use it as-is.
+            tag="v${version}"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Publish (standalone win-x64)
+        # PublishDir is overridden with forward slashes (rather than relying
+        # on the profile's own backslash-separated path) so this stays
+        # correct when the job runs on a non-Windows runner. No --no-restore
+        # here: the earlier plain "dotnet restore" didn't pull win-x64
+        # runtime packages, so publish needs to restore again itself once it
+        # knows the RID (from the profile).
+        run: >
+          dotnet publish "$PROJECT" -c Release -p:PublishProfile=win-x64
+          -p:PublishDir=bin/Release/net10.0/publish/win-x64/
+
+      - name: Determine release metadata
+        id: release
+        run: |
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            tag="${{ steps.main_tag.outputs.tag }}"
+            echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+            echo "tag=$tag" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          else
+            version="${{ steps.current_version.outputs.version }}"
+            echo "version=$version" >> "$GITHUB_OUTPUT"
+            echo "tag=$version" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Zip publish output
+        run: |
+          asset="d365architect-${{ steps.release.outputs.version }}-win-x64.zip"
+          (cd "D365 Architect/bin/Release/net10.0/publish/win-x64" && zip -r "$GITHUB_WORKSPACE/$asset" .)
+          echo "asset=$asset" >> "$GITHUB_ENV"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease_flag=()
+          if [ "${{ steps.release.outputs.prerelease }}" = "true" ]; then
+            prerelease_flag=(--prerelease)
+          fi
+          gh release create "${{ steps.release.outputs.tag }}" \
+            "$asset" \
+            --title "${{ steps.release.outputs.tag }}" \
+            --target "${{ github.sha }}" \
+            --generate-notes \
+            "${prerelease_flag[@]}"
