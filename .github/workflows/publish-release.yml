@@ -17,10 +17,7 @@ name: Publish release
 #              or be picked up by MinVer's own "v"-prefixed tag search).
 on:
   push:
-    # TEMPORARY for testing: also fires on this feature branch, since
-    # workflow_dispatch refuses to run until this file is on the default
-    # branch. Revert to [main, develop] before this merges.
-    branches: [main, develop, feature/jc/16-cicd-for-downloadable-assets]
+    branches: [main, develop]
   # Lets a run be kicked off by hand (e.g. `gh workflow run publish-release.yml
   # --ref <branch>`) against any branch, for testing or to retry a failed
   # publish without needing a new commit. Branch behavior is unchanged: only
