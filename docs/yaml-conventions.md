@@ -262,14 +262,22 @@ different claims, and a `form build-xml` validation warning about
 `headerdensity`/`showinformselector` reflects a real, pre-existing quirk of
 Dataverse itself, not a bug introduced by rebuilding it through this tool.
 
-**This specific pair of attributes is the only violation confirmed safe to
-treat this way — it does not generalize.** A different violation (an
-invalid child element inside a control's `<parameters>`) was once assumed
-harmless on the same "schema vs. real Dataverse output disagree sometimes"
-reasoning and turned out to make Dataverse's own write-time validation
-reject the request outright with a 400 — see `FormXmlValidationMessage.
-IsKnownHarmless` and the "Every rebuild is validated" section below for how
-that changed `form import`'s behavior.
+**This specific pair of attributes — plus one other, narrower, confirmed
+pattern — are the only violations safe to treat this way; it does not
+generalize.** A different violation (an invalid child element inside a
+control's `<parameters>`) was once assumed harmless on the same "schema vs.
+real Dataverse output disagree sometimes" reasoning and turned out to make
+Dataverse's own write-time validation reject the request outright with a
+400 — see `FormXmlValidationMessage.IsKnownHarmless` and the "Every rebuild
+is validated" section below for how that changed `form import`'s behavior.
+The other confirmed-safe pattern (the Timeline control's
+`UClientActivitiesConfigurationJSON`/`UClientNotesConfigurationJSON`, also
+missing from the vendored XSD) is *also* an invalid-child-element-in-
+`<parameters>` violation — the exact class of thing the previous sentence
+just warned isn't automatically safe — so it's confirmed by the user's own
+direct D365 admin knowledge of this specific pattern rather than (yet) an
+actual live `form import`; see `IsKnownHarmless`'s own doc comment for that
+distinction.
 
 ## Rule 4: raw platform identifiers are never guessed at
 
@@ -392,12 +400,18 @@ and real Dataverse output disagree sometimes" reasoning — except this one
 wasn't actually safe, and a real `form import` attempt failed with a raw
 Dataverse 400 (`0x80048425`, "does not conform to the required schema").
 So `FormXmlValidationMessage.IsKnownHarmless` is deliberately narrow: true
-only for the one specific, confirmed-safe `headerdensity`/
-`showinformselector` pattern, never inferred for anything that merely looks
-similar. `form import` treats every other violation as blocking by
-default, and `FormXmlValidationConsole` prints a confirmed-safe one in
-yellow, everything else in red, so the distinction is visible at a glance
-before you ever reach `--allow-schema-violations`.
+only for the specific, confirmed-safe `headerdensity`/`showinformselector`
+pattern and the Timeline control's
+`UClientActivitiesConfigurationJSON`/`UClientNotesConfigurationJSON`
+pattern, never inferred for anything that merely looks similar — that
+second pattern *is* the same "invalid child element inside `<parameters>`"
+shape that failed live in the incident two paragraphs up, which is
+precisely why it's confirmed by the user's own explicit, direct D365 admin
+confirmation rather than assumed by analogy to the first pattern. `form
+import` treats every other violation as blocking by default, and
+`FormXmlValidationConsole` prints a confirmed-safe one in yellow, everything
+else in red, so the distinction is visible at a glance before you ever
+reach `--allow-schema-violations`.
 
 **A second, different incident showed the same gap exists the other
 direction too — a missing attribute, not an extra element, and one the XSD
@@ -571,7 +585,7 @@ Dataverse environment.
 **Before that prompt is even reached, though: a non-confirmed-safe
 violation refuses the import outright** (exit code 1, no prompt at all)
 unless `--allow-schema-violations` is passed — see "Every rebuild is
-validated" above for exactly which one violation is exempt from this and
+validated" above for exactly which violations are exempt from this and
 why. `--yes` alone does not bypass it; skipping the confirmation prompt and
 accepting a real risk of a raw Dataverse 400 are deliberately two separate
 opt-ins; this actually happened via `form build-xml`/`form import`'s shared

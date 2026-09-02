@@ -283,21 +283,26 @@ violation differently:
 
 - `form build-xml` only ever writes a **local file** — every violation is
   printed, but nothing blocks the write, since there's nothing live at stake.
-- `form import` writes to a **live environment** — only one specific,
-  confirmed-safe violation pattern (`headerdensity`/`showinformselector`
-  attributes real Dataverse FormXML carries that the XSD doesn't declare) is
-  treated as informational. Every other violation blocks the import outright
-  (before the confirmation prompt) unless `--allow-schema-violations` is
-  passed.
+- `form import` writes to a **live environment** — only two specific,
+  confirmed-safe violation patterns are treated as informational:
+  `headerdensity`/`showinformselector` attributes real Dataverse FormXML
+  carries that the XSD doesn't declare, and the Timeline control's
+  `UClientActivitiesConfigurationJSON`/`UClientNotesConfigurationJSON`
+  (also missing from the vendored XSD, but standard Microsoft-shipped
+  content, confirmed safe by the user's own explicit D365 admin knowledge
+  rather than a live write). Every other violation blocks the import
+  outright (before the confirmation prompt) unless
+  `--allow-schema-violations` is passed.
 
 That split exists because of a real incident, not caution for its own sake: a
 *different* violation was once assumed similarly harmless and a real
 `form import` attempt failed live with a raw Dataverse 400. See
 [`yaml-conventions.md`](yaml-conventions.md#rebuilding-formxml-form-build-xml)
-for the full incident history and exactly which pattern is exempt. If you're
-ever tempted to widen `FormXmlValidationMessage.IsKnownHarmless`, that history
-is the reason to be very sure first — confirm against a real write, not just
-against the schema.
+for the full incident history and exactly which patterns are exempt. If
+you're ever tempted to widen `FormXmlValidationMessage.IsKnownHarmless`
+further, that history is the reason to be very sure first — confirm against
+a real write or an equally direct confirmation, not just because the
+content looks like it ought to be fine.
 
 ## YAML conventions
 
