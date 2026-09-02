@@ -140,6 +140,22 @@ YAML, simply don't emit that XML element at all (don't write it as `false`
 explicitly) — either is correct, but omitting matches what export itself
 does.
 
+**Exception: anything inside a `data-set` node.** The "omitted ≡ false, so
+Dataverse can't tell the difference" argument above only holds for controls
+the static FormXml.xsd actually governs. A `data-set`-wrapped block belongs
+to a PCF custom control instead (e.g. `ActivityCalendarControl`'s
+`data-set name="Calendar"`), whose dataset binding Dataverse validates at
+import time against the control's own manifest, not this XSD — there,
+a boolean node's structural *presence* can itself be meaningful, not just
+its value. Confirmed live: a `data-set` missing `IsUserView` (present as
+`false` on export, stripped by this rule, never restored) was rejected on
+import with `The dataset 'Calendar' should contain ViewId, IsUserView, or
+both nodes` — the node's presence is what tells Dataverse whether `ViewId`
+refers to a system or a personal view, so dropping it isn't the no-op it is
+for the XSD-governed controls this rule was validated against.
+`ConvertToObject` tracks an `insideDataSet` flag through the recursion and
+never strips `false` once inside a `data-set` node, for exactly this reason.
+
 ## FormXML coverage audit
 
 FormXML is large enough that "does the reader handle everything in it" isn't

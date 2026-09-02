@@ -405,13 +405,14 @@ public sealed class FormJsonDefinitionReader
     ///   child element of the same name — not seen in practice, but a
     ///   known, accepted trade-off of choosing readability over an
     ///   unambiguous-but-cryptic marker like `@`/`#`.)
-    /// - A literal "false" (case-insensitive) is dropped. Unlike these
-    ///   parameters' other values (strings, GUIDs, numbers — no reliable
-    ///   source says what any of those default to), a boolean has only two
-    ///   possible states: every one of these parameters is declared
-    ///   `type="xs:boolean" minOccurs="0"` with no XSD default, and every
-    ///   sample gathered from a real tenant agrees "false" is either the
-    ///   only value seen or the overwhelming majority — so omitting the
+    /// - A literal "false" (case-insensitive) is dropped — except anywhere
+    ///   inside a `data-set` node (see <paramref name="insideDataSet"/>).
+    ///   Unlike these parameters' other values (strings, GUIDs, numbers —
+    ///   no reliable source says what any of those default to), a boolean
+    ///   has only two possible states: every one of these parameters is
+    ///   declared `type="xs:boolean" minOccurs="0"` with no XSD default, and
+    ///   every sample gathered from a real tenant agrees "false" is either
+    ///   the only value seen or the overwhelming majority — so omitting the
     ///   element (this tool's own choice, not the schema's) and writing it
     ///   as false come to the same thing either way. "true" is always kept,
     ///   so the meaningful, deliberately-set state is never hidden — and
@@ -420,9 +421,30 @@ public sealed class FormJsonDefinitionReader
     ///   all the way up to <see cref="FormControl.Parameters"/> itself
     ///   coming back null when a control's whole parameter block was just
     ///   defaults.
+    ///
+    ///   That "omitted ≡ false" equivalence only holds for controls the
+    ///   static FormXml.xsd actually governs (subgrid, quick view, etc.) —
+    ///   a `data-set`-wrapped block belongs to a PCF custom control (e.g.
+    ///   `ActivityCalendarControl`'s `data-set name="Calendar"`), whose
+    ///   dataset binding Dataverse validates at import time against the
+    ///   control's own manifest, not this XSD. Confirmed live: a `data-set`
+    ///   missing `IsUserView` (present as `false` on export, stripped by
+    ///   this same rule, and never restored) was rejected on import with
+    ///   `The dataset 'Calendar' should contain ViewId, IsUserView, or both
+    ///   nodes` — there, the node's structural *presence* disambiguates
+    ///   what `ViewId` even refers to (a system vs. a personal view), so
+    ///   dropping it is not the no-op it is for the XSD-governed controls
+    ///   this rule was validated against. So `false` is preserved for every
+    ///   element/attribute anywhere under a `data-set` node.
     /// See <see cref="FormControl.Parameters"/>.
     /// </summary>
-    private static object? ConvertToObject(XElement element)
+    /// <param name="element">The FormXML element to convert.</param>
+    /// <param name="insideDataSet">
+    /// True once recursion has entered a `data-set` node (and for all of its
+    /// descendants) — see the "omitted ≡ false" note above for why `false`
+    /// stripping is unsafe there and must not apply.
+    /// </param>
+    private static object? ConvertToObject(XElement element, bool insideDataSet = false)
     {
         var children = element.Elements().ToList();
         var attributes = element.Attributes().ToList();
@@ -450,16 +472,16 @@ public sealed class FormJsonDefinitionReader
                 // doc comment for why that distinction matters.
                 return new Dictionary<string, object>
                 {
-                    ["xml"] = new Dictionary<string, object> { [embedded.Name.LocalName] = ConvertToObject(embedded) ?? "" },
+                    ["xml"] = new Dictionary<string, object> { [embedded.Name.LocalName] = ConvertToObject(embedded, insideDataSet) ?? "" },
                 };
             }
 
-            return IsFalse(value) ? null : value;
+            return !insideDataSet && IsFalse(value) ? null : value;
         }
 
         var map = new Dictionary<string, object>();
 
-        var keptAttributes = attributes.Where(a => !IsFalse(a.Value)).ToDictionary(a => a.Name.LocalName, object (a) => a.Value);
+        var keptAttributes = attributes.Where(a => insideDataSet || !IsFalse(a.Value)).ToDictionary(a => a.Name.LocalName, object (a) => a.Value);
         if (keptAttributes.Count > 0)
         {
             map["attributes"] = keptAttributes;
@@ -467,7 +489,7 @@ public sealed class FormJsonDefinitionReader
 
         if (children.Count == 0)
         {
-            if (!string.IsNullOrEmpty(element.Value) && !IsFalse(element.Value))
+            if (!string.IsNullOrEmpty(element.Value) && (insideDataSet || !IsFalse(element.Value)))
             {
                 map["value"] = element.Value;
             }
@@ -477,7 +499,8 @@ public sealed class FormJsonDefinitionReader
 
         foreach (var group in children.GroupBy(child => child.Name.LocalName))
         {
-            var values = group.Select(ConvertToObject).Where(value => value is not null).Select(value => value!).ToList();
+            var childInsideDataSet = insideDataSet || group.Key == "data-set";
+            var values = group.Select(child => ConvertToObject(child, childInsideDataSet)).Where(value => value is not null).Select(value => value!).ToList();
             if (values.Count == 0)
             {
                 continue;
