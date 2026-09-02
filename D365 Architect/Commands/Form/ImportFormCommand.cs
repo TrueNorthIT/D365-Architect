@@ -119,27 +119,27 @@ public sealed class ImportFormCommand(IAuthenticationService authenticationServi
         }
         catch (AuthenticationRequiredException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message}[/]");
+            AnsiConsole.MarkupLine($"[red]{ex.Message.EscapeMarkup()}[/]");
             return 1;
         }
         catch (FormNotFoundException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message}[/]");
+            AnsiConsole.MarkupLine($"[red]{ex.Message.EscapeMarkup()}[/]");
             return 1;
         }
         catch (AmbiguousSystemFormException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message}[/]");
+            AnsiConsole.MarkupLine($"[red]{ex.Message.EscapeMarkup()}[/]");
             return 1;
         }
         catch (NotSupportedException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message}[/]");
+            AnsiConsole.MarkupLine($"[red]{ex.Message.EscapeMarkup()}[/]");
             return 1;
         }
         catch (HttpRequestException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message}[/]");
+            AnsiConsole.MarkupLine($"[red]{ex.Message.EscapeMarkup()}[/]");
             return 1;
         }
     }

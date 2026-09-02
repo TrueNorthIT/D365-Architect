@@ -83,12 +83,12 @@ public sealed class ExportFormCommand(IAuthenticationService authenticationServi
         }
         catch (AuthenticationRequiredException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message}[/]");
+            AnsiConsole.MarkupLine($"[red]{ex.Message.EscapeMarkup()}[/]");
             return 1;
         }
         catch (SolutionNotFoundException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message}[/]");
+            AnsiConsole.MarkupLine($"[red]{ex.Message.EscapeMarkup()}[/]");
             return 1;
         }
         catch (InvalidDataException ex)
@@ -98,7 +98,7 @@ public sealed class ExportFormCommand(IAuthenticationService authenticationServi
         }
         catch (HttpRequestException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message}[/]");
+            AnsiConsole.MarkupLine($"[red]{ex.Message.EscapeMarkup()}[/]");
             return 1;
         }
     }

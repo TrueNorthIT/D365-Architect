@@ -37,7 +37,7 @@ public sealed class LoginCommand(IAuthenticationService authenticationService) :
         }
         catch (AuthenticationRequiredException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message}[/]");
+            AnsiConsole.MarkupLine($"[red]{ex.Message.EscapeMarkup()}[/]");
             return 1;
         }
     }

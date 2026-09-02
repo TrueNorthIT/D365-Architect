@@ -22,7 +22,7 @@ internal static class EntityYamlFileReader
         }
         catch (YamlDotNet.Core.YamlException ex)
         {
-            AnsiConsole.MarkupLine($"[red]Couldn't parse '{path}' as a table:[/] {ex.Message}");
+            AnsiConsole.MarkupLine($"[red]Couldn't parse '{path.EscapeMarkup()}' as a table:[/] {ex.Message.EscapeMarkup()}");
             return null;
         }
     }

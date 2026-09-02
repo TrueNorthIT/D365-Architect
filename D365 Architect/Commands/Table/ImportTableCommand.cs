@@ -103,17 +103,17 @@ public sealed class ImportTableCommand(IAuthenticationService authenticationServ
         }
         catch (AuthenticationRequiredException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message}[/]");
+            AnsiConsole.MarkupLine($"[red]{ex.Message.EscapeMarkup()}[/]");
             return 1;
         }
         catch (InvalidDataException ex)
         {
-            AnsiConsole.MarkupLine($"[red]Couldn't parse the live metadata for '{entity.LogicalName}':[/] {ex.Message}");
+            AnsiConsole.MarkupLine($"[red]Couldn't parse the live metadata for '{entity.LogicalName.EscapeMarkup()}':[/] {ex.Message.EscapeMarkup()}");
             return 1;
         }
         catch (HttpRequestException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message}[/]");
+            AnsiConsole.MarkupLine($"[red]{ex.Message.EscapeMarkup()}[/]");
             return 1;
         }
     }

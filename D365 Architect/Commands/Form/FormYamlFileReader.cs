@@ -28,7 +28,7 @@ internal static class FormYamlFileReader
         }
         catch (YamlDotNet.Core.YamlException ex)
         {
-            AnsiConsole.MarkupLine($"[red]Couldn't parse '{path}' as a form:[/] {ex.Message}");
+            AnsiConsole.MarkupLine($"[red]Couldn't parse '{path.EscapeMarkup()}' as a form:[/] {ex.Message.EscapeMarkup()}");
             return null;
         }
     }

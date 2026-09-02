@@ -92,8 +92,13 @@ PreviewAsync()                     // builds a preview: what would change, and w
 ```
 
 Errors are caught per-command and mapped to a plain red message
-(`AnsiConsole.MarkupLine($"[red]{ex.Message}[/]")`) plus exit code 1 — never a
-raw stack trace. Domain-specific exceptions (`FormNotFoundException`,
+(`AnsiConsole.MarkupLine($"[red]{ex.Message.EscapeMarkup()}[/]")`) plus exit
+code 1 — never a raw stack trace. `.EscapeMarkup()` matters here, not just as
+style: `ex.Message` can carry raw external content this tool doesn't control
+(a Dataverse HTTP error body, in particular) — an unescaped `[...]` sequence
+inside it makes Spectre.Console try to parse it as markup and throw its own
+unrelated `Could not find color or style '...'` error, masking whatever the
+real error was. Domain-specific exceptions (`FormNotFoundException`,
 `AmbiguousSystemFormException`, `AuthenticationRequiredException`, etc.) exist
 specifically to give that message something meaningful to say.
 

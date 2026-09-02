@@ -82,22 +82,22 @@ public sealed class BuildFormXmlCommand(IAuthenticationService authenticationSer
         }
         catch (AuthenticationRequiredException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message}[/]");
+            AnsiConsole.MarkupLine($"[red]{ex.Message.EscapeMarkup()}[/]");
             return 1;
         }
         catch (AmbiguousSystemFormException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message}[/]");
+            AnsiConsole.MarkupLine($"[red]{ex.Message.EscapeMarkup()}[/]");
             return 1;
         }
         catch (NotSupportedException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message}[/]");
+            AnsiConsole.MarkupLine($"[red]{ex.Message.EscapeMarkup()}[/]");
             return 1;
         }
         catch (HttpRequestException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message}[/]");
+            AnsiConsole.MarkupLine($"[red]{ex.Message.EscapeMarkup()}[/]");
             return 1;
         }
         catch (System.Xml.XmlException ex)
@@ -106,7 +106,7 @@ public sealed class BuildFormXmlCommand(IAuthenticationService authenticationSer
             // stopping), this means FormXmlWriter itself produced XML that
             // isn't even well-formed — a real bug in this tool, not a
             // known Dataverse quirk.
-            AnsiConsole.MarkupLine($"[red]Rebuilt FormXML isn't well-formed XML — this is a bug in this tool, not the source YAML:[/] {ex.Message}");
+            AnsiConsole.MarkupLine($"[red]Rebuilt FormXML isn't well-formed XML — this is a bug in this tool, not the source YAML:[/] {ex.Message.EscapeMarkup()}");
             return 1;
         }
     }

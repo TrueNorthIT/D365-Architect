@@ -22,7 +22,7 @@ internal static class ViewYamlFileReader
         }
         catch (YamlDotNet.Core.YamlException ex)
         {
-            AnsiConsole.MarkupLine($"[red]Couldn't parse '{path}' as a view:[/] {ex.Message}");
+            AnsiConsole.MarkupLine($"[red]Couldn't parse '{path.EscapeMarkup()}' as a view:[/] {ex.Message.EscapeMarkup()}");
             return null;
         }
     }
