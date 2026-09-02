@@ -239,13 +239,21 @@ Schema, rather than hand-maintaining a second copy that could drift:
   `StandardFormControls.FriendlyNames`), read via reflection so the schema's
   enum can never drift from what validation actually accepts.
 
-**Regenerate `schema/*.schema.json` whenever a curated model's shape or doc
-comments change** — those three files are committed, not built by CI, and
-`schema export`'s own doc comment describes them as "re-run for all three
-whenever a model changes." (One already-generated description is out of date
-as of this writing — `schema/table.schema.json` still says table import is
-"not yet supported" — worth a fresh `schema export --for table` next time
-you're touching that model.)
+**`schema/*.schema.json` regenerates itself automatically** — the `.csproj`'s
+own `RegenerateSchemas` target runs `schema export --for table/view/form`
+after every ordinary `dotnet build`/`dotnet publish`, so these three
+committed files can no longer silently drift from a model's actual shape the
+way they previously could when regenerating them meant a developer had to
+remember to run `schema export` by hand (confirmed missed at least once:
+`schema/form.schema.json` shipped without several fields for one whole PR
+before this target existed). Skipped for a design-time build (an IDE's own
+continuous background build, not a real one) and for the standalone win-x64
+publish (`PublishSingleFile=true` — that output doesn't carry the XML doc
+file `YamlSchemaGenerator` needs; see above). A plain `dotnet build` still
+writes these files as a side effect, so expect them to show as modified in
+`git status` whenever a curated model's shape or doc comments change — that's
+the target working, not a mistake; review and commit the diff like any other
+generated-but-committed artifact.
 
 ### `EnvironmentService`/`IEnvironmentService` — not real yet
 
