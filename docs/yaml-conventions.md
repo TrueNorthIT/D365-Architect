@@ -59,6 +59,8 @@ omit.
 | `FormDefinition` | `FormActivationState` | `1` / "Active" | Common case for any form actually in use (Inactive = an unpublished draft) |
 | `FormControl` | `Disabled` | `false` | Common case — most controls are enabled |
 | `FormControl` | `Visible` | `true` (**inverted** — see `FalseOrNull`) | Common case — most controls are visible; `false` confirmed live on 11 real fields across 5 forms |
+| `FormTab`, `FormSection` | `Visible` | `true` (**inverted** — see `FalseOrNull`) | Same structural argument as `FormControl.Visible`: FormXML's `<tab>`/`<section>` `visible` attribute is `xs:boolean`, optional, no XSD default — a tab/section is shown unless deliberately hidden, so omission means visible. Previously not modelled at all (not just unstripped-but-present — genuinely absent from `FormTab`/`FormSection`), so a hidden tab/section silently came back visible on every export/import round-trip until fixed. |
+| `FormControl`, `FormSection` | `ShowLabel` | `true` (**inverted** — see `FalseOrNull`) | Same story as `Visible` above, one attribute over: FormXML's cell-level and section-level `showlabel` is `xs:boolean`, optional, no XSD default — a label is shown unless deliberately hidden (common on a subgrid, which already has its own title bar). Also previously absent from both models entirely, so a hidden subgrid/section label silently came back shown on every round-trip until fixed. |
 | `FormDisplayCondition` | `FallbackForm` | `false` | At most one form per table can be the fallback, so `false` is definitionally the common case across a table's forms as a whole, not just an observed majority |
 | `FormControl` | `ColumnSpan`, `RowSpan` | `1` | FormXML's own `colspan`/`rowspan` attributes have no declared default, but `1` (no spanning) is overwhelmingly the common case; confirmed live on a single real form's 69 cells (64/69 `rowspan` and 63/69 `colspan` values were exactly `1`), with real, non-default spans (up to `rowspan="15"`, for a subgrid/timeline control deliberately laid out to occupy several otherwise-empty rows) shown whenever they occur |
 | `FormControl` | `Parameters` (every boolean value inside it) | `false` | See Rule 3 below — a different, stronger argument than the others in this table |
@@ -156,6 +158,23 @@ for the XSD-governed controls this rule was validated against.
 `ConvertToObject` tracks an `insideDataSet` flag through the recursion and
 never strips `false` once inside a `data-set` node, for exactly this reason.
 
+## Rule 4: capture verbatim, unstripped, when a default isn't confirmed yet
+
+`TrueOrNull`/`FalseOrNull` (Rule 1) both require the stripped direction to
+already be confirmed — against Microsoft's docs, or by aggregating real
+samples, or (Rule 3) by a structural argument. Several boolean attributes
+added to `FormTab`/`FormSection`/`FormControl` from a systematic XSD audit
+(`availableforphone` at all three levels, a tab's own `collapsible`) don't
+have that yet: no live sample has been seen with either value, so which
+direction is "the common case worth omitting" genuinely isn't known. Rather
+than guess (and risk repeating the exact mistake that made `IsUserView`,
+tab/section `visible`, and cell/section `showlabel` real bugs — assuming the
+wrong thing about what "omitted" means), these are modelled as plain
+nullable booleans shown exactly as FormXML states them, present only when
+the source XML actually sets the attribute at all, in either direction. Once
+a live sample confirms one direction is overwhelmingly common, these are
+candidates to move to `TrueOrNull`/`FalseOrNull` like their siblings.
+
 ## FormXML coverage audit
 
 FormXML is large enough that "does the reader handle everything in it" isn't
@@ -174,10 +193,16 @@ row is one of: captured, or a documented, deliberate decision not to —
 | `control`'s own `<parameters>` | ✅ Captured | every non-trivial control | Structural conversion, see Rule 2/3 |
 | `controlDescriptions`/`customControl` ("add a component") | ✅ Captured | several forms | `FormControl.AdditionalControls`, see `FormAdditionalControl` |
 | Cell `visible="false"` | ✅ Captured | 11 (5 forms) | `FormControl.Visible` |
+| Tab/section `visible="false"` | ✅ Captured | confirmed live (a hidden tab) | `FormTab.Visible`/`FormSection.Visible` — genuinely missing (not just unstripped) until this was found live: a hidden tab silently came back visible on every export/import round-trip, since neither model had a place to hold it at all |
+| Cell/section `showlabel="false"` | ✅ Captured | confirmed live (a hidden subgrid/section label) | `FormControl.ShowLabel`/`FormSection.ShowLabel` — same "genuinely missing" story as tab/section `visible` above, found the same way; a tab's own `showlabel` stays excluded (see the chrome-attributes row below) since hiding a tab's label isn't the same kind of content change |
 | A section's own `columns` attribute (sub-column count) | ✅ Captured | 4+ sections | `FormSection.Columns` |
 | Cell `colspan`/`rowspan` | ✅ Captured | 5 non-default spans on one real form (up to `rowspan="15"`) | `FormControl.ColumnSpan`/`RowSpan` — genuinely structural (how much visual space a control's cell occupies), not cosmetic; found via a live round-trip check, not the initial schema audit |
 | `ancestor` | ✅ Captured | 6 forms | `FormDefinition.Ancestor` |
-| `hiddencontrols` | ✅ Captured | 7 forms | `FormDefinition.HiddenFields` |
+| `hiddencontrols` | ✅ Captured | 7 forms | `FormDefinition.HiddenFields`, including its own `relationship` attribute (`FormHiddenField.Relationship`) — previously only 2 of its 3 attributes were captured, `relationship` silently wasn't |
+| Non-primary-language `<label>` entries (`languagecode`/`description`) | ✅ Captured | not yet seen on a live multi-language tenant, added defensively | `FormTab.Translations`/`FormSection.Translations`/`FormControl.Translations` — previously every translation but the primary (English/1033, or first) was silently discarded on export; genuine maker-authored text, not a stripped default, permanently lost on a multi-language tenant's every round-trip until this was found |
+| `availableforphone` (tab/section/cell) | ✅ Captured | not yet seen on a live sample, added defensively | `FormTab.AvailableOnPhone`/`FormSection.AvailableOnPhone`/`FormControl.AvailableOnPhone` — shown exactly as FormXML states it rather than defaulted/stripped like this file's other booleans: which direction is the common case at each of these three levels hasn't been confirmed live, so nothing is assumed |
+| `control`'s own `isunbound`/`isrequired` | ✅ Captured | not yet seen on a live sample, added defensively | `FormControl.IsUnbound`/`IsRequired`, `TrueOrNull` (same direction as `Disabled`) — an unbound lookup or a form-level "Business Required" override are both the deliberate, uncommon case |
+| A tab's own `collapsible` | ✅ Captured | not yet seen on a live sample, added defensively | `FormTab.Collapsible` — shown exactly as stated, not defaulted/stripped; unlike `showlabel`/`showbar`/etc. in the tab/section chrome row below, this is a real end-user interaction toggle (can this tab be collapsed at all), not a rendering hint |
 | `DisplayConditions` (incl. `Role`/`Everyone`) | ✅ Captured | 21 forms | `FormDefinition.DisplayCondition` |
 | `formLibraries` | ✅ Captured | 9 forms | `FormDefinition.Libraries` |
 | `events` (form-level) | ✅ Captured | 11 forms | `FormDefinition.Events` |
@@ -190,7 +215,8 @@ row is one of: captured, or a documented, deliberate decision not to —
 | `formparameters`, `externaldependencies` | 📝 Documented gap | 0 | Confirmed absent from every form checked |
 | A tab's own `tabheader`/`tabfooter` | 📝 Documented gap | 0 | Distinct from the form-level `header`/`footer` this tool already captures |
 | Form root's own display attributes (`showImage`, `shownavigationbar`, `maxWidth`, `hasmargin`, `headerdensity`, `showinformselector`) | 📝 Documented gap | present on every form | Chrome/rendering settings for the form shell, not its content — same reasoning as the already-excluded `formpresentation` |
-| Tab/section-level designer/rendering attributes (`locklevel`, `IsUserDefined`, `showlabel`, `showbar`, `layout`, `celllabelalignment`, `celllabelposition`, `labelwidth`, `labelid`, `verticallayout`, `expanded`) | 📝 Documented gap | present on every tab/section | Same "chrome, not content" reasoning as the form root's own display attributes above, just at the tab/section level instead — extending that exclusion explicitly rather than leaving it implicit |
+| Tab/section-level designer/rendering attributes (`locklevel`, `IsUserDefined`, `showbar`, `layout`, `celllabelalignment`, `celllabelposition`, `labelwidth`, `labelid`, `verticallayout`, `expanded`) | 📝 Documented gap | present on every tab/section | Same "chrome, not content" reasoning as the form root's own display attributes above, just at the tab/section level instead — extending that exclusion explicitly rather than leaving it implicit |
+| A tab's own `showlabel` | 📝 Documented gap | present on every tab | Unlike a section's or a cell's own `showlabel` (now captured — see below), a tab's label is its own tab-strip entry; hiding it produces an unlabeled tab rather than a meaningful content change, so this stays grouped with the tab/section chrome attributes above |
 | `control`'s own `indicationOfSubgrid="true"` | 📝 Documented gap | 3 (all subgrid controls) | Confirmed redundant with the control's own `classid`, which already identifies it as a subgrid — a designer-UI hint, not independent information |
 | Cell `auto` (e.g. `auto="false"`) | 📝 Documented gap | 3, always alongside a spanning subgrid cell | Meaning unconfirmed — possibly whether the cell's span was auto-computed vs. manually set; no counter-example seen to guess from |
 | `Handler`'s own `parameters` attribute (distinct from a control's `<parameters>` element) | 📝 Documented gap | every handler, always `""` | Same reasoning as `FormEvent.Active`/`FormEventHandler.Enabled` below: no observed non-empty value to show what omitting it would mean |

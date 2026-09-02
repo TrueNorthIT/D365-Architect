@@ -118,30 +118,7 @@ public static class YamlSchemaGenerator
             return enumSchema;
         }
 
-        var schema = type switch
-        {
-            _ when type == typeof(string) => new JsonObject { ["type"] = "string" },
-            _ when type == typeof(int) => new JsonObject { ["type"] = "integer" },
-            _ when type == typeof(double) => new JsonObject { ["type"] = "number" },
-            _ when type == typeof(bool) => new JsonObject { ["type"] = "boolean" },
-            // YamlDotNet (and this tool's own YAML) renders a Guid as a plain
-            // hyphenated string, same as everywhere else this tool writes
-            // one out — "format": "uuid" is JSON Schema's own annotation for
-            // that shape, not a stricter type of its own.
-            _ when type == typeof(Guid) => new JsonObject { ["type"] = "string", ["format"] = "uuid" },
-            // A genuinely dynamic shape (e.g. FormControl.Parameters, converted
-            // structurally from arbitrary XML rather than a fixed model) has no
-            // fixed schema of its own to describe — an empty schema is JSON
-            // Schema's own way of saying "any value is valid here", which is
-            // honest about that rather than asserting a shape that isn't real.
-            _ when type == typeof(object) => new JsonObject(),
-            _ when type != typeof(string) && typeof(IEnumerable).IsAssignableFrom(type) => BuildArraySchema(type, xmlDocs, ancestors),
-            // A curated model type (e.g. FormDisplayCondition) used as a
-            // single property rather than always inside a list — recurse
-            // the same way BuildArraySchema does for its element type.
-            _ when type.IsClass => BuildObjectSchema(type, xmlDocs, ancestors),
-            _ => throw new NotSupportedException($"No JSON Schema mapping for type '{type}'. Extend {nameof(YamlSchemaGenerator)} to handle it."),
-        };
+        var schema = BuildValueSchema(type, xmlDocs, ancestors);
 
         if (!string.IsNullOrWhiteSpace(description))
         {
@@ -150,6 +127,57 @@ public static class YamlSchemaGenerator
 
         return schema;
     }
+
+    /// <summary>
+    /// The type-driven half of <see cref="BuildPropertySchema"/>, split out
+    /// so a dictionary's own value type (see below) can recurse into it
+    /// without re-deriving a property's <see cref="SchemaEnumAttribute"/>/
+    /// description, neither of which a dictionary value has of its own.
+    /// </summary>
+    private static JsonObject BuildValueSchema(Type type, XDocument? xmlDocs, HashSet<Type> ancestors) => type switch
+    {
+        _ when type == typeof(string) => new JsonObject { ["type"] = "string" },
+        _ when type == typeof(int) => new JsonObject { ["type"] = "integer" },
+        _ when type == typeof(double) => new JsonObject { ["type"] = "number" },
+        _ when type == typeof(bool) => new JsonObject { ["type"] = "boolean" },
+        // YamlDotNet (and this tool's own YAML) renders a Guid as a plain
+        // hyphenated string, same as everywhere else this tool writes
+        // one out — "format": "uuid" is JSON Schema's own annotation for
+        // that shape, not a stricter type of its own.
+        _ when type == typeof(Guid) => new JsonObject { ["type"] = "string", ["format"] = "uuid" },
+        // A genuinely dynamic shape (e.g. FormControl.Parameters, converted
+        // structurally from arbitrary XML rather than a fixed model) has no
+        // fixed schema of its own to describe — an empty schema is JSON
+        // Schema's own way of saying "any value is valid here", which is
+        // honest about that rather than asserting a shape that isn't real.
+        _ when type == typeof(object) => new JsonObject(),
+        // A dictionary (e.g. FormControl.Translations, keyed by languagecode)
+        // is a YAML/JSON mapping with arbitrary keys, not a fixed set of
+        // named properties — checked before the generic IEnumerable case
+        // below, which a dictionary also matches: that path assumes exactly
+        // one generic argument (an element type) and silently produced an
+        // empty object schema for a dictionary's two (key and value) until
+        // this was added. JSON Schema has no notion of a non-string key, so
+        // the key type itself isn't represented — only the value type is.
+        _ when GetDictionaryValueType(type) is { } dictionaryValueType => new JsonObject
+        {
+            ["type"] = "object",
+            ["additionalProperties"] = BuildValueSchema(dictionaryValueType, xmlDocs, ancestors),
+        },
+        _ when type != typeof(string) && typeof(IEnumerable).IsAssignableFrom(type) => BuildArraySchema(type, xmlDocs, ancestors),
+        // A curated model type (e.g. FormDisplayCondition) used as a
+        // single property rather than always inside a list — recurse
+        // the same way BuildArraySchema does for its element type.
+        _ when type.IsClass => BuildObjectSchema(type, xmlDocs, ancestors),
+        _ => throw new NotSupportedException($"No JSON Schema mapping for type '{type}'. Extend {nameof(YamlSchemaGenerator)} to handle it."),
+    };
+
+    private static Type? GetDictionaryValueType(Type type) =>
+        type.GetInterfaces().Prepend(type)
+            .FirstOrDefault(i => i.IsGenericType && (i.GetGenericTypeDefinition() == typeof(IReadOnlyDictionary<,>) || i.GetGenericTypeDefinition() == typeof(IDictionary<,>)))
+            is { } dictionaryInterface && dictionaryInterface.GetGenericArguments() is [_, var valueType]
+            ? valueType
+            : null;
 
     private static JsonObject BuildArraySchema(Type enumerableType, XDocument? xmlDocs, HashSet<Type> ancestors)
     {
