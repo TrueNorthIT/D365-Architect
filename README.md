@@ -552,10 +552,12 @@ per-field descriptions will be blank — every other command is unaffected.
 This repository commits its generated schemas at
 [`schema/table.schema.json`](schema/table.schema.json),
 [`schema/view.schema.json`](schema/view.schema.json), and
-[`schema/form.schema.json`](schema/form.schema.json), and re-runs `schema
-export` for all three whenever a model changes. D365 developers can point
-their editor at them for inline validation and autocomplete while
-hand-editing or reviewing `*.table.yml`/`*.view.yml`/`*.form.yml` files:
+[`schema/form.schema.json`](schema/form.schema.json) — a `dotnet build`
+regenerates all three automatically (see `docs/DEVELOPING.md`), so they stay
+in sync with a model's shape without anyone needing to remember to run this
+command by hand. D365 developers can point their editor at them for inline
+validation and autocomplete while hand-editing or reviewing
+`*.table.yml`/`*.view.yml`/`*.form.yml` files:
 
 - **If you have this repo cloned**, it's already wired up — `.vscode/settings.json`
   maps `*.table.yml`, `*.view.yml`, and `*.form.yml` files to their local

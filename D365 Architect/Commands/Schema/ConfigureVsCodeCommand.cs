@@ -85,13 +85,13 @@ public sealed class ConfigureVsCodeCommand : Command<ConfigureVsCodeCommand.Sett
             }
             catch (JsonException ex)
             {
-                AnsiConsole.MarkupLine($"[red]{settingsPath} isn't valid JSON — fix or remove it first, then re-run this command:[/] {ex.Message}");
+                ErrorConsole.Print($"{settingsPath} isn't valid JSON — fix or remove it first, then re-run this command: {ex.Message}");
                 return 1;
             }
 
             if (parsed is not JsonObject existingRoot)
             {
-                AnsiConsole.MarkupLine($"[red]{settingsPath}'s top level isn't a JSON object — refusing to overwrite it.[/]");
+                ErrorConsole.Print($"{settingsPath}'s top level isn't a JSON object — refusing to overwrite it.");
                 return 1;
             }
 

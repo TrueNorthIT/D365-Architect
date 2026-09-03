@@ -63,7 +63,7 @@ public sealed class ExportSchemaCommand : Command<ExportSchemaCommand.Settings>
     {
         if (!AssetTypes.TryGetValue(settings.For, out var assetType))
         {
-            AnsiConsole.MarkupLine($"[red]Unknown asset type '{settings.For}'.[/] Expected 'table', 'view', or 'form'.");
+            ErrorConsole.Print($"Unknown asset type '{settings.For}'. Expected 'table', 'view', or 'form'.");
             return 1;
         }
 

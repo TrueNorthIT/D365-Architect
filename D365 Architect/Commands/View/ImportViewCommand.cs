@@ -83,22 +83,22 @@ public sealed class ImportViewCommand(IAuthenticationService authenticationServi
         }
         catch (AuthenticationRequiredException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message}[/]");
+            ErrorConsole.Print(ex);
             return 1;
         }
         catch (ViewNotFoundException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message}[/]");
+            ErrorConsole.Print(ex);
             return 1;
         }
         catch (AmbiguousSavedQueryException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message}[/]");
+            ErrorConsole.Print(ex);
             return 1;
         }
         catch (HttpRequestException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message}[/]");
+            ErrorConsole.Print(ex);
             return 1;
         }
     }

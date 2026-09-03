@@ -51,6 +51,13 @@
             "description": "The tab's display label.",
             "type": "string"
           },
+          "translations": {
+            "description": "This label's text in every language besides the one shown as Label, keyed by Dataverse's own languagecode (e.g. 1036 for French). Absent on a single-language tenant (the overwhelming common case) or when this tab has only its own.",
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
           "columns": {
             "description": "The tab's side-by-side columns, left to right.",
             "type": "array",
@@ -75,6 +82,13 @@
                         "description": "The section's display label.",
                         "type": "string"
                       },
+                      "translations": {
+                        "description": "This label's text in every language besides the one shown as Label, keyed by Dataverse's own languagecode (e.g. 1036 for French). Absent on a single-language tenant (the overwhelming common case) or when this section has only its own.",
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "string"
+                        }
+                      },
                       "columns": {
                         "description": "How many side-by-side sub-columns this section lays its own fields into — independent of the tab's own columns. Only present when greater than 1 — a single column is the common case; applying this file back won't change a section's own column count.",
                         "type": "integer"
@@ -96,6 +110,13 @@
                             "label": {
                               "description": "The field's display label on the form.",
                               "type": "string"
+                            },
+                            "translations": {
+                              "description": "This label's text in every language besides the one shown as Label, keyed by Dataverse's own languagecode (e.g. 1036 for French). Absent on a single-language tenant (the overwhelming common case) or when this control has only its own.",
+                              "type": "object",
+                              "additionalProperties": {
+                                "type": "string"
+                              }
                             },
                             "control": {
                               "description": "Which control renders this cell — a Dataverse standard control by name, e.g. \"SingleLineText\", \"Lookup\", \"Subgrid\". Use customControlId instead for a custom/PCF control or one not in this list.",
@@ -132,12 +153,28 @@
                               "description": "The control's raw Dataverse class id (a GUID), for a custom/PCF control or a standard one not yet recognized by name. Use control instead when the control is one of Dataverse's own standard ones.",
                               "type": "string"
                             },
+                            "isUnbound": {
+                              "description": "Only present when true — an unbound lookup control (its own `TargetEntities` parameter list names which tables it can point at, rather than the control being bound to a real relationship). Omit for an ordinary bound control; applying this file back won't unbind it.",
+                              "type": "boolean"
+                            },
                             "disabled": {
                               "description": "Only present when true — most controls on a form are enabled/editable. Omit to leave this control enabled; applying this file back won't disable it.",
                               "type": "boolean"
                             },
+                            "isRequired": {
+                              "description": "Only present when true — this field is forced \"Business Required\" on this form specifically, independent of the column's own metadata-level requirement level. Omit for the common case (no form-level override); applying this file back won't add one.",
+                              "type": "boolean"
+                            },
                             "visible": {
                               "description": "Only present when false — a deliberately hidden field, distinct from one simply not on the form at all. Omit to leave this control visible; applying this file back won't hide it.",
+                              "type": "boolean"
+                            },
+                            "showLabel": {
+                              "description": "Only present when false — this control's own field label is deliberately hidden (common on a subgrid, which already shows its own title bar and doesn't need a redundant label above it). Omit to leave this control's label shown; applying this file back won't hide it.",
+                              "type": "boolean"
+                            },
+                            "availableOnPhone": {
+                              "description": "Whether this control shows on the phone-optimized layout — FormXML's `availableforphone` attribute, shown exactly as stated rather than defaulted/stripped like this file's other booleans: which direction (true or false) is the common case for this specific attribute hasn't been confirmed against real tenant samples, so nothing is assumed either way. Absent when this control's FormXML doesn't set it at all.",
                               "type": "boolean"
                             },
                             "columnSpan": {
@@ -272,6 +309,18 @@
                             "id"
                           ]
                         }
+                      },
+                      "visible": {
+                        "description": "Only present when false — a deliberately hidden section, distinct from one simply not on the form at all. Omit to leave this section visible; applying this file back won't hide it.",
+                        "type": "boolean"
+                      },
+                      "showLabel": {
+                        "description": "Only present when false — this section's own header label is deliberately hidden. Omit to leave this section's label shown; applying this file back won't hide it.",
+                        "type": "boolean"
+                      },
+                      "availableOnPhone": {
+                        "description": "Whether this section shows on the phone-optimized layout — FormXML's `availableforphone` attribute, shown exactly as stated rather than defaulted/stripped: which direction is the common case hasn't been confirmed against real tenant samples, so nothing is assumed either way. Absent when this section's FormXML doesn't set it at all.",
+                        "type": "boolean"
                       }
                     },
                     "additionalProperties": false
@@ -280,6 +329,18 @@
               },
               "additionalProperties": false
             }
+          },
+          "visible": {
+            "description": "Only present when false — a deliberately hidden tab, distinct from one simply not on the form at all. Omit to leave this tab visible; applying this file back won't hide it.",
+            "type": "boolean"
+          },
+          "collapsible": {
+            "description": "Whether an end user can collapse/expand this tab — FormXML's `collapsible` attribute, shown exactly as stated rather than defaulted/stripped: which direction (true or false) is the common case hasn't been confirmed against real tenant samples, so nothing is assumed either way. Absent when this tab's FormXML doesn't set it at all.",
+            "type": "boolean"
+          },
+          "availableOnPhone": {
+            "description": "Whether this tab shows on the phone-optimized layout — FormXML's `availableforphone` attribute, shown exactly as stated rather than defaulted/stripped: which direction is the common case hasn't been confirmed against real tenant samples, so nothing is assumed either way. Absent when this tab's FormXML doesn't set it at all.",
+            "type": "boolean"
           }
         },
         "additionalProperties": false
@@ -302,6 +363,13 @@
           "label": {
             "description": "The field's display label on the form.",
             "type": "string"
+          },
+          "translations": {
+            "description": "This label's text in every language besides the one shown as Label, keyed by Dataverse's own languagecode (e.g. 1036 for French). Absent on a single-language tenant (the overwhelming common case) or when this control has only its own.",
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
           },
           "control": {
             "description": "Which control renders this cell — a Dataverse standard control by name, e.g. \"SingleLineText\", \"Lookup\", \"Subgrid\". Use customControlId instead for a custom/PCF control or one not in this list.",
@@ -338,12 +406,28 @@
             "description": "The control's raw Dataverse class id (a GUID), for a custom/PCF control or a standard one not yet recognized by name. Use control instead when the control is one of Dataverse's own standard ones.",
             "type": "string"
           },
+          "isUnbound": {
+            "description": "Only present when true — an unbound lookup control (its own `TargetEntities` parameter list names which tables it can point at, rather than the control being bound to a real relationship). Omit for an ordinary bound control; applying this file back won't unbind it.",
+            "type": "boolean"
+          },
           "disabled": {
             "description": "Only present when true — most controls on a form are enabled/editable. Omit to leave this control enabled; applying this file back won't disable it.",
             "type": "boolean"
           },
+          "isRequired": {
+            "description": "Only present when true — this field is forced \"Business Required\" on this form specifically, independent of the column's own metadata-level requirement level. Omit for the common case (no form-level override); applying this file back won't add one.",
+            "type": "boolean"
+          },
           "visible": {
             "description": "Only present when false — a deliberately hidden field, distinct from one simply not on the form at all. Omit to leave this control visible; applying this file back won't hide it.",
+            "type": "boolean"
+          },
+          "showLabel": {
+            "description": "Only present when false — this control's own field label is deliberately hidden (common on a subgrid, which already shows its own title bar and doesn't need a redundant label above it). Omit to leave this control's label shown; applying this file back won't hide it.",
+            "type": "boolean"
+          },
+          "availableOnPhone": {
+            "description": "Whether this control shows on the phone-optimized layout — FormXML's `availableforphone` attribute, shown exactly as stated rather than defaulted/stripped like this file's other booleans: which direction (true or false) is the common case for this specific attribute hasn't been confirmed against real tenant samples, so nothing is assumed either way. Absent when this control's FormXML doesn't set it at all.",
             "type": "boolean"
           },
           "columnSpan": {
@@ -497,6 +581,13 @@
             "description": "The field's display label on the form.",
             "type": "string"
           },
+          "translations": {
+            "description": "This label's text in every language besides the one shown as Label, keyed by Dataverse's own languagecode (e.g. 1036 for French). Absent on a single-language tenant (the overwhelming common case) or when this control has only its own.",
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
           "control": {
             "description": "Which control renders this cell — a Dataverse standard control by name, e.g. \"SingleLineText\", \"Lookup\", \"Subgrid\". Use customControlId instead for a custom/PCF control or one not in this list.",
             "type": "string",
@@ -532,12 +623,28 @@
             "description": "The control's raw Dataverse class id (a GUID), for a custom/PCF control or a standard one not yet recognized by name. Use control instead when the control is one of Dataverse's own standard ones.",
             "type": "string"
           },
+          "isUnbound": {
+            "description": "Only present when true — an unbound lookup control (its own `TargetEntities` parameter list names which tables it can point at, rather than the control being bound to a real relationship). Omit for an ordinary bound control; applying this file back won't unbind it.",
+            "type": "boolean"
+          },
           "disabled": {
             "description": "Only present when true — most controls on a form are enabled/editable. Omit to leave this control enabled; applying this file back won't disable it.",
             "type": "boolean"
           },
+          "isRequired": {
+            "description": "Only present when true — this field is forced \"Business Required\" on this form specifically, independent of the column's own metadata-level requirement level. Omit for the common case (no form-level override); applying this file back won't add one.",
+            "type": "boolean"
+          },
           "visible": {
             "description": "Only present when false — a deliberately hidden field, distinct from one simply not on the form at all. Omit to leave this control visible; applying this file back won't hide it.",
+            "type": "boolean"
+          },
+          "showLabel": {
+            "description": "Only present when false — this control's own field label is deliberately hidden (common on a subgrid, which already shows its own title bar and doesn't need a redundant label above it). Omit to leave this control's label shown; applying this file back won't hide it.",
+            "type": "boolean"
+          },
+          "availableOnPhone": {
+            "description": "Whether this control shows on the phone-optimized layout — FormXML's `availableforphone` attribute, shown exactly as stated rather than defaulted/stripped like this file's other booleans: which direction (true or false) is the common case for this specific attribute hasn't been confirmed against real tenant samples, so nothing is assumed either way. Absent when this control's FormXML doesn't set it at all.",
             "type": "boolean"
           },
           "columnSpan": {
@@ -689,6 +796,10 @@
           },
           "classId": {
             "description": "The field's raw control class id, if Dataverse records one for it.",
+            "type": "string"
+          },
+          "relationship": {
+            "description": "Ties this hidden field to a specific relationship, if Dataverse records one for it — FormXML's `relationship` attribute, alongside its sibling ClassId/Field on the same `<data>` element. Absent when this hidden field's FormXML doesn't set it.",
             "type": "string"
           }
         },

@@ -51,4 +51,31 @@
     <PackageReference Include="MinVer" Version="7.0.0" PrivateAssets="All" />
   </ItemGroup>
 
+  <!--
+    Regenerates schema/*.schema.json (see docs/DEVELOPING.md's "Schema"
+    section) from the just-built assembly after every ordinary build, so
+    a curated model's shape/doc-comment change can never silently drift
+    from the committed schema files the way it previously could when
+    `schema export` had to be remembered and run by hand.
+
+    Conditions:
+    - Skipped for the standalone win-x64 publish (`PublishSingleFile=true`,
+      see Properties/PublishProfiles/win-x64.pubxml): YamlSchemaGenerator
+      needs this assembly's generated XML doc file for descriptions, which
+      a single-file publish doesn't carry alongside it — this target only
+      ever runs against the ordinary multi-file build output, which always
+      does (GenerateDocumentationFile is set project-wide above). Both
+      `dotnet build` and an ordinary `dotnet publish` (no profile) still
+      produce that build output first and do trigger this.
+    - Skipped for a design-time build (what an IDE runs continually just
+      for IntelliSense, not a real build a developer asked for) - without
+      this, every keystroke-triggered background build would re-run and
+      rewrite these files.
+  -->
+  <Target Name="RegenerateSchemas" AfterTargets="Build" Condition="'$(PublishSingleFile)' != 'true' and '$(DesignTimeBuild)' != 'true'">
+    <Exec Command="dotnet &quot;$(TargetPath)&quot; schema export --for table" WorkingDirectory="$(MSBuildProjectDirectory)/.." />
+    <Exec Command="dotnet &quot;$(TargetPath)&quot; schema export --for view" WorkingDirectory="$(MSBuildProjectDirectory)/.." />
+    <Exec Command="dotnet &quot;$(TargetPath)&quot; schema export --for form" WorkingDirectory="$(MSBuildProjectDirectory)/.." />
+  </Target>
+
 </Project>

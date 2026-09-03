@@ -59,6 +59,8 @@ omit.
 | `FormDefinition` | `FormActivationState` | `1` / "Active" | Common case for any form actually in use (Inactive = an unpublished draft) |
 | `FormControl` | `Disabled` | `false` | Common case — most controls are enabled |
 | `FormControl` | `Visible` | `true` (**inverted** — see `FalseOrNull`) | Common case — most controls are visible; `false` confirmed live on 11 real fields across 5 forms |
+| `FormTab`, `FormSection` | `Visible` | `true` (**inverted** — see `FalseOrNull`) | Same structural argument as `FormControl.Visible`: FormXML's `<tab>`/`<section>` `visible` attribute is `xs:boolean`, optional, no XSD default — a tab/section is shown unless deliberately hidden, so omission means visible. Previously not modelled at all (not just unstripped-but-present — genuinely absent from `FormTab`/`FormSection`), so a hidden tab/section silently came back visible on every export/import round-trip until fixed. |
+| `FormControl`, `FormSection` | `ShowLabel` | `true` (**inverted** — see `FalseOrNull`) | Same story as `Visible` above, one attribute over: FormXML's cell-level and section-level `showlabel` is `xs:boolean`, optional, no XSD default — a label is shown unless deliberately hidden (common on a subgrid, which already has its own title bar). Also previously absent from both models entirely, so a hidden subgrid/section label silently came back shown on every round-trip until fixed. |
 | `FormDisplayCondition` | `FallbackForm` | `false` | At most one form per table can be the fallback, so `false` is definitionally the common case across a table's forms as a whole, not just an observed majority |
 | `FormControl` | `ColumnSpan`, `RowSpan` | `1` | FormXML's own `colspan`/`rowspan` attributes have no declared default, but `1` (no spanning) is overwhelmingly the common case; confirmed live on a single real form's 69 cells (64/69 `rowspan` and 63/69 `colspan` values were exactly `1`), with real, non-default spans (up to `rowspan="15"`, for a subgrid/timeline control deliberately laid out to occupy several otherwise-empty rows) shown whenever they occur |
 | `FormControl` | `Parameters` (every boolean value inside it) | `false` | See Rule 3 below — a different, stronger argument than the others in this table |
@@ -140,6 +142,39 @@ YAML, simply don't emit that XML element at all (don't write it as `false`
 explicitly) — either is correct, but omitting matches what export itself
 does.
 
+**Exception: anything inside a `data-set` node.** The "omitted ≡ false, so
+Dataverse can't tell the difference" argument above only holds for controls
+the static FormXml.xsd actually governs. A `data-set`-wrapped block belongs
+to a PCF custom control instead (e.g. `ActivityCalendarControl`'s
+`data-set name="Calendar"`), whose dataset binding Dataverse validates at
+import time against the control's own manifest, not this XSD — there,
+a boolean node's structural *presence* can itself be meaningful, not just
+its value. Confirmed live: a `data-set` missing `IsUserView` (present as
+`false` on export, stripped by this rule, never restored) was rejected on
+import with `The dataset 'Calendar' should contain ViewId, IsUserView, or
+both nodes` — the node's presence is what tells Dataverse whether `ViewId`
+refers to a system or a personal view, so dropping it isn't the no-op it is
+for the XSD-governed controls this rule was validated against.
+`ConvertToObject` tracks an `insideDataSet` flag through the recursion and
+never strips `false` once inside a `data-set` node, for exactly this reason.
+
+## Rule 4: capture verbatim, unstripped, when a default isn't confirmed yet
+
+`TrueOrNull`/`FalseOrNull` (Rule 1) both require the stripped direction to
+already be confirmed — against Microsoft's docs, or by aggregating real
+samples, or (Rule 3) by a structural argument. Several boolean attributes
+added to `FormTab`/`FormSection`/`FormControl` from a systematic XSD audit
+(`availableforphone` at all three levels, a tab's own `collapsible`) don't
+have that yet: no live sample has been seen with either value, so which
+direction is "the common case worth omitting" genuinely isn't known. Rather
+than guess (and risk repeating the exact mistake that made `IsUserView`,
+tab/section `visible`, and cell/section `showlabel` real bugs — assuming the
+wrong thing about what "omitted" means), these are modelled as plain
+nullable booleans shown exactly as FormXML states them, present only when
+the source XML actually sets the attribute at all, in either direction. Once
+a live sample confirms one direction is overwhelmingly common, these are
+candidates to move to `TrueOrNull`/`FalseOrNull` like their siblings.
+
 ## FormXML coverage audit
 
 FormXML is large enough that "does the reader handle everything in it" isn't
@@ -158,10 +193,16 @@ row is one of: captured, or a documented, deliberate decision not to —
 | `control`'s own `<parameters>` | ✅ Captured | every non-trivial control | Structural conversion, see Rule 2/3 |
 | `controlDescriptions`/`customControl` ("add a component") | ✅ Captured | several forms | `FormControl.AdditionalControls`, see `FormAdditionalControl` |
 | Cell `visible="false"` | ✅ Captured | 11 (5 forms) | `FormControl.Visible` |
+| Tab/section `visible="false"` | ✅ Captured | confirmed live (a hidden tab) | `FormTab.Visible`/`FormSection.Visible` — genuinely missing (not just unstripped) until this was found live: a hidden tab silently came back visible on every export/import round-trip, since neither model had a place to hold it at all |
+| Cell/section `showlabel="false"` | ✅ Captured | confirmed live (a hidden subgrid/section label) | `FormControl.ShowLabel`/`FormSection.ShowLabel` — same "genuinely missing" story as tab/section `visible` above, found the same way; a tab's own `showlabel` stays excluded (see the chrome-attributes row below) since hiding a tab's label isn't the same kind of content change |
 | A section's own `columns` attribute (sub-column count) | ✅ Captured | 4+ sections | `FormSection.Columns` |
 | Cell `colspan`/`rowspan` | ✅ Captured | 5 non-default spans on one real form (up to `rowspan="15"`) | `FormControl.ColumnSpan`/`RowSpan` — genuinely structural (how much visual space a control's cell occupies), not cosmetic; found via a live round-trip check, not the initial schema audit |
 | `ancestor` | ✅ Captured | 6 forms | `FormDefinition.Ancestor` |
-| `hiddencontrols` | ✅ Captured | 7 forms | `FormDefinition.HiddenFields` |
+| `hiddencontrols` | ✅ Captured | 7 forms | `FormDefinition.HiddenFields`, including its own `relationship` attribute (`FormHiddenField.Relationship`) — previously only 2 of its 3 attributes were captured, `relationship` silently wasn't |
+| Non-primary-language `<label>` entries (`languagecode`/`description`) | ✅ Captured | not yet seen on a live multi-language tenant, added defensively | `FormTab.Translations`/`FormSection.Translations`/`FormControl.Translations` — previously every translation but the primary (English/1033, or first) was silently discarded on export; genuine maker-authored text, not a stripped default, permanently lost on a multi-language tenant's every round-trip until this was found |
+| `availableforphone` (tab/section/cell) | ✅ Captured | not yet seen on a live sample, added defensively | `FormTab.AvailableOnPhone`/`FormSection.AvailableOnPhone`/`FormControl.AvailableOnPhone` — shown exactly as FormXML states it rather than defaulted/stripped like this file's other booleans: which direction is the common case at each of these three levels hasn't been confirmed live, so nothing is assumed |
+| `control`'s own `isunbound`/`isrequired` | ✅ Captured | not yet seen on a live sample, added defensively | `FormControl.IsUnbound`/`IsRequired`, `TrueOrNull` (same direction as `Disabled`) — an unbound lookup or a form-level "Business Required" override are both the deliberate, uncommon case |
+| A tab's own `collapsible` | ✅ Captured | not yet seen on a live sample, added defensively | `FormTab.Collapsible` — shown exactly as stated, not defaulted/stripped; unlike `showlabel`/`showbar`/etc. in the tab/section chrome row below, this is a real end-user interaction toggle (can this tab be collapsed at all), not a rendering hint |
 | `DisplayConditions` (incl. `Role`/`Everyone`) | ✅ Captured | 21 forms | `FormDefinition.DisplayCondition` |
 | `formLibraries` | ✅ Captured | 9 forms | `FormDefinition.Libraries` |
 | `events` (form-level) | ✅ Captured | 11 forms | `FormDefinition.Events` |
@@ -174,7 +215,8 @@ row is one of: captured, or a documented, deliberate decision not to —
 | `formparameters`, `externaldependencies` | 📝 Documented gap | 0 | Confirmed absent from every form checked |
 | A tab's own `tabheader`/`tabfooter` | 📝 Documented gap | 0 | Distinct from the form-level `header`/`footer` this tool already captures |
 | Form root's own display attributes (`showImage`, `shownavigationbar`, `maxWidth`, `hasmargin`, `headerdensity`, `showinformselector`) | 📝 Documented gap | present on every form | Chrome/rendering settings for the form shell, not its content — same reasoning as the already-excluded `formpresentation` |
-| Tab/section-level designer/rendering attributes (`locklevel`, `IsUserDefined`, `showlabel`, `showbar`, `layout`, `celllabelalignment`, `celllabelposition`, `labelwidth`, `labelid`, `verticallayout`, `expanded`) | 📝 Documented gap | present on every tab/section | Same "chrome, not content" reasoning as the form root's own display attributes above, just at the tab/section level instead — extending that exclusion explicitly rather than leaving it implicit |
+| Tab/section-level designer/rendering attributes (`locklevel`, `IsUserDefined`, `showbar`, `layout`, `celllabelalignment`, `celllabelposition`, `labelwidth`, `labelid`, `verticallayout`, `expanded`) | 📝 Documented gap | present on every tab/section | Same "chrome, not content" reasoning as the form root's own display attributes above, just at the tab/section level instead — extending that exclusion explicitly rather than leaving it implicit |
+| A tab's own `showlabel` | 📝 Documented gap | present on every tab | Unlike a section's or a cell's own `showlabel` (now captured — see below), a tab's label is its own tab-strip entry; hiding it produces an unlabeled tab rather than a meaningful content change, so this stays grouped with the tab/section chrome attributes above |
 | `control`'s own `indicationOfSubgrid="true"` | 📝 Documented gap | 3 (all subgrid controls) | Confirmed redundant with the control's own `classid`, which already identifies it as a subgrid — a designer-UI hint, not independent information |
 | Cell `auto` (e.g. `auto="false"`) | 📝 Documented gap | 3, always alongside a spanning subgrid cell | Meaning unconfirmed — possibly whether the cell's span was auto-computed vs. manually set; no counter-example seen to guess from |
 | `Handler`'s own `parameters` attribute (distinct from a control's `<parameters>` element) | 📝 Documented gap | every handler, always `""` | Same reasoning as `FormEvent.Active`/`FormEventHandler.Enabled` below: no observed non-empty value to show what omitting it would mean |
@@ -220,14 +262,22 @@ different claims, and a `form build-xml` validation warning about
 `headerdensity`/`showinformselector` reflects a real, pre-existing quirk of
 Dataverse itself, not a bug introduced by rebuilding it through this tool.
 
-**This specific pair of attributes is the only violation confirmed safe to
-treat this way — it does not generalize.** A different violation (an
-invalid child element inside a control's `<parameters>`) was once assumed
-harmless on the same "schema vs. real Dataverse output disagree sometimes"
-reasoning and turned out to make Dataverse's own write-time validation
-reject the request outright with a 400 — see `FormXmlValidationMessage.
-IsKnownHarmless` and the "Every rebuild is validated" section below for how
-that changed `form import`'s behavior.
+**This specific pair of attributes — plus one other, narrower, confirmed
+pattern — are the only violations safe to treat this way; it does not
+generalize.** A different violation (an invalid child element inside a
+control's `<parameters>`) was once assumed harmless on the same "schema vs.
+real Dataverse output disagree sometimes" reasoning and turned out to make
+Dataverse's own write-time validation reject the request outright with a
+400 — see `FormXmlValidationMessage.IsKnownHarmless` and the "Every rebuild
+is validated" section below for how that changed `form import`'s behavior.
+The other confirmed-safe pattern (the Timeline control's
+`UClientActivitiesConfigurationJSON`/`UClientNotesConfigurationJSON`, also
+missing from the vendored XSD) is *also* an invalid-child-element-in-
+`<parameters>` violation — the exact class of thing the previous sentence
+just warned isn't automatically safe — so it's confirmed by the user's own
+direct D365 admin knowledge of this specific pattern rather than (yet) an
+actual live `form import`; see `IsKnownHarmless`'s own doc comment for that
+distinction.
 
 ## Rule 4: raw platform identifiers are never guessed at
 
@@ -350,12 +400,18 @@ and real Dataverse output disagree sometimes" reasoning — except this one
 wasn't actually safe, and a real `form import` attempt failed with a raw
 Dataverse 400 (`0x80048425`, "does not conform to the required schema").
 So `FormXmlValidationMessage.IsKnownHarmless` is deliberately narrow: true
-only for the one specific, confirmed-safe `headerdensity`/
-`showinformselector` pattern, never inferred for anything that merely looks
-similar. `form import` treats every other violation as blocking by
-default, and `FormXmlValidationConsole` prints a confirmed-safe one in
-yellow, everything else in red, so the distinction is visible at a glance
-before you ever reach `--allow-schema-violations`.
+only for the specific, confirmed-safe `headerdensity`/`showinformselector`
+pattern and the Timeline control's
+`UClientActivitiesConfigurationJSON`/`UClientNotesConfigurationJSON`
+pattern, never inferred for anything that merely looks similar — that
+second pattern *is* the same "invalid child element inside `<parameters>`"
+shape that failed live in the incident two paragraphs up, which is
+precisely why it's confirmed by the user's own explicit, direct D365 admin
+confirmation rather than assumed by analogy to the first pattern. `form
+import` treats every other violation as blocking by default, and
+`FormXmlValidationConsole` prints a confirmed-safe one in yellow, everything
+else in red, so the distinction is visible at a glance before you ever
+reach `--allow-schema-violations`.
 
 **A second, different incident showed the same gap exists the other
 direction too — a missing attribute, not an extra element, and one the XSD
@@ -529,7 +585,7 @@ Dataverse environment.
 **Before that prompt is even reached, though: a non-confirmed-safe
 violation refuses the import outright** (exit code 1, no prompt at all)
 unless `--allow-schema-violations` is passed — see "Every rebuild is
-validated" above for exactly which one violation is exempt from this and
+validated" above for exactly which violations are exempt from this and
 why. `--yes` alone does not bypass it; skipping the confirmation prompt and
 accepting a real risk of a raw Dataverse 400 are deliberately two separate
 opt-ins; this actually happened via `form build-xml`/`form import`'s shared

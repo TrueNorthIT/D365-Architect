@@ -82,7 +82,7 @@ public sealed class ImportFormCommand(IAuthenticationService authenticationServi
 
             if (preview.IdentityMismatchWarning is not null)
             {
-                AnsiConsole.MarkupLine($"[yellow]Warning:[/] {preview.IdentityMismatchWarning.EscapeMarkup()}");
+                ErrorConsole.Warn($"Warning: {preview.IdentityMismatchWarning}");
                 AnsiConsole.WriteLine();
             }
 
@@ -119,27 +119,27 @@ public sealed class ImportFormCommand(IAuthenticationService authenticationServi
         }
         catch (AuthenticationRequiredException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message}[/]");
+            ErrorConsole.Print(ex);
             return 1;
         }
         catch (FormNotFoundException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message}[/]");
+            ErrorConsole.Print(ex);
             return 1;
         }
         catch (AmbiguousSystemFormException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message}[/]");
+            ErrorConsole.Print(ex);
             return 1;
         }
         catch (NotSupportedException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message}[/]");
+            ErrorConsole.Print(ex);
             return 1;
         }
         catch (HttpRequestException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message}[/]");
+            ErrorConsole.Print(ex);
             return 1;
         }
     }

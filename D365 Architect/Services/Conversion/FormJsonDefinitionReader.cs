@@ -165,6 +165,7 @@ public sealed class FormJsonDefinitionReader
     {
         Field = (string?)data.Attribute("datafieldname") ?? (string?)data.Attribute("id") ?? "",
         ClassId = (string?)data.Attribute("classid"),
+        Relationship = (string?)data.Attribute("relationship"),
     };
 
     private static FormDisplayCondition ParseDisplayCondition(XElement displayConditions) => new()
@@ -280,12 +281,21 @@ public sealed class FormJsonDefinitionReader
         }
     }
 
-    private static FormTab ParseTab(XElement tab, IReadOnlyDictionary<string, IReadOnlyList<FormAdditionalControl>> additionalControls) => new()
+    private static FormTab ParseTab(XElement tab, IReadOnlyDictionary<string, IReadOnlyList<FormAdditionalControl>> additionalControls)
     {
-        Name = (string?)tab.Attribute("name"),
-        Label = FirstLabelText(tab.Element("labels")),
-        Columns = tab.Element("columns")?.Elements("column").Select(column => ParseColumn(column, additionalControls)).ToList() ?? [],
-    };
+        var (label, translations) = ParseLabels(tab.Element("labels"));
+
+        return new FormTab
+        {
+            Name = (string?)tab.Attribute("name"),
+            Label = label,
+            Translations = translations,
+            Columns = tab.Element("columns")?.Elements("column").Select(column => ParseColumn(column, additionalControls)).ToList() ?? [],
+            Visible = DefaultValueConventions.FalseOrNull((bool?)tab.Attribute("visible")),
+            Collapsible = (bool?)tab.Attribute("collapsible"),
+            AvailableOnPhone = (bool?)tab.Attribute("availableforphone"),
+        };
+    }
 
     private static FormColumn ParseColumn(XElement column, IReadOnlyDictionary<string, IReadOnlyList<FormAdditionalControl>> additionalControls) => new()
     {
@@ -293,16 +303,25 @@ public sealed class FormJsonDefinitionReader
         Sections = column.Element("sections")?.Elements("section").Select(section => ParseSection(section, additionalControls)).ToList() ?? [],
     };
 
-    private static FormSection ParseSection(XElement section, IReadOnlyDictionary<string, IReadOnlyList<FormAdditionalControl>> additionalControls) => new()
+    private static FormSection ParseSection(XElement section, IReadOnlyDictionary<string, IReadOnlyList<FormAdditionalControl>> additionalControls)
     {
-        Name = (string?)section.Attribute("name"),
-        Label = FirstLabelText(section.Element("labels")),
-        // The section's own "columns" attribute is a string of one digit
-        // per sub-column (e.g. "11" = 2 equal columns) rather than a number
-        // to parse — its length, not its numeric value, is the column count.
-        Columns = (string?)section.Attribute("columns") is { Length: > 1 } columns ? columns.Length : null,
-        Controls = ParseControls(section, additionalControls),
-    };
+        var (label, translations) = ParseLabels(section.Element("labels"));
+
+        return new FormSection
+        {
+            Name = (string?)section.Attribute("name"),
+            Label = label,
+            Translations = translations,
+            // The section's own "columns" attribute is a string of one digit
+            // per sub-column (e.g. "11" = 2 equal columns) rather than a number
+            // to parse — its length, not its numeric value, is the column count.
+            Columns = (string?)section.Attribute("columns") is { Length: > 1 } columns ? columns.Length : null,
+            Controls = ParseControls(section, additionalControls),
+            Visible = DefaultValueConventions.FalseOrNull((bool?)section.Attribute("visible")),
+            ShowLabel = DefaultValueConventions.FalseOrNull((bool?)section.Attribute("showlabel")),
+            AvailableOnPhone = (bool?)section.Attribute("availableforphone"),
+        };
+    }
 
     /// <summary>
     /// Reads the `&lt;cell&gt;`/`&lt;control&gt;` pairs out of a container's
@@ -336,12 +355,14 @@ public sealed class FormJsonDefinitionReader
         var uniqueId = (string?)control!.Attribute("uniqueid");
         var rawClassId = (string?)control.Attribute("classid");
         var friendlyControl = rawClassId is not null ? StandardFormControls.TryGetFriendlyName(rawClassId) : null;
+        var (label, translations) = ParseLabels(cell.Element("labels"));
 
         return new FormControl
         {
             Id = id,
             Field = (string?)control.Attribute("datafieldname"),
-            Label = FirstLabelText(cell.Element("labels")),
+            Label = label,
+            Translations = translations,
             // A recognized standard control's classid becomes Control (the
             // friendly name); anything else keeps the raw classid under
             // CustomControlId instead — never both, and the legacy ClassId
@@ -350,8 +371,12 @@ public sealed class FormJsonDefinitionReader
             // own doc comment for how "recognized" was actually confirmed.
             Control = friendlyControl,
             CustomControlId = rawClassId is not null && friendlyControl is null ? rawClassId : null,
+            IsUnbound = DefaultValueConventions.TrueOrNull((string?)control.Attribute("isunbound") == "true"),
             Disabled = DefaultValueConventions.TrueOrNull((string?)control.Attribute("disabled") == "true"),
+            IsRequired = DefaultValueConventions.TrueOrNull((string?)control.Attribute("isrequired") == "true"),
             Visible = DefaultValueConventions.FalseOrNull((bool?)cell.Attribute("visible")),
+            ShowLabel = DefaultValueConventions.FalseOrNull((bool?)cell.Attribute("showlabel")),
+            AvailableOnPhone = (bool?)cell.Attribute("availableforphone"),
             ColumnSpan = (int?)cell.Attribute("colspan") is { } colspan and > 1 ? colspan : null,
             RowSpan = (int?)cell.Attribute("rowspan") is { } rowspan and > 1 ? rowspan : null,
             Parameters = control.Element("parameters") is { } parameters ? ConvertToObject(parameters) : null,
@@ -405,13 +430,14 @@ public sealed class FormJsonDefinitionReader
     ///   child element of the same name — not seen in practice, but a
     ///   known, accepted trade-off of choosing readability over an
     ///   unambiguous-but-cryptic marker like `@`/`#`.)
-    /// - A literal "false" (case-insensitive) is dropped. Unlike these
-    ///   parameters' other values (strings, GUIDs, numbers — no reliable
-    ///   source says what any of those default to), a boolean has only two
-    ///   possible states: every one of these parameters is declared
-    ///   `type="xs:boolean" minOccurs="0"` with no XSD default, and every
-    ///   sample gathered from a real tenant agrees "false" is either the
-    ///   only value seen or the overwhelming majority — so omitting the
+    /// - A literal "false" (case-insensitive) is dropped — except anywhere
+    ///   inside a `data-set` node (see <paramref name="insideDataSet"/>).
+    ///   Unlike these parameters' other values (strings, GUIDs, numbers —
+    ///   no reliable source says what any of those default to), a boolean
+    ///   has only two possible states: every one of these parameters is
+    ///   declared `type="xs:boolean" minOccurs="0"` with no XSD default, and
+    ///   every sample gathered from a real tenant agrees "false" is either
+    ///   the only value seen or the overwhelming majority — so omitting the
     ///   element (this tool's own choice, not the schema's) and writing it
     ///   as false come to the same thing either way. "true" is always kept,
     ///   so the meaningful, deliberately-set state is never hidden — and
@@ -420,9 +446,30 @@ public sealed class FormJsonDefinitionReader
     ///   all the way up to <see cref="FormControl.Parameters"/> itself
     ///   coming back null when a control's whole parameter block was just
     ///   defaults.
+    ///
+    ///   That "omitted ≡ false" equivalence only holds for controls the
+    ///   static FormXml.xsd actually governs (subgrid, quick view, etc.) —
+    ///   a `data-set`-wrapped block belongs to a PCF custom control (e.g.
+    ///   `ActivityCalendarControl`'s `data-set name="Calendar"`), whose
+    ///   dataset binding Dataverse validates at import time against the
+    ///   control's own manifest, not this XSD. Confirmed live: a `data-set`
+    ///   missing `IsUserView` (present as `false` on export, stripped by
+    ///   this same rule, and never restored) was rejected on import with
+    ///   `The dataset 'Calendar' should contain ViewId, IsUserView, or both
+    ///   nodes` — there, the node's structural *presence* disambiguates
+    ///   what `ViewId` even refers to (a system vs. a personal view), so
+    ///   dropping it is not the no-op it is for the XSD-governed controls
+    ///   this rule was validated against. So `false` is preserved for every
+    ///   element/attribute anywhere under a `data-set` node.
     /// See <see cref="FormControl.Parameters"/>.
     /// </summary>
-    private static object? ConvertToObject(XElement element)
+    /// <param name="element">The FormXML element to convert.</param>
+    /// <param name="insideDataSet">
+    /// True once recursion has entered a `data-set` node (and for all of its
+    /// descendants) — see the "omitted ≡ false" note above for why `false`
+    /// stripping is unsafe there and must not apply.
+    /// </param>
+    private static object? ConvertToObject(XElement element, bool insideDataSet = false)
     {
         var children = element.Elements().ToList();
         var attributes = element.Attributes().ToList();
@@ -450,16 +497,16 @@ public sealed class FormJsonDefinitionReader
                 // doc comment for why that distinction matters.
                 return new Dictionary<string, object>
                 {
-                    ["xml"] = new Dictionary<string, object> { [embedded.Name.LocalName] = ConvertToObject(embedded) ?? "" },
+                    ["xml"] = new Dictionary<string, object> { [embedded.Name.LocalName] = ConvertToObject(embedded, insideDataSet) ?? "" },
                 };
             }
 
-            return IsFalse(value) ? null : value;
+            return !insideDataSet && IsFalse(value) ? null : value;
         }
 
         var map = new Dictionary<string, object>();
 
-        var keptAttributes = attributes.Where(a => !IsFalse(a.Value)).ToDictionary(a => a.Name.LocalName, object (a) => a.Value);
+        var keptAttributes = attributes.Where(a => insideDataSet || !IsFalse(a.Value)).ToDictionary(a => a.Name.LocalName, object (a) => a.Value);
         if (keptAttributes.Count > 0)
         {
             map["attributes"] = keptAttributes;
@@ -467,7 +514,7 @@ public sealed class FormJsonDefinitionReader
 
         if (children.Count == 0)
         {
-            if (!string.IsNullOrEmpty(element.Value) && !IsFalse(element.Value))
+            if (!string.IsNullOrEmpty(element.Value) && (insideDataSet || !IsFalse(element.Value)))
             {
                 map["value"] = element.Value;
             }
@@ -477,7 +524,8 @@ public sealed class FormJsonDefinitionReader
 
         foreach (var group in children.GroupBy(child => child.Name.LocalName))
         {
-            var values = group.Select(ConvertToObject).Where(value => value is not null).Select(value => value!).ToList();
+            var childInsideDataSet = insideDataSet || group.Key == "data-set";
+            var values = group.Select(child => ConvertToObject(child, childInsideDataSet)).Where(value => value is not null).Select(value => value!).ToList();
             if (values.Count == 0)
             {
                 continue;
@@ -491,18 +539,40 @@ public sealed class FormJsonDefinitionReader
 
     private static bool IsFalse(string value) => string.Equals(value, "false", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>Picks the English (1033) entry from a FormXML `&lt;labels&gt;` container, falling back to whichever entry comes first if English isn't present. Blank labels (common on unlabeled/spacer cells) are treated as no label.</summary>
-    private static string? FirstLabelText(XElement? labels)
+    /// <summary>
+    /// Reads every language's text out of a FormXML `&lt;labels&gt;`
+    /// container. The primary text is the English (1033) entry, falling
+    /// back to whichever entry comes first if English isn't present (same
+    /// tie-break this always used); every other entry's text comes back
+    /// under <c>Translations</c>, keyed by its own languagecode. Blank
+    /// labels (common on unlabeled/spacer cells) are treated as no label.
+    /// </summary>
+    /// <remarks>
+    /// Previously this only ever kept the primary entry, silently
+    /// discarding every other language's translation on export — confirmed
+    /// as a real gap, not a stripped default: on a multi-language tenant
+    /// that's genuine maker-authored text, permanently lost on every
+    /// round-trip until this was fixed.
+    /// </remarks>
+    private static (string? Label, IReadOnlyDictionary<int, string>? Translations) ParseLabels(XElement? labels)
     {
         if (labels is null)
         {
-            return null;
+            return (null, null);
         }
 
         var entries = labels.Elements("label").ToList();
-        var english = entries.FirstOrDefault(e => (string?)e.Attribute("languagecode") == "1033");
-        var text = (string?)(english ?? entries.FirstOrDefault())?.Attribute("description");
-        return string.IsNullOrEmpty(text) ? null : text;
+        var primary = entries.FirstOrDefault(e => (string?)e.Attribute("languagecode") == "1033") ?? entries.FirstOrDefault();
+        var primaryText = (string?)primary?.Attribute("description");
+        var label = string.IsNullOrEmpty(primaryText) ? null : primaryText;
+
+        var translations = entries
+            .Where(e => e != primary)
+            .Select(e => (LanguageCode: (int?)e.Attribute("languagecode"), Text: (string?)e.Attribute("description")))
+            .Where(e => e.LanguageCode is not null && !string.IsNullOrEmpty(e.Text))
+            .ToDictionary(e => e.LanguageCode!.Value, e => e.Text!);
+
+        return (label, translations.Count > 0 ? translations : null);
     }
 
     private static IReadOnlyList<T>? NullIfEmpty<T>(IReadOnlyList<T>? items) => items is { Count: > 0 } ? items : null;

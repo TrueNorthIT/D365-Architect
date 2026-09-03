@@ -23,7 +23,7 @@ public sealed class LoginCommand(IAuthenticationService authenticationService) :
     {
         if (!Uri.TryCreate(settings.Url, UriKind.Absolute, out var environmentUrl) || environmentUrl.Scheme != Uri.UriSchemeHttps)
         {
-            AnsiConsole.MarkupLine($"[red]'{settings.Url}' is not a valid https:// environment URL.[/]");
+            ErrorConsole.Print($"'{settings.Url}' is not a valid https:// environment URL.");
             return 1;
         }
 
@@ -37,7 +37,7 @@ public sealed class LoginCommand(IAuthenticationService authenticationService) :
         }
         catch (AuthenticationRequiredException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message}[/]");
+            ErrorConsole.Print(ex);
             return 1;
         }
     }

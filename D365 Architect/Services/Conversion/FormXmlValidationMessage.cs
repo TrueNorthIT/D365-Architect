@@ -42,18 +42,38 @@ public sealed record FormXmlValidationMessage(XmlSeverityType Severity, int Line
 {
     /// <summary>
     /// True only for the exact, specifically-confirmed-safe violation
-    /// pattern: an undeclared <c>headerdensity</c>/<c>showinformselector</c>
+    /// patterns:
+    /// <list type="bullet">
+    /// <item>An undeclared <c>headerdensity</c>/<c>showinformselector</c>
     /// attribute on the form root — real, live Dataverse-produced FormXML
     /// already carries both on every form checked, and re-submitting them
     /// unchanged (this tool never touches either) has been confirmed not to
-    /// be rejected. Every other violation — including one that looks
-    /// structurally similar, e.g. a different undeclared attribute
-    /// elsewhere, or any invalid child element — is <em>not</em> assumed
-    /// safe by extension: a genuine "invalid child element" violation (a
-    /// stray <c>TypeName</c> inside a control's own <c>&lt;parameters&gt;</c>,
+    /// be rejected.</item>
+    /// <item>An invalid <c>UClientActivitiesConfigurationJSON</c>/
+    /// <c>UClientNotesConfigurationJSON</c> child element inside the
+    /// Timeline control's own <c>&lt;parameters&gt;</c>
+    /// (<c>UnifiedClientTimelineWallParameters</c> in the XSD) — the
+    /// standard, Microsoft-shipped default per-activity-type JSON config
+    /// that control ships with on effectively every entity form with a
+    /// timeline, found byte-identical across two independently-exported
+    /// real forms. The vendored XSD (downloaded a point in time, see
+    /// `Resources/FormXmlSchema/NOTICE.md`) simply doesn't declare either
+    /// element for that control — not this tool's own writer inventing or
+    /// mangling anything, since both are round-tripped verbatim from what
+    /// export captured. Confirmed safe by the user's own direct D365 admin
+    /// knowledge of this specific pattern, not (yet) by an actual live
+    /// Dataverse write — narrower than that bar the rest of this list holds
+    /// to, so treat this one entry with a bit more caution than the others
+    /// if it ever needs revisiting.</item>
+    /// </list>
+    /// Every other violation — including one that looks structurally
+    /// similar, e.g. a different undeclared attribute elsewhere, or any
+    /// other invalid child element — is <em>not</em> assumed safe by
+    /// extension: a genuine "invalid child element" violation (a stray
+    /// <c>TypeName</c> inside a control's own <c>&lt;parameters&gt;</c>,
     /// confirmed live) was once waved through on the same "schema vs. real
-    /// Dataverse output disagree sometimes" reasoning that only this one
-    /// pattern actually earned, and Dataverse's own write-time validation
+    /// Dataverse output disagree sometimes" reasoning that only the patterns
+    /// above actually earned, and Dataverse's own write-time validation
     /// rejected it outright with a 400. A second, separate incident showed
     /// the same gap the other direction — Dataverse rejecting a control
     /// with no <c>classid</c> ("The class id cannot be null for control
@@ -68,5 +88,7 @@ public sealed record FormXmlValidationMessage(XmlSeverityType Severity, int Line
     /// </summary>
     public bool IsKnownHarmless =>
         Message.Contains("'headerdensity'", StringComparison.Ordinal) ||
-        Message.Contains("'showinformselector'", StringComparison.Ordinal);
+        Message.Contains("'showinformselector'", StringComparison.Ordinal) ||
+        Message.Contains("'UClientActivitiesConfigurationJSON'", StringComparison.Ordinal) ||
+        Message.Contains("'UClientNotesConfigurationJSON'", StringComparison.Ordinal);
 }

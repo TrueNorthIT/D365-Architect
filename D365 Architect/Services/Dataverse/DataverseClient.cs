@@ -12,6 +12,17 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
+    // System.Net.Http.Json's JsonContent.Create camelCases property names by
+    // default when no options are given (confirmed live: {"ParameterXml": ...}
+    // came out on the wire as {"parameterXml": ...}, which Dataverse's
+    // PublishXml action then rejected as an unrecognised parameter — Dataverse
+    // Web API property/parameter names are case-sensitive and not
+    // consistently camelCase, e.g. PublishXmlRequest.ParameterXml is PascalCase
+    // while systemforms' own formxml attribute is already all-lowercase).
+    // Anonymous-object request bodies need their member names sent exactly as
+    // written, so they go through this instead of the implicit default.
+    private static readonly JsonSerializerOptions VerbatimJsonOptions = new();
+
     public async Task<WhoAmIResult> WhoAmIAsync(Uri environmentUrl, string accessToken, CancellationToken cancellationToken)
     {
         using var request = CreateRequest(environmentUrl, "WhoAmI", accessToken);
@@ -228,7 +239,7 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
     public async Task UpdateSystemFormXmlAsync(Uri environmentUrl, string accessToken, Guid formId, string formXml, CancellationToken cancellationToken)
     {
         using var request = CreateRequest(environmentUrl, $"systemforms({formId})", accessToken, HttpMethod.Patch);
-        request.Content = JsonContent.Create(new { formxml = formXml });
+        request.Content = JsonContent.Create(new { formxml = formXml }, options: VerbatimJsonOptions);
 
         using var response = await httpClient.SendAsync(request, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);
@@ -246,7 +257,7 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
                 new XElement("entity", entityLogicalName))).ToString(SaveOptions.DisableFormatting);
 
         using var request = CreateRequest(environmentUrl, "PublishXml", accessToken, HttpMethod.Post);
-        request.Content = JsonContent.Create(new { ParameterXml = parameterXml });
+        request.Content = JsonContent.Create(new { ParameterXml = parameterXml }, options: VerbatimJsonOptions);
 
         using var response = await httpClient.SendAsync(request, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);

@@ -1,6 +1,5 @@
 using D365Architect.Services.Conversion;
 using D365Architect.Services.Conversion.Models;
-using Spectre.Console;
 
 namespace D365Architect.Commands.Table;
 
@@ -11,7 +10,7 @@ internal static class EntityYamlFileReader
     {
         if (!File.Exists(path))
         {
-            AnsiConsole.MarkupLine($"[red]'{path}' doesn't exist.[/]");
+            ErrorConsole.Print($"'{path}' doesn't exist.");
             return null;
         }
 
@@ -22,7 +21,7 @@ internal static class EntityYamlFileReader
         }
         catch (YamlDotNet.Core.YamlException ex)
         {
-            AnsiConsole.MarkupLine($"[red]Couldn't parse '{path}' as a table:[/] {ex.Message}");
+            ErrorConsole.Print($"Couldn't parse '{path}' as a table: {ex.Message}");
             return null;
         }
     }
