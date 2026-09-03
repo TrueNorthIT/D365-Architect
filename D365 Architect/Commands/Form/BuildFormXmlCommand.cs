@@ -69,7 +69,7 @@ public sealed class BuildFormXmlCommand(IAuthenticationService authenticationSer
 
             if (result.IdentityMismatchWarning is not null)
             {
-                AnsiConsole.MarkupLine($"[yellow]Warning:[/] {result.IdentityMismatchWarning.EscapeMarkup()}");
+                ErrorConsole.Warn($"Warning: {result.IdentityMismatchWarning}");
             }
 
             FormXmlValidationConsole.PrintViolations(FormXmlValidator.Validate(result.FormXml));
@@ -82,22 +82,22 @@ public sealed class BuildFormXmlCommand(IAuthenticationService authenticationSer
         }
         catch (AuthenticationRequiredException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message.EscapeMarkup()}[/]");
+            ErrorConsole.Print(ex);
             return 1;
         }
         catch (AmbiguousSystemFormException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message.EscapeMarkup()}[/]");
+            ErrorConsole.Print(ex);
             return 1;
         }
         catch (NotSupportedException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message.EscapeMarkup()}[/]");
+            ErrorConsole.Print(ex);
             return 1;
         }
         catch (HttpRequestException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message.EscapeMarkup()}[/]");
+            ErrorConsole.Print(ex);
             return 1;
         }
         catch (System.Xml.XmlException ex)
@@ -106,7 +106,7 @@ public sealed class BuildFormXmlCommand(IAuthenticationService authenticationSer
             // stopping), this means FormXmlWriter itself produced XML that
             // isn't even well-formed — a real bug in this tool, not a
             // known Dataverse quirk.
-            AnsiConsole.MarkupLine($"[red]Rebuilt FormXML isn't well-formed XML — this is a bug in this tool, not the source YAML:[/] {ex.Message.EscapeMarkup()}");
+            ErrorConsole.Print($"Rebuilt FormXML isn't well-formed XML — this is a bug in this tool, not the source YAML: {ex.Message}");
             return 1;
         }
     }

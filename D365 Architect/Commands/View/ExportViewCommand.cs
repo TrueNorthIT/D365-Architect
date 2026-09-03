@@ -42,7 +42,7 @@ public sealed class ExportViewCommand(IAuthenticationService authenticationServi
 
             if (views.Count == 0)
             {
-                AnsiConsole.MarkupLine($"[yellow]No views found for '{settings.Table}'.[/]");
+                ErrorConsole.Warn($"No views found for '{settings.Table}'.");
                 return 0;
             }
 
@@ -63,22 +63,22 @@ public sealed class ExportViewCommand(IAuthenticationService authenticationServi
         }
         catch (AuthenticationRequiredException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message.EscapeMarkup()}[/]");
+            ErrorConsole.Print(ex);
             return 1;
         }
         catch (SolutionNotFoundException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message.EscapeMarkup()}[/]");
+            ErrorConsole.Print(ex);
             return 1;
         }
         catch (InvalidDataException ex)
         {
-            AnsiConsole.MarkupLine($"[red]Couldn't parse the view metadata for '{settings.Table.EscapeMarkup()}':[/] {ex.Message.EscapeMarkup()}");
+            ErrorConsole.Print($"Couldn't parse the view metadata for '{settings.Table}': {ex.Message}");
             return 1;
         }
         catch (HttpRequestException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message.EscapeMarkup()}[/]");
+            ErrorConsole.Print(ex);
             return 1;
         }
     }

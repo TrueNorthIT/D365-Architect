@@ -1,6 +1,5 @@
 using D365Architect.Services.Conversion;
 using D365Architect.Services.Conversion.Models;
-using Spectre.Console;
 
 namespace D365Architect.Commands.View;
 
@@ -11,7 +10,7 @@ internal static class ViewYamlFileReader
     {
         if (!File.Exists(path))
         {
-            AnsiConsole.MarkupLine($"[red]'{path}' doesn't exist.[/]");
+            ErrorConsole.Print($"'{path}' doesn't exist.");
             return null;
         }
 
@@ -22,7 +21,7 @@ internal static class ViewYamlFileReader
         }
         catch (YamlDotNet.Core.YamlException ex)
         {
-            AnsiConsole.MarkupLine($"[red]Couldn't parse '{path.EscapeMarkup()}' as a view:[/] {ex.Message.EscapeMarkup()}");
+            ErrorConsole.Print($"Couldn't parse '{path}' as a view: {ex.Message}");
             return null;
         }
     }

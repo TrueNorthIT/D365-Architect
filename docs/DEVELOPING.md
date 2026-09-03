@@ -92,14 +92,21 @@ PreviewAsync()                     // builds a preview: what would change, and w
 ```
 
 Errors are caught per-command and mapped to a plain red message
-(`AnsiConsole.MarkupLine($"[red]{ex.Message.EscapeMarkup()}[/]")`) plus exit
-code 1 — never a raw stack trace. `.EscapeMarkup()` matters here, not just as
-style: `ex.Message` can carry raw external content this tool doesn't control
-(a Dataverse HTTP error body, in particular) — an unescaped `[...]` sequence
-inside it makes Spectre.Console try to parse it as markup and throw its own
-unrelated `Could not find color or style '...'` error, masking whatever the
-real error was. Domain-specific exceptions (`FormNotFoundException`,
-`AmbiguousSystemFormException`, `AuthenticationRequiredException`, etc.) exist
+(`ErrorConsole.Print(ex)`, see `Commands/ErrorConsole.cs`) plus exit code 1 —
+never a raw stack trace. Route every error/warning message through
+`ErrorConsole.Print`/`Warn` rather than `AnsiConsole.MarkupLine` directly —
+`ex.Message` (and a file path, or a raw CLI argument) can carry external
+content this tool doesn't control (a Dataverse HTTP error body, in
+particular), and an unescaped `[...]` sequence inside it makes
+Spectre.Console try to parse it as markup and throw its own unrelated
+`Could not find color or style '...'` error, masking whatever the real error
+was — confirmed live once, before `ErrorConsole` existed and every call site
+had to remember `.EscapeMarkup()` by hand. `ErrorConsole` takes a plain
+interpolated string (`ErrorConsole.Print($"Couldn't parse '{path}' as a
+view: {ex.Message}")`) and escapes every interpolated value automatically —
+see its own doc comment for how. Domain-specific exceptions
+(`FormNotFoundException`, `AmbiguousSystemFormException`,
+`AuthenticationRequiredException`, etc.) exist
 specifically to give that message something meaningful to say.
 
 ## Services/

@@ -103,17 +103,17 @@ public sealed class ImportTableCommand(IAuthenticationService authenticationServ
         }
         catch (AuthenticationRequiredException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message.EscapeMarkup()}[/]");
+            ErrorConsole.Print(ex);
             return 1;
         }
         catch (InvalidDataException ex)
         {
-            AnsiConsole.MarkupLine($"[red]Couldn't parse the live metadata for '{entity.LogicalName.EscapeMarkup()}':[/] {ex.Message.EscapeMarkup()}");
+            ErrorConsole.Print($"Couldn't parse the live metadata for '{entity.LogicalName}': {ex.Message}");
             return 1;
         }
         catch (HttpRequestException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message.EscapeMarkup()}[/]");
+            ErrorConsole.Print(ex);
             return 1;
         }
     }
@@ -136,7 +136,7 @@ public sealed class ImportTableCommand(IAuthenticationService authenticationServ
         {
             foreach (var warning in plan.Warnings)
             {
-                AnsiConsole.MarkupLine($"[yellow]      ⚠ {warning.EscapeMarkup()}[/]");
+                ErrorConsole.Warn($"      ⚠ {warning}");
             }
         }
     }

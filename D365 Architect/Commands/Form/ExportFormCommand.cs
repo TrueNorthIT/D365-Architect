@@ -62,7 +62,7 @@ public sealed class ExportFormCommand(IAuthenticationService authenticationServi
 
             if (forms.Count == 0)
             {
-                AnsiConsole.MarkupLine($"[yellow]No form matching that id was found on '{settings.Table}'.[/]");
+                ErrorConsole.Warn($"No form matching that id was found on '{settings.Table}'.");
                 return 0;
             }
 
@@ -83,22 +83,22 @@ public sealed class ExportFormCommand(IAuthenticationService authenticationServi
         }
         catch (AuthenticationRequiredException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message.EscapeMarkup()}[/]");
+            ErrorConsole.Print(ex);
             return 1;
         }
         catch (SolutionNotFoundException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message.EscapeMarkup()}[/]");
+            ErrorConsole.Print(ex);
             return 1;
         }
         catch (InvalidDataException ex)
         {
-            AnsiConsole.MarkupLine($"[red]Couldn't parse the form metadata for '{settings.Table}':[/] {ex.Message}");
+            ErrorConsole.Print($"Couldn't parse the form metadata for '{settings.Table}': {ex.Message}");
             return 1;
         }
         catch (HttpRequestException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message.EscapeMarkup()}[/]");
+            ErrorConsole.Print(ex);
             return 1;
         }
     }
@@ -111,7 +111,7 @@ public sealed class ExportFormCommand(IAuthenticationService authenticationServi
 
         if (summaries.Count == 0)
         {
-            AnsiConsole.MarkupLine($"[yellow]No forms found for '{settings.Table}'.[/]");
+            ErrorConsole.Warn($"No forms found for '{settings.Table}'.");
             return null;
         }
 
