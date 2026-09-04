@@ -63,6 +63,12 @@ services.AddSingleton<IFormImportService, FormImportService>();
 services.AddSingleton<IViewImportService, ViewImportService>();
 services.AddSingleton<ITableImportService, TableImportService>();
 
+// The preview -> diff -> confirm -> apply flow shared by `form import`/
+// `table import`/`view import` (see ImportRunner's own doc comment) —
+// injected into each command like every other service here, rather than
+// shared via a base class they'd have to inherit from.
+services.AddSingleton<ImportRunner>();
+
 // 2. Hand that container to Spectre.Console.Cli via the TypeRegistrar/
 //    TypeResolver adapter, so every command is itself resolved through DI
 //    (constructor injection), rather than newed up directly.

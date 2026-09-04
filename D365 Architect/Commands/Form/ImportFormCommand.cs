@@ -1,6 +1,6 @@
 using System.ComponentModel;
-using D365Architect.Services.Authentication;
 using D365Architect.Services.Conversion;
+using D365Architect.Services.Conversion.Models;
 using D365Architect.Services.Dataverse;
 using Spectre.Console;
 using Spectre.Console.Cli;
@@ -8,7 +8,7 @@ using Spectre.Console.Cli;
 namespace D365Architect.Commands.Form;
 
 /// <summary>
-/// `d365architect form import --input account-main-form.form.yml [--yes]`
+/// `d365architect form import --input account-main-form.form.yml [--yes] [--whatif]`
 /// Writes a `*.form.yml` file's rebuilt FormXML directly back into
 /// Dataverse — straight from the YAML, not through `form build-xml` first.
 /// That command exists for a human to inspect/validate the rebuilt FormXML
@@ -28,7 +28,8 @@ namespace D365Architect.Commands.Form;
 /// own doc comment) — the concrete answer to "must have a way to check
 /// differences between client and server". Nothing is written until you
 /// confirm (or pass <c>--yes</c>), and if the two sides are identical,
-/// nothing is written at all.
+/// nothing is written at all. Pass <c>--whatif</c> to see just the diff and
+/// never be prompted or write anything at all.
 ///
 /// Only ever updates a form that already exists — matched by the YAML's own
 /// `formId` when it has one (immune to a rename or a name shared with
@@ -37,29 +38,28 @@ namespace D365Architect.Commands.Form;
 /// nothing matches, and refuses outright for a dashboard, same as
 /// `build-xml`.
 ///
-/// Publishes the form's owning table immediately after writing it — see
-/// <see cref="IFormImportService.ApplyAsync"/> and
-/// <see cref="Services.Dataverse.IDataverseClient.PublishEntityAsync"/> — so
-/// the change is visible to end users without a separate manual publish
+/// Publishes the form's owning table immediately after writing it — a
+/// separate <see cref="IFormImportService.PublishAsync"/> call this class
+/// itself makes right after <c>ApplyAsync</c> (see
+/// <see cref="Services.Dataverse.IDataverseClient.PublishEntityAsync"/>) —
+/// so the change is visible to end users without a separate manual publish
 /// step.
 ///
 /// What this doesn't do yet: detect that the live form changed since this
 /// YAML was last exported (only that it differs from what's about to be
 /// written) — see `docs/yaml-conventions.md`.
+///
+/// The shared preview → diff → confirm → apply flow itself lives in the
+/// injected <see cref="ImportRunner"/>, alongside `table import`/`view
+/// import` — this class supplies only what's actually different about a
+/// form: how to read/preview/apply it, its extra
+/// `--allow-schema-violations` gate, and its own exceptions.
 /// </summary>
-public sealed class ImportFormCommand(IAuthenticationService authenticationService, IFormImportService formImportService)
+public sealed class ImportFormCommand(IFormImportService formImportService, ImportRunner importRunner)
     : AsyncCommand<ImportFormCommand.Settings>
 {
-    public sealed class Settings : CommandSettings
+    public sealed class Settings : ImportSettingsBase
     {
-        [CommandOption("-i|--input <PATH>")]
-        [Description("Path to the *.form.yml file to import.")]
-        public required string Input { get; init; }
-
-        [CommandOption("-y|--yes")]
-        [Description("Skip the confirmation prompt and import immediately.")]
-        public bool Yes { get; init; }
-
         [CommandOption("--allow-schema-violations")]
         [Description("Proceed even if the rebuilt FormXML has a schema violation Dataverse might reject outright — see FormXmlValidationMessage.IsKnownHarmless. Off by default: a genuine 'invalid child element'/'invalid content' violation has been confirmed live to fail the write with a raw Dataverse 400, not just a cosmetic warning.")]
         public bool AllowSchemaViolations { get; init; }
@@ -67,81 +67,68 @@ public sealed class ImportFormCommand(IAuthenticationService authenticationServi
 
     protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
-        var form = await FormYamlFileReader.TryReadAsync(settings.Input, cancellationToken);
-        if (form is null)
+        var spec = new ImportFlowSpec<Settings, FormDefinition, FormImportPreview>
         {
-            return 1;
-        }
+            ReadInputAsync = (s, ct) => YamlFileReader.TryReadAsync(s.Input, "form", FormYamlDeserializer.FromYaml, ct),
 
-        try
-        {
-            var auth = await authenticationService.GetCurrentContextAsync(cancellationToken);
+            SubjectName = form => form.Name,
 
-            var preview = await AnsiConsole.Status().StartAsync($"Looking up '{form.Name}' and rebuilding its FormXML...",
-                async _ => await formImportService.PreviewAsync(auth.EnvironmentUrl, auth.AccessToken, form, cancellationToken));
+            PreviewStatusMessage = form => $"Looking up '{form.Name}' and rebuilding its FormXML...",
 
-            if (preview.IdentityMismatchWarning is not null)
+            OnPreviewBuilt = preview =>
             {
-                AnsiConsole.MarkupLine($"[yellow]Warning:[/] {preview.IdentityMismatchWarning.EscapeMarkup()}");
+                if (preview.IdentityMismatchWarning is not null)
+                {
+                    AnsiConsole.MarkupLine($"[yellow]Warning:[/] {preview.IdentityMismatchWarning.EscapeMarkup()}");
+                    AnsiConsole.WriteLine();
+                }
+            },
+
+            SkipBeforePrinting = preview => preview.HasChanges
+                ? null
+                : "the rebuilt FormXML already matches what's live in Dataverse. Nothing to import.",
+
+            PrintChanges = preview =>
+            {
+                DiffConsole.PrintDiff(TextDiff.Compute(DiffConsole.PrettyPrintXml(preview.ExistingComparableFormXml), DiffConsole.PrettyPrintXml(preview.NewFormXml)));
                 AnsiConsole.WriteLine();
-            }
 
-            if (!preview.HasChanges)
+                FormXmlValidationConsole.PrintViolations(preview.Violations);
+            },
+
+            BlockReason = (s, preview) =>
             {
-                AnsiConsole.MarkupLine("[green]No changes[/] — the rebuilt FormXML already matches what's live in Dataverse. Nothing to import.");
-                return 0;
-            }
+                var blockingViolations = preview.Violations.Where(v => !v.IsKnownHarmless).ToList();
+                if (blockingViolations.Count == 0 || s.AllowSchemaViolations)
+                {
+                    return null;
+                }
 
-            AnsiConsole.MarkupLine($"[bold]Changes for '{form.Name}':[/]");
-            DiffConsole.PrintDiff(TextDiff.Compute(DiffConsole.PrettyPrintXml(preview.ExistingComparableFormXml), DiffConsole.PrettyPrintXml(preview.NewFormXml)));
-            AnsiConsole.WriteLine();
+                return $"{blockingViolations.Count} schema violation(s) above aren't a confirmed-safe pattern — two that looked similarly harmless have already failed live with a raw Dataverse 400 ('parameters' rejecting an invalid child element; a control's missing ClassId), so this is blocked by default rather than left to a human to eyeball correctly every time. Pass [bold]--allow-schema-violations[/] to proceed anyway once you've checked these yourself.";
+            },
 
-            FormXmlValidationConsole.PrintViolations(preview.Violations);
+            ApplyStatusMessage = "Importing and publishing...",
 
-            var blockingViolations = preview.Violations.Where(v => !v.IsKnownHarmless).ToList();
-            if (blockingViolations.Count > 0 && !settings.AllowSchemaViolations)
+            ApplyAsync = async (auth, preview, ct) =>
             {
-                AnsiConsole.MarkupLine($"[red]Refusing to import.[/] {blockingViolations.Count} schema violation(s) above aren't a confirmed-safe pattern — two that looked similarly harmless have already failed live with a raw Dataverse 400 ('parameters' rejecting an invalid child element; a control's missing ClassId), so this is blocked by default rather than left to a human to eyeball correctly every time. Pass [bold]--allow-schema-violations[/] to proceed anyway once you've checked these yourself.");
-                return 1;
-            }
+                // PublishAsync is its own call, separate from ApplyAsync's
+                // shared write-only shape — see IFormImportService's own
+                // doc comment for why publishing doesn't fit
+                // IImportService<TInput,TPreview> the way table/view import
+                // (which never publish) do.
+                await formImportService.ApplyAsync(auth.EnvironmentUrl, auth.AccessToken, preview, ct);
+                await formImportService.PublishAsync(auth.EnvironmentUrl, auth.AccessToken, preview, ct);
+            },
 
-            if (!settings.Yes && !AnsiConsole.Confirm("Import these changes into Dataverse?", defaultValue: false))
+            PrintSuccess = (form, preview) => AnsiConsole.MarkupLine($"[green]Imported and published.[/] '{form.Name}' updated in Dataverse."),
+
+            FormatDomainException = (ex, form) => ex switch
             {
-                AnsiConsole.MarkupLine("[yellow]Aborted.[/] Nothing was written.");
-                return 0;
-            }
+                FormNotFoundException or AmbiguousSystemFormException or NotSupportedException => $"[red]{ex.Message}[/]",
+                _ => null,
+            },
+        };
 
-            await AnsiConsole.Status().StartAsync("Importing and publishing...",
-                async _ => await formImportService.ApplyAsync(auth.EnvironmentUrl, auth.AccessToken, preview, cancellationToken));
-
-            AnsiConsole.MarkupLine($"[green]Imported and published.[/] '{form.Name}' updated in Dataverse.");
-            return 0;
-        }
-        catch (AuthenticationRequiredException ex)
-        {
-            AnsiConsole.MarkupLine($"[red]{ex.Message}[/]");
-            return 1;
-        }
-        catch (FormNotFoundException ex)
-        {
-            AnsiConsole.MarkupLine($"[red]{ex.Message}[/]");
-            return 1;
-        }
-        catch (AmbiguousSystemFormException ex)
-        {
-            AnsiConsole.MarkupLine($"[red]{ex.Message}[/]");
-            return 1;
-        }
-        catch (NotSupportedException ex)
-        {
-            AnsiConsole.MarkupLine($"[red]{ex.Message}[/]");
-            return 1;
-        }
-        catch (HttpRequestException ex)
-        {
-            AnsiConsole.MarkupLine($"[red]{ex.Message}[/]");
-            return 1;
-        }
+        return await importRunner.RunAsync(settings, formImportService, spec, cancellationToken);
     }
-
 }

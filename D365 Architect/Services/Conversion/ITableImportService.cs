@@ -27,23 +27,17 @@ namespace D365Architect.Services.Conversion;
 /// prefix all come back as <see cref="AttributeImportAction.Invalid"/>
 /// rather than being attempted and left to Dataverse's own API error to
 /// explain.
+///
+/// <see cref="IImportService{TInput,TPreview}.ApplyAsync"/> applies every
+/// <see cref="AttributeImportAction.Create"/>/<see cref="AttributeImportAction.Update"/>
+/// plan in the preview, plus the table-level update if
+/// <see cref="TableImportPreview.TableUpdateBody"/> is set. It doesn't
+/// publish the change — Dataverse customizations still need publishing
+/// separately (see `docs/yaml-conventions.md`).
 /// </summary>
-public interface ITableImportService
-{
-    Task<TableImportPreview> PreviewAsync(Uri environmentUrl, string accessToken, EntityDefinition entity, CancellationToken cancellationToken);
+public interface ITableImportService : IImportService<EntityDefinition, TableImportPreview>;
 
-    /// <summary>
-    /// Applies every <see cref="AttributeImportAction.Create"/>/
-    /// <see cref="AttributeImportAction.Update"/> plan in
-    /// <paramref name="preview"/>, plus the table-level update if
-    /// <see cref="TableImportPreview.TableUpdateBody"/> is set. Doesn't
-    /// publish the change — Dataverse customizations still need publishing
-    /// separately (see `docs/yaml-conventions.md`).
-    /// </summary>
-    Task ApplyAsync(Uri environmentUrl, string accessToken, TableImportPreview preview, CancellationToken cancellationToken);
-}
-
-/// <summary>What (if anything) <see cref="ITableImportService.ApplyAsync"/> will do for one column.</summary>
+/// <summary>What (if anything) <see cref="IImportService{TInput,TPreview}.ApplyAsync"/> will do for one column.</summary>
 public enum AttributeImportAction
 {
     /// <summary>Present in the local YAML, not live yet — will be created.</summary>
