@@ -84,7 +84,18 @@ public sealed class ImportFormCommand(IFormImportService formImportService, Impo
                 }
             },
 
-            SkipBeforePrinting = preview => preview.HasChanges
+            // Confirmed live: StandardFormControls.Resolve deterministically
+            // prefers Control over CustomControlId when a control has both
+            // set, so a stray CustomControlId alongside an already-correct
+            // Control never changes the *rendered* FormXML — HasChanges
+            // alone would report "nothing to import" and never let
+            // PrintChanges/BlockReason below even look at the violation
+            // FormControlValidator already caught, leaving a genuinely
+            // broken control definition unreported indefinitely as long as
+            // nothing else about the form changes in the same edit. A
+            // blocking violation (not one that's IsKnownHarmless) always
+            // keeps this from skipping, regardless of HasChanges.
+            SkipBeforePrinting = preview => preview.HasChanges || preview.Violations.Any(v => !v.IsKnownHarmless)
                 ? null
                 : "the rebuilt FormXML already matches what's live in Dataverse. Nothing to import.",
 
