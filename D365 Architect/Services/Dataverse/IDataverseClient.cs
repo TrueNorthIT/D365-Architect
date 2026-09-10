@@ -32,7 +32,10 @@ public interface IDataverseClient
     /// <summary>
     /// Fetches every view (<c>savedquery</c>) defined against a table from
     /// the Web API, as raw JSON — the shape
-    /// <see cref="Conversion.ViewJsonDefinitionReader"/> reads.
+    /// <see cref="Conversion.ViewJsonDefinitionReader"/> reads. Reflects the
+    /// *published* state, same as <see cref="TryGetSavedQueryAsync"/> — see
+    /// <see cref="UpdateSavedQueryAsync"/>'s own doc comment for what that
+    /// means for a just-written, not-yet-published change.
     /// </summary>
     Task<string> GetViewDefinitionsJsonAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken);
 
@@ -168,6 +171,18 @@ public interface IDataverseClient
     /// (which <c>form import</c> now follows with its own call to
     /// <see cref="PublishEntityAsync"/>), <c>view import</c> doesn't call
     /// that either yet — a still-open gap, not a closed one, for views.
+    ///
+    /// Confirmed live, the same platform behavior <see cref="UpdateSystemFormXmlAsync"/>'s
+    /// own doc comment already notes for forms: a plain <c>savedqueries</c>
+    /// GET (what <see cref="TryGetSavedQueryAsync"/> reads, and what a
+    /// follow-up <c>view export</c> would use to verify this write) reflects
+    /// the *published* <c>fetchxml</c>/<c>layoutxml</c>, not necessarily a
+    /// write this method just made — the change genuinely took, but won't be
+    /// visible via a GET (this tool's own, or the Maker UI's) until
+    /// something publishes the table. The natural "import, then export to
+    /// confirm" workflow will look like the import silently reverted/didn't
+    /// take until that happens — worth knowing up front rather than
+    /// rediscovering it.
     /// </summary>
     Task UpdateSavedQueryAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, string? description, string? fetchXml, string? layoutXml, CancellationToken cancellationToken);
 

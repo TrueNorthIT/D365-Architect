@@ -24,7 +24,14 @@ namespace D365Architect.Commands.View;
 /// <see cref="IViewImportService"/>'s own doc comment for why.
 ///
 /// What this doesn't do yet: publish the change (Dataverse customizations
-/// still need publishing separately before end users see it).
+/// still need publishing separately before end users see it) — and
+/// confirmed live, that gap isn't just cosmetic for verification either: a
+/// plain <c>savedqueries</c> GET reflects the *published* state, so a
+/// follow-up `view export` won't show a just-written FetchXml/LayoutXml
+/// change until something publishes the table (same platform behavior
+/// documented on <see cref="Services.Dataverse.IDataverseClient.UpdateSavedQueryAsync"/>,
+/// confirmed for forms first — see <see cref="Services.Dataverse.IDataverseClient.UpdateSystemFormXmlAsync"/>).
+/// The write itself genuinely takes regardless.
 ///
 /// The shared preview → diff → confirm → apply flow itself lives in the
 /// injected <see cref="ImportRunner"/>, alongside `form import`/`table
@@ -66,7 +73,7 @@ public sealed class ImportViewCommand(IViewImportService viewImportService, Impo
             PrintSuccess = (view, preview) =>
             {
                 AnsiConsole.MarkupLine($"[green]Imported.[/] '{view.Name}' updated in Dataverse.");
-                AnsiConsole.MarkupLine("[grey]Note: this only updates the view's own fields — publish customizations separately (e.g. in the maker portal) before end users see the change; this tool doesn't publish yet.[/]");
+                AnsiConsole.MarkupLine("[grey]Note: this only updates the view's own fields — publish customizations separately (e.g. in the maker portal) before end users see the change; this tool doesn't publish yet. Until you do, a follow-up 'view export' won't show this change either — it reads the same unpublished state, not a sign the import failed.[/]");
             },
 
             FormatDomainException = (ex, view) => ex switch
