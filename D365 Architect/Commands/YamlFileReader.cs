@@ -28,7 +28,7 @@ internal static class YamlFileReader
         }
         catch (YamlDotNet.Core.YamlException ex)
         {
-            AnsiConsole.MarkupLine($"[red]Couldn't parse '{path}' as a {kind}:[/] {ex.Message}");
+            AnsiConsole.MarkupLine($"[red]Couldn't parse '{path}' as a {kind}:[/] {ex.Message.EscapeMarkup()}");
             return null;
         }
     }

@@ -71,7 +71,7 @@ public sealed class ImportViewCommand(IViewImportService viewImportService, Impo
 
             FormatDomainException = (ex, view) => ex switch
             {
-                ViewNotFoundException or AmbiguousSavedQueryException => $"[red]{ex.Message}[/]",
+                ViewNotFoundException or AmbiguousSavedQueryException => $"[red]{ex.Message.EscapeMarkup()}[/]",
                 _ => null,
             },
         };

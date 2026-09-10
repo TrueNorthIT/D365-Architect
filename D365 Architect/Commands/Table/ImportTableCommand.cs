@@ -92,7 +92,7 @@ public sealed class ImportTableCommand(ITableImportService tableImportService, I
 
             FormatDomainException = (ex, entity) => ex switch
             {
-                InvalidDataException => $"[red]Couldn't parse the live metadata for '{entity.LogicalName}':[/] {ex.Message}",
+                InvalidDataException => $"[red]Couldn't parse the live metadata for '{entity.LogicalName}':[/] {ex.Message.EscapeMarkup()}",
                 _ => null,
             },
         };

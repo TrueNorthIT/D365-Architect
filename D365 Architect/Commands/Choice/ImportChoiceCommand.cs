@@ -81,7 +81,7 @@ public sealed class ImportChoiceCommand(IGlobalChoiceImportService globalChoiceI
 
             FormatDomainException = (ex, choices) => ex switch
             {
-                InvalidDataException => $"[red]Couldn't parse the live metadata:[/] {ex.Message}",
+                InvalidDataException => $"[red]Couldn't parse the live metadata:[/] {ex.Message.EscapeMarkup()}",
                 _ => null,
             },
         };

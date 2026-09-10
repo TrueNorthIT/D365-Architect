@@ -124,7 +124,7 @@ public sealed class ImportFormCommand(IFormImportService formImportService, Impo
 
             FormatDomainException = (ex, form) => ex switch
             {
-                FormNotFoundException or AmbiguousSystemFormException or NotSupportedException => $"[red]{ex.Message}[/]",
+                FormNotFoundException or AmbiguousSystemFormException or NotSupportedException => $"[red]{ex.Message.EscapeMarkup()}[/]",
                 _ => null,
             },
         };

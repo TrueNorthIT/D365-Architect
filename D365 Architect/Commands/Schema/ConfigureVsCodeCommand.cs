@@ -86,7 +86,7 @@ public sealed class ConfigureVsCodeCommand : Command<ConfigureVsCodeCommand.Sett
             }
             catch (JsonException ex)
             {
-                AnsiConsole.MarkupLine($"[red]{settingsPath} isn't valid JSON — fix or remove it first, then re-run this command:[/] {ex.Message}");
+                AnsiConsole.MarkupLine($"[red]{settingsPath} isn't valid JSON — fix or remove it first, then re-run this command:[/] {ex.Message.EscapeMarkup()}");
                 return 1;
             }
 

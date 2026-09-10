@@ -118,6 +118,16 @@ public interface IDataverseClient
     /// Doesn't check for a concurrent modification either (no ETag/If-Match)
     /// — see `docs/yaml-conventions.md` for what "checking differences" does
     /// and doesn't cover today.
+    ///
+    /// Confirmed live: an ordinary <c>systemforms</c> GET (what
+    /// <see cref="TryGetSystemFormByIdAsync"/> reads) reflects the *published*
+    /// <c>formxml</c>, not necessarily a write this method just made — a
+    /// successful PATCH followed immediately by a GET, with no publish in
+    /// between, doesn't show the change yet. This is genuine Dataverse
+    /// platform behavior, not a bug here, and it's harmless in ordinary use
+    /// since <see cref="PublishEntityAsync"/> always runs immediately after
+    /// this — but it's exactly the kind of thing that looks like "my write
+    /// didn't take" if ever investigated between the two calls.
     /// </summary>
     Task UpdateSystemFormXmlAsync(Uri environmentUrl, string accessToken, Guid formId, string formXml, CancellationToken cancellationToken);
 
