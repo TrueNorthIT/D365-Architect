@@ -33,6 +33,21 @@ namespace D365Architect.Services.Dataverse;
 /// <see cref="BuildOptionChangePlans"/> for the separate action-based
 /// mechanism (<c>InsertOptionValue</c>/<c>UpdateOptionValue</c>/<c>OrderOption</c>/
 /// <c>UpdateStateValue</c>) that handles those instead.
+///
+/// <see cref="ApplyUpdateFields"/> also has to set <c>@odata.type</c> on the
+/// cloned body itself, for the same reason
+/// <see cref="GlobalChoiceMetadataJsonBuilder.ApplyUpdateFields"/> does
+/// (confirmed live there first): <see cref="IDataverseClient.GetAttributeMetadataJsonAsync"/>'s
+/// type-cast GET URL tells Dataverse how to *read* the response, but that
+/// context never comes back as part of the response body itself — so a
+/// clone of it, PUT back with no <c>@odata.type</c> of its own, leaves
+/// Dataverse to fall back to resolving the concrete subtype some other way,
+/// which then rejects whichever of that type's own properties don't belong
+/// on whatever it fell back to. Confirmed live on both Boolean (rejected
+/// <c>DefaultValue</c>) and Picklist (rejected a handful of formula-column
+/// properties, one at a time) — setting <c>@odata.type</c> explicitly,
+/// matching <see cref="BuildCreateBody"/>'s own expression for it, resolved
+/// both with no per-property stripping needed at all.
 /// </summary>
 public static class AttributeMetadataJsonBuilder
 {
@@ -79,9 +94,22 @@ public static class AttributeMetadataJsonBuilder
     /// attribute that doesn't exist live yet, and only for a type in
     /// <see cref="CreatableTypes"/>.
     /// </summary>
+    /// <param name="attribute">The column to create.</param>
+    /// <param name="globalOptionSetMetadataId">
+    /// Required (non-null) when <paramref name="attribute"/> is a Picklist/
+    /// MultiSelectPicklist with a <see cref="AttributeDefinition.GlobalOptionSetName"/>
+    /// — the target global choice's own <c>MetadataId</c>, resolved live by
+    /// the caller (<see cref="Conversion.TableImportService"/>, via
+    /// <see cref="Dataverse.IDataverseClient.TryGetGlobalOptionSetJsonAsync"/>)
+    /// before this method ever runs. Confirmed live that the attribute-create
+    /// endpoint's <c>GlobalOptionSet@odata.bind</c> only accepts a raw
+    /// MetadataId GUID here — the <c>Name=</c> alternate-key form that works
+    /// for other bind targets 500s with "Guid should contain 32 digits with
+    /// 4 dashes" for this one. Ignored for every other type/case.
+    /// </param>
     /// <exception cref="InvalidOperationException"><paramref name="attribute"/> has no <see cref="AttributeDefinition.SchemaName"/> — required to create a column, and never inferred.</exception>
     /// <exception cref="NotSupportedException"><paramref name="attribute"/>'s own <see cref="AttributeDefinition.Type"/> isn't in <see cref="CreatableTypes"/>.</exception>
-    public static JsonObject BuildCreateBody(AttributeDefinition attribute)
+    public static JsonObject BuildCreateBody(AttributeDefinition attribute, Guid? globalOptionSetMetadataId = null)
     {
         if (attribute.SchemaName is null)
         {
@@ -176,11 +204,20 @@ public static class AttributeMetadataJsonBuilder
 
                 if (attribute.GlobalOptionSetName is not null)
                 {
-                    // The alternate-key bind syntax Microsoft's own docs
-                    // confirm as equally valid to a MetadataId bind — avoids
-                    // this tool needing a separate lookup just to resolve a
-                    // name to an id first.
-                    body["GlobalOptionSet@odata.bind"] = $"/GlobalOptionSetDefinitions(Name='{attribute.GlobalOptionSetName}')";
+                    // Confirmed live: unlike other bind targets, the
+                    // attribute-create endpoint rejects the Name= alternate
+                    // key here — "Guid should contain 32 digits with 4
+                    // dashes" — even with the leading '/' present or absent.
+                    // Only a raw MetadataId GUID works, so the caller
+                    // (TableImportService) resolves it live first via
+                    // IDataverseClient.TryGetGlobalOptionSetJsonAsync and
+                    // passes it through here.
+                    if (globalOptionSetMetadataId is null)
+                    {
+                        throw new InvalidOperationException($"'{attribute.Name}' targets the global choice '{attribute.GlobalOptionSetName}', but its MetadataId was never resolved before building the create body.");
+                    }
+
+                    body["GlobalOptionSet@odata.bind"] = $"/GlobalOptionSetDefinitions({globalOptionSetMetadataId.Value:D})";
                 }
                 else
                 {
@@ -211,10 +248,24 @@ public static class AttributeMetadataJsonBuilder
     /// same as everywhere else in this tool — it's never treated as "reset
     /// to some default", since <paramref name="existing"/> already holds
     /// Dataverse's own current value there.
+    ///
+    /// Sets <c>@odata.type</c> explicitly, first — see this class's own
+    /// top-level doc comment for why <paramref name="existing"/> doesn't
+    /// already carry one despite coming from a type-cast GET, and what
+    /// Dataverse rejects if it's left unset. Confirmed live for Boolean and
+    /// Picklist specifically (both previously failed a plain-attribute
+    /// update with no <c>@odata.type</c>, rejecting a different property
+    /// each time, and both now succeed); not independently re-verified for
+    /// every other type in <see cref="SupportedTypes"/>, but there's no
+    /// reason to expect this more explicit body would regress any of them —
+    /// if anything the reverse, since they were only ever working via
+    /// whatever Dataverse happened to infer without it.
     /// </summary>
     /// <exception cref="NotSupportedException"><paramref name="attribute"/>'s own <see cref="AttributeDefinition.Type"/> isn't in <see cref="SupportedTypes"/>.</exception>
     public static void ApplyUpdateFields(JsonObject existing, AttributeDefinition attribute)
     {
+        existing["@odata.type"] = $"Microsoft.Dynamics.CRM.{attribute.Type}AttributeMetadata";
+
         if (attribute.DisplayName is not null)
         {
             existing["DisplayName"] = DataverseLabelJson.Build(attribute.DisplayName);
@@ -327,7 +378,12 @@ public static class AttributeMetadataJsonBuilder
                 break;
 
             // Options themselves are never set here — see this class's own
-            // doc comment and BuildOptionChangePlans.
+            // doc comment and BuildOptionChangePlans. (An earlier version of
+            // this case stripped a handful of formula-column-related
+            // properties that Dataverse was rejecting on PUT — that was
+            // treating a symptom of the missing @odata.type above, not the
+            // actual cause; no longer needed once @odata.type is set
+            // explicitly.)
             case "Picklist":
             case "MultiSelectPicklist":
                 break;

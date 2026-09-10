@@ -284,12 +284,21 @@ public sealed class EntityJsonDefinitionReader : IEntityDefinitionReader
                 FalseOptionLabel: DefaultValueConventions.BooleanOptionLabelOrNull(falseLabel, "False"));
         }
 
-        // Picklist / MultiSelectPicklist / Status: a local OptionSet has its
-        // own Options array; a global one instead has a Name and its own
-        // Options array on GlobalOptionSet, with OptionSet itself null —
-        // confirmed against Microsoft's own docs (a picklist attribute never
-        // has both at once).
-        if (root.TryGetProperty("GlobalOptionSet", out var globalOptionSet) && globalOptionSet.ValueKind == JsonValueKind.Object)
+        // Picklist / MultiSelectPicklist / Status: NOT simply "GlobalOptionSet
+        // present means global, OptionSet present means local" — confirmed
+        // live that a genuinely local (non-shared) option set can populate
+        // *both* OptionSet and GlobalOptionSet in the response, as literally
+        // the same object (identical MetadataId/Name/Options), with
+        // IsGlobal:false on both. The only reliable signal is GlobalOptionSet's
+        // own IsGlobal flag — a plain boolean on the object itself, not a
+        // managed-property-shaped {Value: ...} the way RequiredLevel is —
+        // so this only treats the attribute as global-choice-bound when
+        // GlobalOptionSet is present *and* IsGlobal is true; anything else
+        // (GlobalOptionSet absent, or present with IsGlobal false/missing)
+        // falls through to reading OptionSet as a local option set.
+        if (root.TryGetProperty("GlobalOptionSet", out var globalOptionSet)
+            && globalOptionSet.ValueKind == JsonValueKind.Object
+            && GetBool(globalOptionSet, "IsGlobal") == true)
         {
             return new OptionSetFields(Options: null, GlobalOptionSetName: GetString(globalOptionSet, "Name"), DefaultValue: null, TrueOptionLabel: null, FalseOptionLabel: null);
         }
@@ -340,7 +349,21 @@ public sealed class EntityJsonDefinitionReader : IEntityDefinitionReader
             ? GetLabel(option, "Label")
             : null;
 
-    /// <summary>Reads a Dataverse label object's English (or first available) display text.</summary>
+    /// <summary>
+    /// Reads a Dataverse label object's English (or first available) display
+    /// text. Normalizes line endings to <c>\n</c> — confirmed live that a
+    /// multi-line Description (e.g. a Marketing-authored global choice's own)
+    /// can come back with <c>\r\n</c>, which YAML's own block-scalar parsing
+    /// always normalizes to <c>\n</c> on the way back in (mandated by the
+    /// YAML spec, not a YamlDotNet quirk); left un-normalized here, a
+    /// completely unmodified re-export/re-import round-trip would forever
+    /// see a phantom difference — visually identical (<see cref="TextDiff"/>'s
+    /// own printed diff already normalizes for *display*, so it shows
+    /// nothing), but not <c>==</c>-equal — and re-plan a needless update on
+    /// every run. Normalizing here, at the one place every Label's text
+    /// enters this tool's own curated model, means no comparison or diff
+    /// downstream ever needs to special-case it.
+    /// </summary>
     private static string? GetLabel(JsonElement parent, string propertyName)
     {
         if (!parent.TryGetProperty(propertyName, out var label) || label.ValueKind != JsonValueKind.Object)
@@ -353,7 +376,7 @@ public sealed class EntityJsonDefinitionReader : IEntityDefinitionReader
             && userLabel.TryGetProperty("Label", out var text)
             && text.ValueKind == JsonValueKind.String)
         {
-            return text.GetString();
+            return NormalizeLineEndings(text.GetString());
         }
 
         if (label.TryGetProperty("LocalizedLabels", out var localizedLabels) && localizedLabels.ValueKind == JsonValueKind.Array)
@@ -361,12 +384,15 @@ public sealed class EntityJsonDefinitionReader : IEntityDefinitionReader
             var first = localizedLabels.EnumerateArray().FirstOrDefault();
             if (first.ValueKind == JsonValueKind.Object && first.TryGetProperty("Label", out var firstText) && firstText.ValueKind == JsonValueKind.String)
             {
-                return firstText.GetString();
+                return NormalizeLineEndings(firstText.GetString());
             }
         }
 
         return null;
     }
+
+    /// <summary>Normalizes <c>\r\n</c>/lone <c>\r</c> to <c>\n</c> — see <see cref="GetLabel"/>'s own doc comment for why.</summary>
+    private static string? NormalizeLineEndings(string? text) => text?.Replace("\r\n", "\n").Replace("\r", "\n");
 
     private static string? GetManagedPropertyString(JsonElement parent, string propertyName)
     {

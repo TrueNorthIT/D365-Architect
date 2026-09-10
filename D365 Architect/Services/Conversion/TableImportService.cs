@@ -155,7 +155,7 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
                     continue;
                 }
 
-                plans.Add(BuildCreatePlan(local.LogicalName, localAttribute));
+                plans.Add(await BuildCreatePlanAsync(environmentUrl, accessToken, local.LogicalName, localAttribute, cancellationToken));
                 continue;
             }
 
@@ -226,8 +226,15 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
     /// <see cref="AttributeMetadataJsonBuilder.BuildCustomerRelationshipCreateBody"/>.
     /// Everything else routes through the ordinary
     /// <see cref="AttributeMetadataJsonBuilder.CreatableTypes"/>-gated path.
+    /// Has to be async (unlike every other branch here, which needs nothing
+    /// from Dataverse to plan) for exactly one case: a new Picklist/
+    /// MultiSelectPicklist bound to an existing global choice needs that
+    /// choice's own live MetadataId before <see cref="AttributeMetadataJsonBuilder.BuildCreateBody"/>
+    /// can build a working bind — see that method's own doc comment on
+    /// <c>globalOptionSetMetadataId</c> for why a Name-based bind doesn't
+    /// work here.
     /// </summary>
-    private static AttributeImportPlan BuildCreatePlan(string entityLogicalName, AttributeDefinition local)
+    private async Task<AttributeImportPlan> BuildCreatePlanAsync(Uri environmentUrl, string accessToken, string entityLogicalName, AttributeDefinition local, CancellationToken cancellationToken)
     {
         if (local.Type is "Owner" or "State" or "Status")
         {
@@ -269,15 +276,36 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
             return new AttributeImportPlan(local.Name, AttributeImportAction.Invalid, validationError, null);
         }
 
+        // Only Picklist/MultiSelectPicklist can carry a GlobalOptionSetName
+        // (see ValidateOptionsForCreate) — resolved live here, rather than
+        // inside BuildCreateBody itself, since only this layer has
+        // dataverseClient access. A name that doesn't resolve live is a
+        // genuine, surfaced error rather than something left for Dataverse's
+        // own opaque bind failure to explain.
+        Guid? globalOptionSetMetadataId = null;
+        if (local.Type is "Picklist" or "MultiSelectPicklist" && local.GlobalOptionSetName is not null)
+        {
+            var globalChoiceJson = await dataverseClient.TryGetGlobalOptionSetJsonAsync(environmentUrl, accessToken, local.GlobalOptionSetName, cancellationToken);
+            if (globalChoiceJson is null)
+            {
+                return new AttributeImportPlan(local.Name, AttributeImportAction.Invalid,
+                    $"Global choice '{local.GlobalOptionSetName}' doesn't exist — create it first via `choice import`.", null);
+            }
+
+            globalOptionSetMetadataId = JsonNode.Parse(globalChoiceJson)!["MetadataId"]!.GetValue<Guid>();
+        }
+
         JsonObject body;
         try
         {
-            body = AttributeMetadataJsonBuilder.BuildCreateBody(local);
+            body = AttributeMetadataJsonBuilder.BuildCreateBody(local, globalOptionSetMetadataId);
         }
         catch (InvalidOperationException ex)
         {
             // Defensive fallback only — ValidateCreate already checks the
-            // one thing this can throw for (a missing SchemaName).
+            // one thing this can throw for (a missing SchemaName), and the
+            // globalOptionSetMetadataId case above is already resolved by
+            // the time this runs.
             return new AttributeImportPlan(local.Name, AttributeImportAction.Invalid, ex.Message, null);
         }
 

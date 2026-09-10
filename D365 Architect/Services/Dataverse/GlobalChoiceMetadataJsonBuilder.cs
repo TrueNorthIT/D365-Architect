@@ -62,11 +62,36 @@ internal static class GlobalChoiceMetadataJsonBuilder
     /// representation, fetched immediately beforehand so nothing this tool
     /// doesn't understand gets lost) in place, setting only
     /// <see cref="GlobalChoiceDefinition.DisplayName"/>/<see cref="GlobalChoiceDefinition.Description"/>
-    /// when <paramref name="local"/> actually specifies them. Never touches
-    /// <c>Options</c> — see this class's own top-level doc comment.
+    /// when <paramref name="local"/> actually specifies them. Never *writes*
+    /// <c>Options</c> — see this class's own top-level doc comment — but also
+    /// *strips* it from <paramref name="existing"/> if present, rather than
+    /// just leaving it untouched: <paramref name="existing"/> comes from
+    /// <see cref="Dataverse.IDataverseClient.TryGetGlobalOptionSetJsonAsync"/>,
+    /// whose <c>$select</c> deliberately includes <c>Options</c> for
+    /// <see cref="BuildOptionChangePlans"/>'s own diffing, so it's still
+    /// sitting on the cloned object by the time this runs. Confirmed live:
+    /// PUTting it back via <see cref="Dataverse.IDataverseClient.UpdateGlobalOptionSetAsync"/>
+    /// — a non-type-cast URL, i.e. the base <c>OptionSetMetadataBase</c> type
+    /// — 400s with "Invalid property 'Options' was found in entity
+    /// 'Microsoft.Dynamics.CRM.OptionSetMetadataBase'", since that base type
+    /// doesn't accept it at all.
+    ///
+    /// Also sets <c>@odata.type</c> explicitly, for the same
+    /// GET-URL-context-doesn't-carry-over-to-PUT reason: <paramref name="existing"/>
+    /// was fetched via the type-cast <c>.../Microsoft.Dynamics.CRM.OptionSetMetadata</c>
+    /// URL segment, but that segment only tells Dataverse how to *read* the
+    /// response — the JSON body itself never carries its own <c>@odata.type</c>
+    /// back. Without setting it explicitly here, PUTting the body as-is to
+    /// the non-type-cast <c>UpdateGlobalOptionSetAsync</c> URL leaves
+    /// Dataverse to infer the type from the URL alone, which resolves to the
+    /// abstract <c>OptionSetMetadataBase</c> and 500s with "Cannot create an
+    /// abstract class" — confirmed live.
     /// </summary>
     public static void ApplyUpdateFields(JsonObject existing, GlobalChoiceDefinition local)
     {
+        existing.Remove("Options");
+        existing["@odata.type"] = "Microsoft.Dynamics.CRM.OptionSetMetadata";
+
         if (local.DisplayName is not null)
         {
             existing["DisplayName"] = DataverseLabelJson.Build(local.DisplayName);

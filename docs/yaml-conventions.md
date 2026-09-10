@@ -614,6 +614,25 @@ doesn't wipe out other languages' labels this tool never touched (a
 documented Dataverse gotcha: that header's absence defaults to overwriting
 them).
 
+**"PUT the whole thing straight back" needs one more thing Dataverse doesn't
+give you for free: an explicit `@odata.type` on the body itself.** The
+type-cast GET URL (`.../Microsoft.Dynamics.CRM.{Type}AttributeMetadata`)
+tells Dataverse how to *read* the response, but that context never comes
+back as part of the response body — the same gap
+`GlobalOptionSetDefinitions`' update hit first (see "Global choices"
+below). Left unset, Dataverse falls back to resolving the concrete subtype
+some other way and then rejects whichever of that type's own properties
+don't belong on whatever it fell back to — confirmed live on both Boolean
+(rejected `DefaultValue`) and Picklist (rejected a handful of
+formula-column properties, one at a time, since Dataverse stops validating
+at the first bad property it finds). `AttributeMetadataJsonBuilder.ApplyUpdateFields`
+sets `existing["@odata.type"] = $"Microsoft.Dynamics.CRM.{attribute.Type}AttributeMetadata";`
+as its very first line, matching the same expression `BuildCreateBody`
+already uses on create, and that alone resolved both cases live with no
+per-property stripping needed. Not independently re-verified for every
+other updatable type, but there's no reason to expect this more explicit
+body would regress any of them.
+
 **Fifteen column types can be updated; ten of those can also be created** —
 see `AttributeMetadataJsonBuilder.SupportedTypes`/`CreatableTypes`.
 Updatable: `String`, `Memo`, `Integer`, `BigInt`, `Decimal`, `Money`,
@@ -663,8 +682,16 @@ YAML shape:
 - **Picklist/MultiSelectPicklist**: either `options` (a local choice — a
   list of `{value, label}`, confirmed against Microsoft's own documented
   create shape) or `globalOptionSetName` (an existing global choice,
-  referenced by name via the `GlobalOptionSet@odata.bind` alternate-key
-  syntax) — never both. **A `value` is always explicit in the local YAML,
+  referenced via the `GlobalOptionSet@odata.bind` navigation property) —
+  never both. **Confirmed live: on create, that bind only accepts a raw
+  MetadataId GUID, not the `Name=` alternate-key form** — Dataverse 500s
+  with "Guid should contain 32 digits with 4 dashes" otherwise, even though
+  the alternate-key form works for other bind targets in this tool. So
+  `TableImportService` resolves `globalOptionSetName` to its live
+  MetadataId first (via `IDataverseClient.TryGetGlobalOptionSetJsonAsync`)
+  before ever building the create body — see
+  `AttributeMetadataJsonBuilder.BuildCreateBody`'s own doc comment on
+  `globalOptionSetMetadataId`. **A `value` is always explicit in the local YAML,
   never invented**: Dataverse doesn't assign one for a whole new `OptionSet`
   on create (unlike a single later `InsertOptionValue` call), and guessing a
   base value risks colliding with the organization's own publisher-assigned
@@ -966,7 +993,18 @@ options (see "Boolean and Choice" above): `displayName`/`description`
 update via a full-object PUT (`GlobalChoiceMetadataJsonBuilder.ApplyUpdateFields`),
 `options` via the separate `InsertOptionValue`/`UpdateOptionValue`/
 `OrderOption` actions instead — confirmed against Microsoft's own docs that
-`UpdateOptionSet`'s PUT "doesn't include the options." The local/global
+`UpdateOptionSet`'s PUT "doesn't include the options." That PUT needs two
+things `TryGetGlobalOptionSetJsonAsync`'s cloned response doesn't already
+have: its own `Options` stripped back out (present on the clone purely so
+`OptionSetDiffer` can read it, but rejected outright on the non-type-cast
+update URL), and an explicit `@odata.type` set (the type-cast *GET* URL
+doesn't carry over into the response body, so without it Dataverse can't
+tell which concrete type to PUT and 500s trying to instantiate the abstract
+base) — both confirmed live, and both handled by
+`GlobalChoiceMetadataJsonBuilder.ApplyUpdateFields` before anything else
+runs. The plain attribute PUT (`AttributeMetadataJsonBuilder.ApplyUpdateFields`,
+"Importing tables" above) hit the same missing-`@odata.type` gap
+independently and is fixed the identical way. The local/global
 option-level diff (`OptionSetDiffer`) is shared code, not reimplemented
 here — same match-by-`value` insert/rename/reorder algorithm, same "never
 delete an existing option automatically" policy, just addressed by

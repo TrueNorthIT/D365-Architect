@@ -109,7 +109,20 @@ internal static class GlobalChoiceJsonReader
         };
     }
 
-    /// <summary>Reads a Dataverse label object's English (or first available) display text — same shape/fallback as every other reader in this tool.</summary>
+    /// <summary>
+    /// Reads a Dataverse label object's English (or first available) display
+    /// text — same shape/fallback as every other reader in this tool.
+    /// Normalizes line endings to <c>\n</c>, same as
+    /// <see cref="EntityJsonDefinitionReader"/>'s own <c>GetLabel</c> (a
+    /// pre-existing gap in that reader too, not something new here) — see
+    /// its doc comment for why: a multi-line <c>Description</c> can come
+    /// back from Dataverse with <c>\r\n</c>, which YAML's own block-scalar
+    /// parsing always normalizes to <c>\n</c> on the way back in, so
+    /// leaving it un-normalized here would make a completely unmodified
+    /// re-export/re-import round-trip forever detect a phantom update
+    /// (confirmed live against a real environment's own
+    /// <c>msdynmkt_purposetype</c> global choice).
+    /// </summary>
     private static string? GetLabel(JsonElement parent, string propertyName)
     {
         if (!parent.TryGetProperty(propertyName, out var label) || label.ValueKind != JsonValueKind.Object)
@@ -122,7 +135,7 @@ internal static class GlobalChoiceJsonReader
             && userLabel.TryGetProperty("Label", out var text)
             && text.ValueKind == JsonValueKind.String)
         {
-            return text.GetString();
+            return NormalizeLineEndings(text.GetString());
         }
 
         if (label.TryGetProperty("LocalizedLabels", out var localizedLabels) && localizedLabels.ValueKind == JsonValueKind.Array)
@@ -130,10 +143,13 @@ internal static class GlobalChoiceJsonReader
             var first = localizedLabels.EnumerateArray().FirstOrDefault();
             if (first.ValueKind == JsonValueKind.Object && first.TryGetProperty("Label", out var firstText) && firstText.ValueKind == JsonValueKind.String)
             {
-                return firstText.GetString();
+                return NormalizeLineEndings(firstText.GetString());
             }
         }
 
         return null;
     }
+
+    /// <summary>Normalizes <c>\r\n</c>/lone <c>\r</c> to <c>\n</c> — see <see cref="GetLabel"/>'s own doc comment for why.</summary>
+    private static string? NormalizeLineEndings(string? text) => text?.Replace("\r\n", "\n").Replace("\r", "\n");
 }

@@ -222,9 +222,14 @@ public interface IDataverseClient
     /// from the bulk <see cref="GetEntityDefinitionJsonAsync"/> query at
     /// all — confirmed against Microsoft's own docs: you can't
     /// <c>$select</c>/<c>$expand</c> them inside that polymorphic
-    /// <c>Attributes</c> collection). A local option set comes back with
-    /// <c>OptionSet</c> populated and <c>GlobalOptionSet</c> null; a global
-    /// one, the reverse.
+    /// <c>Attributes</c> collection). <b>Not</b> as simple as "a local option
+    /// set comes back with <c>OptionSet</c> populated and <c>GlobalOptionSet</c>
+    /// null; a global one, the reverse" — confirmed live that a genuinely
+    /// local (non-shared) option set can populate <em>both</em>, as literally
+    /// the same object, with <c>IsGlobal:false</c> on each; only
+    /// <c>GlobalOptionSet.IsGlobal</c> reliably says which one it is — see
+    /// <see cref="Conversion.EntityJsonDefinitionReader.ParseOptionSetJson"/>'s
+    /// own doc comment for exactly how that's handled.
     /// </summary>
     Task<string> GetAttributeOptionSetJsonAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string attributeLogicalName, string attributeType, CancellationToken cancellationToken);
 
