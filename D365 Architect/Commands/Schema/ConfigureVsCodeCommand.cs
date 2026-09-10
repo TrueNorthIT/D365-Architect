@@ -27,6 +27,7 @@ public sealed class ConfigureVsCodeCommand : Command<ConfigureVsCodeCommand.Sett
         ("*.table.yml", "table.schema.json"),
         ("*.view.yml", "view.schema.json"),
         ("*.form.yml", "form.schema.json"),
+        ("*.choice.yml", "choice.schema.json"),
     ];
 
     private static readonly JsonDocumentOptions ParseOptions = new()
@@ -133,7 +134,7 @@ public sealed class ConfigureVsCodeCommand : Command<ConfigureVsCodeCommand.Sett
 
         File.WriteAllText(settingsPath, root.ToJsonString(WriteOptions));
 
-        AnsiConsole.MarkupLine($"[green]Wrote[/] {settingsPath} — *.table.yml/*.view.yml/*.form.yml now validate against the [bold]{branch}[/] branch's schemas.");
+        AnsiConsole.MarkupLine($"[green]Wrote[/] {settingsPath} — *.table.yml/*.view.yml/*.form.yml/*.choice.yml now validate against the [bold]{branch}[/] branch's schemas.");
         if (fileExisted)
         {
             AnsiConsole.MarkupLine("[grey]Note: any comments in the existing settings.json were not preserved.[/]");
