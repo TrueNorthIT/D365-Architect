@@ -122,6 +122,21 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
             .Select(g => g.Key!)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+        // Same reasoning as duplicateSchemaNames above, for a new Lookup
+        // column's own RelationshipSchemaName (the schema name of the
+        // one-to-many relationship that owns it — see
+        // AttributeDefinition.RelationshipSchemaName) instead of the column's
+        // SchemaName: two new Lookups with different SchemaNames but the same
+        // RelationshipSchemaName would both plan as CreateLookupRelationship
+        // and only collide when Dataverse rejects the second
+        // RelationshipDefinitions POST live.
+        var duplicateRelationshipSchemaNames = local.Attributes
+            .Where(a => !existingByName.ContainsKey(a.Name) && a.Type == "Lookup" && a.RelationshipSchemaName is not null)
+            .GroupBy(a => a.RelationshipSchemaName, StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Count() > 1)
+            .Select(g => g.Key!)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
         foreach (var localAttribute in local.Attributes)
         {
             if (!existingByName.TryGetValue(localAttribute.Name, out var existingAttribute))
@@ -130,6 +145,13 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
                 {
                     plans.Add(new AttributeImportPlan(localAttribute.Name, AttributeImportAction.Invalid,
                         $"SchemaName '{localAttribute.SchemaName}' is used by more than one new column in this YAML — Dataverse requires it to be unique.", null));
+                    continue;
+                }
+
+                if (localAttribute.RelationshipSchemaName is not null && duplicateRelationshipSchemaNames.Contains(localAttribute.RelationshipSchemaName))
+                {
+                    plans.Add(new AttributeImportPlan(localAttribute.Name, AttributeImportAction.Invalid,
+                        $"RelationshipSchemaName '{localAttribute.RelationshipSchemaName}' is used by more than one new Lookup column in this YAML — Dataverse requires it to be unique.", null));
                     continue;
                 }
 

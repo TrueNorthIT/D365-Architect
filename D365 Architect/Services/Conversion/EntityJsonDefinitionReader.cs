@@ -83,7 +83,13 @@ public sealed class EntityJsonDefinitionReader : IEntityDefinitionReader
         {
             var logicalName = GetString(attribute, "LogicalName");
             var type = GetString(attribute, "AttributeType");
-            if (logicalName is not null && type is not null && OptionSetTypes.Contains(type))
+            if (logicalName is null || type is null)
+            {
+                continue;
+            }
+
+            type = NormalizeAttributeType(attribute, type);
+            if (OptionSetTypes.Contains(type))
             {
                 results.Add((logicalName, type));
             }
@@ -91,6 +97,30 @@ public sealed class EntityJsonDefinitionReader : IEntityDefinitionReader
 
         return results;
     }
+
+    /// <summary>
+    /// Undoes the one confirmed live quirk in how a MultiSelectPicklist
+    /// column's own type reports itself: its <c>AttributeType</c> comes back
+    /// as the literal string <c>"Virtual"</c>, not <c>"MultiSelectPicklist"</c>
+    /// — <see cref="Dataverse.AttributeMetadataJsonBuilder.BuildCreateBody"/>'s
+    /// own doc comment on the <c>MultiSelectPicklist</c> case documents the
+    /// same quirk from the create side. Only <c>AttributeTypeName.Value</c>
+    /// (a managed-property-shaped object, unlike the plain string
+    /// <c>AttributeType</c>) actually says <c>"MultiSelectPicklistType"</c>,
+    /// so that's what disambiguates a genuine Virtual column from a
+    /// MultiSelectPicklist one. Left unnormalized, every MultiSelectPicklist
+    /// column would round-trip as <c>Type: Virtual</c>, fall outside
+    /// <see cref="OptionSetTypes"/> (so its options are never fetched), and
+    /// fall outside <see cref="Dataverse.AttributeMetadataJsonBuilder.SupportedTypes"/>/
+    /// <see cref="Dataverse.AttributeMetadataJsonBuilder.CreatableTypes"/> (so
+    /// <c>table import</c> would report it as unsupported instead of
+    /// creating/updating it) — this must run before anything else keys off
+    /// the raw <c>AttributeType</c> string.
+    /// </summary>
+    private static string NormalizeAttributeType(JsonElement attribute, string rawType) =>
+        rawType == "Virtual" && GetManagedPropertyString(attribute, "AttributeTypeName") == "MultiSelectPicklistType"
+            ? "MultiSelectPicklist"
+            : rawType;
 
     public EntityDefinition Read(string content) => Read(content, allowedAttributeMetadataIds: null, optionSetJsonByAttribute: null);
 
@@ -176,7 +206,8 @@ public sealed class EntityJsonDefinitionReader : IEntityDefinitionReader
         }
 
         var logicalName = logicalNameProperty.GetString()!;
-        var type = GetString(attribute, "AttributeType") ?? "Unknown";
+        var rawType = GetString(attribute, "AttributeType") ?? "Unknown";
+        var type = NormalizeAttributeType(attribute, rawType);
 
         OptionSetFields optionSetFields = default;
         if (optionSetJsonByAttribute is not null && optionSetJsonByAttribute.TryGetValue(logicalName, out var optionSetJson))

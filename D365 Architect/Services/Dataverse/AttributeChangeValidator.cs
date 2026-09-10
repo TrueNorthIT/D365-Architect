@@ -297,12 +297,21 @@ public static class AttributeChangeValidator
             var existingValues = (existing.Options ?? []).Select(o => o.Value).ToHashSet();
             var existingLabels = (existing.Options ?? []).Select(o => o.Label).ToHashSet(StringComparer.Ordinal);
 
-            // Matches AttributeMetadataJsonBuilder.BuildStatusOptionChangePlans'
-            // own Value-then-Label matching — a local option with no Value
+            // The Label fallback below is Status-specific only: it matches
+            // AttributeMetadataJsonBuilder.BuildStatusOptionChangePlans' own
+            // Value-then-Label matching, where a local option with no Value
             // match but a Label match isn't actually unmatched (most likely
-            // a Status this tool already inserted, not yet re-exported), so
-            // it's never warned about here either.
-            foreach (var option in local.Options.Where(o => !existingValues.Contains(o.Value) && !existingLabels.Contains(o.Label)))
+            // a Status this tool already inserted, whose server-assigned
+            // Value hasn't been re-exported into the YAML yet). A State
+            // option's Value is never server-assigned or a placeholder — it's
+            // a fixed, meaningful identity (0/1, etc.) — so a Label
+            // coincidence never excuses a Value mismatch there; State is
+            // warned on a Value-only mismatch instead.
+            var unmatchedOptions = local.Type == "State"
+                ? local.Options.Where(o => !existingValues.Contains(o.Value))
+                : local.Options.Where(o => !existingValues.Contains(o.Value) && !existingLabels.Contains(o.Label));
+
+            foreach (var option in unmatchedOptions)
             {
                 warnings.Add(local.Type == "State"
                     ? $"Local option {option.Value} ('{option.Label}') has no live match — this tool never adds a new State value (a table's state model is fixed at creation), so it won't be applied."

@@ -643,6 +643,17 @@ option-bearing attribute (`EntityJsonDefinitionReader.OptionSetTypes` —
 `EntityJsonDefinitionReader.Read`, for both `table export` and `table
 import`'s own re-read of the live entity.
 
+**Reading a live MultiSelectPicklist column back has its own confirmed
+quirk, the mirror image of the create-side one below**: its `AttributeType`
+comes back as the literal string `"Virtual"`, not `"MultiSelectPicklist"` —
+only `AttributeTypeName.Value` (`"MultiSelectPicklistType"`) actually says
+what it is. `EntityJsonDefinitionReader.NormalizeAttributeType` undoes this
+before anything else (option-set detection, YAML `type`, or
+`AttributeMetadataJsonBuilder.SupportedTypes`/`CreatableTypes`) ever keys off
+the raw value — left unnormalized, every MultiSelectPicklist column would
+round-trip as `Type: Virtual` and `table import` would report it as
+unsupported instead of creating/updating it.
+
 YAML shape:
 - **Boolean**: `defaultValue` (omitted when `false`, Dataverse's own
   default), `trueOptionLabel`/`falseOptionLabel` (omitted when exactly
