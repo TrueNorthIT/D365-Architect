@@ -11,8 +11,32 @@ public sealed class GlobalChoiceImportService(IDataverseClient dataverseClient) 
         var plans = new List<GlobalChoiceImportPlan>();
         var existingChoices = new List<GlobalChoiceDefinition>();
 
+        // Purely local, before any live lookup — same class of check as
+        // TableImportService's own duplicateSchemaNames/
+        // duplicateRelationshipSchemaNames: two entries in this input
+        // claiming the same Name would each independently look up (and then
+        // plan to create/update) the identical live choice, and only collide
+        // when Dataverse rejects the second write. Unlike those two checks,
+        // this one doesn't need to be scoped to "doesn't exist live yet"
+        // first — Name is a global choice's own lookup key, so a duplicate
+        // here is meaningless regardless of what's live, and catching it
+        // up front also means never bothering with a live lookup for an
+        // entry already known to be invalid.
+        var duplicateNames = locals
+            .GroupBy(l => l.Name, StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Count() > 1)
+            .Select(g => g.Key)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
         foreach (var local in locals)
         {
+            if (duplicateNames.Contains(local.Name))
+            {
+                plans.Add(new GlobalChoiceImportPlan(local.Name, GlobalChoiceImportAction.Invalid,
+                    $"Name '{local.Name}' is used by more than one choice in this input — Dataverse requires it to be unique.", null, null));
+                continue;
+            }
+
             var existingJson = await dataverseClient.TryGetGlobalOptionSetJsonAsync(environmentUrl, accessToken, local.Name, cancellationToken);
 
             if (existingJson is null)

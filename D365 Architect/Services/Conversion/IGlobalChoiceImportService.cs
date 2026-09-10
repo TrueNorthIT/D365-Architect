@@ -47,7 +47,10 @@ public enum GlobalChoiceImportAction
     /// <summary>
     /// The requested create would fail — see <see cref="GlobalChoiceChangeValidator"/>:
     /// an invalid <c>Name</c> (missing customization prefix, or an invalid
-    /// character), or no <c>Options</c>/duplicate option <c>Value</c>s.
+    /// character), or no <c>Options</c>/duplicate option <c>Value</c>s. Also
+    /// covers <see cref="GlobalChoiceImportService"/>'s own duplicate-Name
+    /// check, which needs to compare across every choice in the input at
+    /// once: two choices in the same input claiming the same <c>Name</c>.
     /// Caught before ever building a request, not left for Dataverse's own
     /// API error to explain.
     /// </summary>
@@ -61,7 +64,7 @@ public enum GlobalChoiceImportAction
 /// <param name="OptionChanges">Separate option-value actions (insert/rename/reorder) to run alongside <paramref name="RequestBody"/> — see <see cref="GlobalChoiceMetadataJsonBuilder.BuildOptionChangePlans"/>. Only ever set for <see cref="GlobalChoiceImportAction.Update"/>; null for every other action (a Create's own options are already embedded in its <paramref name="RequestBody"/>).</param>
 public sealed record GlobalChoiceImportPlan(string Name, GlobalChoiceImportAction Action, string? Reason, JsonObject? RequestBody, IReadOnlyList<OptionChangePlan>? OptionChanges);
 
-/// <param name="ExistingYaml">What re-exporting just the choices named in the input would produce right now — empty entries for any that don't exist live yet.</param>
+/// <param name="ExistingYaml">What re-exporting just the choices named in the input would produce right now — a choice that doesn't exist live yet is simply omitted, not represented as an empty entry.</param>
 /// <param name="NewYaml">The local YAML.</param>
 /// <param name="ChoicePlans">One plan per choice named in the input — see <see cref="GlobalChoiceImportAction"/>.</param>
 public sealed record GlobalChoicesImportPreview(string ExistingYaml, string NewYaml, IReadOnlyList<GlobalChoiceImportPlan> ChoicePlans)
