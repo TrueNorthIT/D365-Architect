@@ -1,4 +1,3 @@
-using System.Text.RegularExpressions;
 using D365Architect.Services.Conversion.Models;
 
 namespace D365Architect.Services.Dataverse;
@@ -28,22 +27,6 @@ public static class AttributeChangeValidator
     {
         "None", "Recommended", "ApplicationRequired", "SystemRequired",
     };
-
-    /// <summary>
-    /// A short alphanumeric prefix, an underscore, then the rest of the
-    /// name using only letters/digits/underscores throughout — e.g.
-    /// <c>new_BankName</c>, <c>cr7a3_Account_Rating</c>. This is the
-    /// structural shape of every custom SchemaName confirmed live this
-    /// session, not a guess at Dataverse's own exact validation regex or an
-    /// attempt to check it against a specific registered publisher (that
-    /// would need a live lookup this tool doesn't do) — it exists to catch
-    /// the obvious mistakes (no prefix at all, or a space/dash/other
-    /// character Dataverse's own schema name rules don't allow) before
-    /// Dataverse does. Full-string match — unlike an earlier version of
-    /// this pattern, nothing after the prefix is allowed to be an arbitrary
-    /// character.
-    /// </summary>
-    private static readonly Regex SchemaNamePattern = new(@"^[A-Za-z][A-Za-z0-9]*_[A-Za-z][A-Za-z0-9_]*$", RegexOptions.Compiled);
 
     /// <summary>
     /// <c>IntegerAttributeMetadata.MinValue</c>/<c>MaxValue</c>'s documented
@@ -85,7 +68,7 @@ public static class AttributeChangeValidator
             return $"'{local.Name}' has no SchemaName in the local YAML — required to create a column, and this tool never guesses one.";
         }
 
-        if (!SchemaNamePattern.IsMatch(local.SchemaName))
+        if (!DataverseSchemaNaming.SchemaNamePattern.IsMatch(local.SchemaName))
         {
             var example = local.SchemaName.Contains('_') ? "letters/digits/underscores only, e.g. 'new_BankName'" : $"a customization prefix, e.g. 'new_{local.SchemaName}'";
             return $"SchemaName '{local.SchemaName}' isn't valid — expected {example}, and this tool never invents or corrects one.";
@@ -103,7 +86,94 @@ public static class AttributeChangeValidator
             return $"Name '{local.Name}' won't match the logical name Dataverse actually creates — it derives that from SchemaName by lowercasing it ('{derivedLogicalName}'), never from Name directly. Set Name to '{derivedLogicalName}' (or change SchemaName to match).";
         }
 
+        if (local.Type is "Picklist" or "MultiSelectPicklist")
+        {
+            var optionsError = ValidateOptionsForCreate(local);
+            if (optionsError is not null)
+            {
+                return optionsError;
+            }
+        }
+
+        if (local.Type == "Lookup")
+        {
+            var lookupError = ValidateLookupForCreate(local);
+            if (lookupError is not null)
+            {
+                return lookupError;
+            }
+        }
+
+        if (local.Type == "Customer")
+        {
+            var customerError = ValidateCustomerForCreate(local);
+            if (customerError is not null)
+            {
+                return customerError;
+            }
+        }
+
         return ValidateCommon(local, existing: null);
+    }
+
+    /// <summary>Picklist/MultiSelectPicklist create: either Options or GlobalOptionSetName, never both, and Options (when used) non-empty with unique, explicit Values — see AttributeOptionDefinition's own doc comment for why a value is never invented.</summary>
+    private static string? ValidateOptionsForCreate(AttributeDefinition local)
+    {
+        if (local.Options is not null && local.GlobalOptionSetName is not null)
+        {
+            return $"'{local.Name}' specifies both Options and GlobalOptionSetName — a column uses one or the other, never both.";
+        }
+
+        if (local.GlobalOptionSetName is not null)
+        {
+            return null;
+        }
+
+        if (local.Options is null || local.Options.Count == 0)
+        {
+            return $"'{local.Name}' has no Options (or GlobalOptionSetName) in the local YAML — required to create a {local.Type} column, and this tool never invents choice values.";
+        }
+
+        var duplicateValues = local.Options.GroupBy(o => o.Value).Where(g => g.Count() > 1).Select(g => g.Key).ToList();
+        if (duplicateValues.Count > 0)
+        {
+            return $"'{local.Name}' has duplicate option Value(s): {string.Join(", ", duplicateValues)}.";
+        }
+
+        return null;
+    }
+
+    /// <summary>A plain (non-Customer) Lookup's create needs its own relationship SchemaName and exactly one target — see BuildRelationshipCreateBody's own doc comment on why more than one is out of scope.</summary>
+    private static string? ValidateLookupForCreate(AttributeDefinition local)
+    {
+        if (local.RelationshipSchemaName is null)
+        {
+            return $"'{local.Name}' has no RelationshipSchemaName in the local YAML — required to create a Lookup column, and this tool never invents one.";
+        }
+
+        if (!DataverseSchemaNaming.SchemaNamePattern.IsMatch(local.RelationshipSchemaName))
+        {
+            return $"RelationshipSchemaName '{local.RelationshipSchemaName}' isn't valid — expected a customization prefix and letters/digits/underscores only, e.g. 'new_contact_new_bankaccount'.";
+        }
+
+        if (local.Targets is not { Count: 1 })
+        {
+            return $"'{local.Name}' must have exactly one Targets entry to create a plain Lookup column — more than one is a multi-table lookup, which this tool doesn't support creating yet.";
+        }
+
+        return null;
+    }
+
+    /// <summary>A Customer column's Targets are fixed by Dataverse itself — never anything this tool lets a maker choose.</summary>
+    private static string? ValidateCustomerForCreate(AttributeDefinition local)
+    {
+        var targets = local.Targets is null ? [] : local.Targets.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (!targets.SetEquals(new[] { "account", "contact" }))
+        {
+            return $"'{local.Name}' is a Customer column but its Targets aren't exactly ['account', 'contact'] — that's fixed by Dataverse for every Customer column.";
+        }
+
+        return null;
     }
 
     /// <returns>Why updating <paramref name="local"/> onto <paramref name="existing"/> would fail, or null when it looks safe to attempt. Only checks fields this tool doesn't already guard elsewhere — see <see cref="Conversion.TableImportService"/>'s own Type/SchemaName-mismatch checks, which run before this and cover the two most common "that's not allowed" cases.</returns>
@@ -164,6 +234,33 @@ public static class AttributeChangeValidator
             return $"Precision {local.Precision} is outside {local.Type}'s allowed range ({MinPrecision} to {MaxPrecision}).";
         }
 
+        // Updating an existing Picklist/MultiSelectPicklist's own options
+        // (AttributeMetadataJsonBuilder.BuildOptionChangePlans) only ever
+        // covers insert/rename/reorder within the *same* option set —
+        // rebinding the column to switch which set it uses (global-to-local,
+        // local-to-global, or one global choice to another) isn't a
+        // documented single-request operation this tool has confirmed, so
+        // it's caught here rather than silently accepted as an "Update"
+        // that would actually change nothing about the binding.
+        if (existing is not null && local.Type is "Picklist" or "MultiSelectPicklist")
+        {
+            if (local.GlobalOptionSetName is not null && existing.GlobalOptionSetName is not null
+                && !string.Equals(local.GlobalOptionSetName, existing.GlobalOptionSetName, StringComparison.OrdinalIgnoreCase))
+            {
+                return $"Can't change '{local.Name}' from the global choice '{existing.GlobalOptionSetName}' to '{local.GlobalOptionSetName}' — switching which global choice a column uses isn't supported by this tool yet.";
+            }
+
+            if (local.GlobalOptionSetName is not null && existing.GlobalOptionSetName is null)
+            {
+                return $"Can't change '{local.Name}' from a local choice to the global choice '{local.GlobalOptionSetName}' — switching isn't supported by this tool yet.";
+            }
+
+            if (local.Options is not null && existing.GlobalOptionSetName is not null)
+            {
+                return $"Can't change '{local.Name}' from the global choice '{existing.GlobalOptionSetName}' to a local choice — switching isn't supported by this tool yet.";
+            }
+        }
+
         return null;
     }
 
@@ -186,6 +283,33 @@ public static class AttributeChangeValidator
         if (local.Precision is not null && existing.Precision is not null && local.Precision < existing.Precision)
         {
             warnings.Add($"Lowering Precision from {existing.Precision} to {local.Precision} may affect existing data.");
+        }
+
+        // Only worth surfacing when the column is actually backed by a
+        // local option set — confirmed live that State/Status normally use
+        // a *global* one (account's own statecode/statuscode both do), and
+        // this tool never touches a global option set's options at all (see
+        // the "Global option sets" scope decision), so noting a would-be
+        // insert there would be a misleading warning about something
+        // genuinely out of scope rather than a real gap.
+        if (local.Type is "State" or "Status" && local.Options is not null && existing.GlobalOptionSetName is null)
+        {
+            var existingValues = (existing.Options ?? []).Select(o => o.Value).ToHashSet();
+            var existingLabels = (existing.Options ?? []).Select(o => o.Label).ToHashSet(StringComparer.Ordinal);
+
+            // Matches AttributeMetadataJsonBuilder.BuildStatusOptionChangePlans'
+            // own Value-then-Label matching — a local option with no Value
+            // match but a Label match isn't actually unmatched (most likely
+            // a Status this tool already inserted, not yet re-exported), so
+            // it's never warned about here either.
+            foreach (var option in local.Options.Where(o => !existingValues.Contains(o.Value) && !existingLabels.Contains(o.Label)))
+            {
+                warnings.Add(local.Type == "State"
+                    ? $"Local option {option.Value} ('{option.Label}') has no live match — this tool never adds a new State value (a table's state model is fixed at creation), so it won't be applied."
+                    : option.State is null
+                        ? $"Local option ('{option.Label}') has no live match and no State given — this tool needs to know which State a new Status reason belongs to (Dataverse's own InsertStatusValue action requires it) and never guesses it, so it won't be applied. Add a `state` to this option."
+                        : $"Local option ('{option.Label}') has no live match — will be inserted under State {option.State}. Dataverse assigns its own Value for a new Status reason; re-export after applying to pick up the real one (the placeholder Value {option.Value} in this YAML is never sent).");
+            }
         }
 
         return warnings;

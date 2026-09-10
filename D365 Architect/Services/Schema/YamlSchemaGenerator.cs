@@ -28,13 +28,22 @@ namespace D365Architect.Services.Schema;
 /// </summary>
 public static class YamlSchemaGenerator
 {
-    /// <param name="rootType">The curated model type to generate a schema for, e.g. <see cref="EntityDefinition"/>.</param>
+    /// <param name="rootType">
+    /// The curated model type to generate a schema for, e.g.
+    /// <see cref="EntityDefinition"/> — or, for a YAML file whose own root
+    /// is a sequence rather than a mapping (e.g. <c>*.choice.yml</c>'s
+    /// <c>IReadOnlyList&lt;GlobalChoiceDefinition&gt;</c>), an enumerable of
+    /// one, detected and handled the same way <see cref="BuildPropertySchema"/>
+    /// already does for a list-typed property.
+    /// </param>
     /// <param name="title">The schema's "title".</param>
     /// <param name="description">The schema's "description".</param>
     public static JsonObject Generate(Type rootType, string title, string description)
     {
         var xmlDocs = TryLoadXmlDocs();
-        var schema = BuildObjectSchema(rootType, xmlDocs, []);
+        var schema = rootType != typeof(string) && typeof(IEnumerable).IsAssignableFrom(rootType)
+            ? BuildArraySchema(rootType, xmlDocs, [])
+            : BuildObjectSchema(rootType, xmlDocs, []);
 
         schema.Insert(0, "$schema", "https://json-schema.org/draft/2020-12/schema");
         schema.Insert(1, "title", title);

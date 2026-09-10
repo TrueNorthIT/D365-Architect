@@ -376,6 +376,137 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         await EnsureSuccessAsync(response, cancellationToken);
     }
 
+    public async Task<string> GetAttributeOptionSetJsonAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string attributeLogicalName, string attributeType, CancellationToken cancellationToken)
+    {
+        var relativePath = $"EntityDefinitions(LogicalName='{Uri.EscapeDataString(entityLogicalName)}')" +
+            $"/Attributes(LogicalName='{Uri.EscapeDataString(attributeLogicalName)}')" +
+            $"/Microsoft.Dynamics.CRM.{attributeType}AttributeMetadata" +
+            "?$expand=OptionSet,GlobalOptionSet";
+
+        using var request = CreateRequest(environmentUrl, relativePath, accessToken);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+
+        return await response.Content.ReadAsStringAsync(cancellationToken);
+    }
+
+    public async Task CreateOneToManyRelationshipAsync(Uri environmentUrl, string accessToken, JsonObject relationshipMetadata, CancellationToken cancellationToken)
+    {
+        using var request = CreateRequest(environmentUrl, "RelationshipDefinitions", accessToken, HttpMethod.Post);
+        request.Content = JsonContent.Create(relationshipMetadata);
+
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+    }
+
+    public async Task CreateCustomerRelationshipsAsync(Uri environmentUrl, string accessToken, JsonObject body, CancellationToken cancellationToken)
+    {
+        using var request = CreateRequest(environmentUrl, "CreateCustomerRelationships", accessToken, HttpMethod.Post);
+        request.Content = JsonContent.Create(body);
+
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+    }
+
+    public async Task InsertOptionValueAsync(Uri environmentUrl, string accessToken, JsonObject body, CancellationToken cancellationToken) =>
+        await PostActionAsync(environmentUrl, "InsertOptionValue", accessToken, body, cancellationToken);
+
+    public async Task UpdateOptionValueAsync(Uri environmentUrl, string accessToken, JsonObject body, CancellationToken cancellationToken) =>
+        await PostActionAsync(environmentUrl, "UpdateOptionValue", accessToken, body, cancellationToken);
+
+    public async Task DeleteOptionValueAsync(Uri environmentUrl, string accessToken, JsonObject body, CancellationToken cancellationToken) =>
+        await PostActionAsync(environmentUrl, "DeleteOptionValue", accessToken, body, cancellationToken);
+
+    public async Task OrderOptionsAsync(Uri environmentUrl, string accessToken, JsonObject body, CancellationToken cancellationToken) =>
+        await PostActionAsync(environmentUrl, "OrderOption", accessToken, body, cancellationToken);
+
+    public async Task InsertStatusValueAsync(Uri environmentUrl, string accessToken, JsonObject body, CancellationToken cancellationToken) =>
+        await PostActionAsync(environmentUrl, "InsertStatusValue", accessToken, body, cancellationToken);
+
+    public async Task UpdateStateValueAsync(Uri environmentUrl, string accessToken, JsonObject body, CancellationToken cancellationToken) =>
+        await PostActionAsync(environmentUrl, "UpdateStateValue", accessToken, body, cancellationToken);
+
+    /// <summary>Shared by every simple "POST an action, ignore the response body" call above — same shape as <see cref="PublishEntityAsync"/>'s own request/response handling.</summary>
+    private async Task PostActionAsync(Uri environmentUrl, string actionName, string accessToken, JsonObject body, CancellationToken cancellationToken)
+    {
+        using var request = CreateRequest(environmentUrl, actionName, accessToken, HttpMethod.Post);
+        request.Content = JsonContent.Create(body);
+
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+    }
+
+    public async Task<string?> TryGetGlobalOptionSetJsonAsync(Uri environmentUrl, string accessToken, string name, CancellationToken cancellationToken)
+    {
+        // GlobalOptionSetDefinitions is typed as the abstract
+        // OptionSetMetadataBase by default -- Options only exists on the
+        // derived OptionSetMetadata type, so this needs the same type-cast
+        // URL segment GetAttributeOptionSetJsonAsync uses for an attribute's
+        // own OptionSet -- confirmed live (400: "Could not find a property
+        // named 'Options' on type 'Microsoft.Dynamics.CRM.OptionSetMetadataBase'"
+        // without it). Also confirmed live that, even after the type-cast,
+        // $expand=Options itself still 400s ("not a navigation property or
+        // complex property") -- unlike an attribute's own OptionSet/
+        // GlobalOptionSet, Options has to be named in $select instead.
+        var relativePath = $"GlobalOptionSetDefinitions(Name='{Uri.EscapeDataString(name)}')/Microsoft.Dynamics.CRM.OptionSetMetadata?$select=MetadataId,Name,DisplayName,Description,Options";
+
+        using var request = CreateRequest(environmentUrl, relativePath, accessToken);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+
+        await EnsureSuccessAsync(response, cancellationToken);
+        return await response.Content.ReadAsStringAsync(cancellationToken);
+    }
+
+    public async Task<string> GetGlobalOptionSetsJsonAsync(Uri environmentUrl, string accessToken, CancellationToken cancellationToken)
+    {
+        var relativePath = "GlobalOptionSetDefinitions/Microsoft.Dynamics.CRM.OptionSetMetadata?$select=MetadataId,Name,DisplayName,Description,Options";
+
+        using var request = CreateRequest(environmentUrl, relativePath, accessToken);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+
+        return await response.Content.ReadAsStringAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlySet<Guid>?> TryGetSolutionOptionSetMetadataIdsAsync(Uri environmentUrl, string accessToken, string solutionUniqueName, CancellationToken cancellationToken)
+    {
+        var solutionId = await TryGetSolutionIdAsync(environmentUrl, accessToken, solutionUniqueName, cancellationToken);
+        if (solutionId is null)
+        {
+            return null;
+        }
+
+        // componenttype 9 = Option Set. Confirmed live against this
+        // environment's own componenttype global choice (its Options list
+        // names value 9 "Option Set"), same empirical standard already
+        // applied to Attribute (2)/View (26)/System Form (60) above.
+        const int optionSetComponentType = 9;
+        return await GetSolutionComponentObjectIdsAsync(environmentUrl, accessToken, solutionId.Value, optionSetComponentType, cancellationToken);
+    }
+
+    public async Task CreateGlobalOptionSetAsync(Uri environmentUrl, string accessToken, JsonObject body, CancellationToken cancellationToken)
+    {
+        using var request = CreateRequest(environmentUrl, "GlobalOptionSetDefinitions", accessToken, HttpMethod.Post);
+        request.Content = JsonContent.Create(body);
+
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+    }
+
+    public async Task UpdateGlobalOptionSetAsync(Uri environmentUrl, string accessToken, Guid metadataId, JsonObject body, CancellationToken cancellationToken)
+    {
+        using var request = CreateRequest(environmentUrl, $"GlobalOptionSetDefinitions({metadataId})", accessToken, HttpMethod.Put);
+        request.Content = JsonContent.Create(body);
+
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+    }
+
     private static string EscapeODataStringLiteral(string value) => value.Replace("'", "''");
 
     /// <summary>Shared by every "which components of type X does this solution contain" lookup.</summary>

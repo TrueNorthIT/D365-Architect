@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "D365 Architect form definition",
-  "description": "Declarative YAML shape for a Dynamics form, produced by `d365architect form export`. A field left out of this file was left at Dataverse's own default, not \"unknown\" — see each field's own description for what that default is. Editing this file back into Dataverse (not yet supported) will leave an omitted field at that default rather than whatever it happened to be before.",
+  "description": "Declarative YAML shape for a Dynamics form, produced by `d365architect form export`. A field left out of this file was left at Dataverse's own default, not \"unknown\" — see each field's own description for what that default is. Editing this file back into Dataverse (via the matching `import` command) will leave an omitted field at that default rather than whatever it happened to be before.",
   "type": "object",
   "properties": {
     "form": {

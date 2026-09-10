@@ -18,7 +18,8 @@ namespace D365Architect.Commands.Table;
 /// will actually happen (see <see cref="AttributeImportAction"/>) — a
 /// column can show up as different in the YAML diff without anything being
 /// done about it, when its type isn't one this tool can safely create or
-/// update yet (see <see cref="Services.Dataverse.AttributeMetadataJsonBuilder.SupportedTypes"/>),
+/// update yet (see <see cref="Services.Dataverse.AttributeMetadataJsonBuilder.CreatableTypes"/>/
+/// <see cref="Services.Dataverse.AttributeMetadataJsonBuilder.SupportedTypes"/>),
 /// or when it's live but missing from the local YAML (never auto-deleted).
 /// Nothing is written until you confirm (or pass <c>--yes</c>), and if
 /// there's nothing to actually do, nothing is written at all. Pass
@@ -115,6 +116,8 @@ public sealed class ImportTableCommand(ITableImportService tableImportService, I
         {
             AttributeImportAction.Create => $"[green]  + {plan.LogicalName.EscapeMarkup()} (create)[/]",
             AttributeImportAction.Update => $"[yellow]  ~ {plan.LogicalName.EscapeMarkup()} (update)[/]",
+            AttributeImportAction.CreateLookupRelationship => $"[green]  + {plan.LogicalName.EscapeMarkup()} (create lookup relationship)[/]",
+            AttributeImportAction.CreateCustomerRelationship => $"[green]  + {plan.LogicalName.EscapeMarkup()} (create customer relationship)[/]",
             AttributeImportAction.SkippedUnsupportedType => $"[grey]  ? {plan.LogicalName.EscapeMarkup()} (not applied: {plan.Reason?.EscapeMarkup()})[/]",
             AttributeImportAction.WouldRemove => $"[red]  - {plan.LogicalName.EscapeMarkup()} (not applied: {plan.Reason?.EscapeMarkup()})[/]",
             AttributeImportAction.Invalid => $"[red]  ! {plan.LogicalName.EscapeMarkup()} (not applied: {plan.Reason?.EscapeMarkup()})[/]",
@@ -122,6 +125,20 @@ public sealed class ImportTableCommand(ITableImportService tableImportService, I
         };
 
         AnsiConsole.MarkupLine(line);
+
+        if (plan.OptionChanges is { Count: > 0 })
+        {
+            foreach (var change in plan.OptionChanges)
+            {
+                var glyph = change.Action switch
+                {
+                    OptionChangeAction.InsertOption or OptionChangeAction.InsertStatusValue => "+",
+                    OptionChangeAction.OrderOptions => "↕",
+                    _ => "~",
+                };
+                AnsiConsole.MarkupLine($"[yellow]      {glyph} {change.Description.EscapeMarkup()}[/]");
+            }
+        }
 
         if (plan.Warnings is { Count: > 0 })
         {

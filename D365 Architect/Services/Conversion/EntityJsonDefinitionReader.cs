@@ -14,10 +14,19 @@ namespace D365Architect.Services.Conversion;
 /// coverage is checked against Dataverse's own create/update APIs
 /// (validated live against a real tenant — see
 /// <see cref="Dataverse.IDataverseClient.GetEntityDefinitionJsonAsync"/>),
-/// not just what happened to be convenient to read. Not yet covered: a
-/// choice column's actual option values (<c>OptionSet</c>) — that needs a
-/// separate, per-attribute, type-cast request, not a field on the bulk
-/// response this reader consumes.
+/// not just what happened to be convenient to read.
+///
+/// A choice column's actual option values (<c>OptionSet</c>) never come back
+/// on the bulk response this reader otherwise consumes — Dataverse only
+/// returns them from a separate, per-attribute, type-cast request (see
+/// <see cref="OptionSetTypes"/>/<see cref="ListOptionBearingAttributes"/> and
+/// <see cref="Dataverse.IDataverseClient.GetAttributeOptionSetJsonAsync"/>).
+/// This reader stays purely a parser — it never makes that request itself —
+/// so the caller (<see cref="TableExportService"/>/<see cref="TableImportService"/>)
+/// fetches each option-bearing attribute's JSON first and passes the results
+/// in as <c>optionSetJsonByAttribute</c>, the same way solution-scoping
+/// already resolves <c>allowedAttributeMetadataIds</c> before calling
+/// <see cref="Read(string, IReadOnlySet{Guid}?, IReadOnlyDictionary{string, string}?)"/>.
 ///
 /// Note: unlike <see cref="EntityXmlDefinitionReader"/> (which reads a
 /// PhysicalName off legacy SQL-backed unpacked solutions), this reader never
@@ -46,7 +55,44 @@ public sealed class EntityJsonDefinitionReader : IEntityDefinitionReader
         }
     }
 
-    public EntityDefinition Read(string content) => Read(content, allowedAttributeMetadataIds: null);
+    /// <summary>
+    /// Attribute types whose choice values (<c>OptionSet</c>) need a
+    /// separate, per-attribute request — see <see cref="ListOptionBearingAttributes"/>.
+    /// </summary>
+    public static readonly IReadOnlySet<string> OptionSetTypes = new HashSet<string> { "Boolean", "Picklist", "MultiSelectPicklist", "Status", "State" };
+
+    /// <summary>
+    /// Scans a bulk <c>EntityDefinitions(...)?$expand=Attributes</c> response
+    /// (without fully parsing it into an <see cref="EntityDefinition"/>) for
+    /// every attribute whose type is in <see cref="OptionSetTypes"/> — what
+    /// the caller needs to know which per-attribute
+    /// <see cref="Dataverse.IDataverseClient.GetAttributeOptionSetJsonAsync"/>
+    /// requests to make before calling
+    /// <see cref="Read(string, IReadOnlySet{Guid}?, IReadOnlyDictionary{string, string}?)"/>.
+    /// </summary>
+    public static IReadOnlyList<(string LogicalName, string Type)> ListOptionBearingAttributes(string content)
+    {
+        using var doc = JsonDocument.Parse(content);
+        if (!doc.RootElement.TryGetProperty("Attributes", out var attributesProperty) || attributesProperty.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        var results = new List<(string, string)>();
+        foreach (var attribute in attributesProperty.EnumerateArray())
+        {
+            var logicalName = GetString(attribute, "LogicalName");
+            var type = GetString(attribute, "AttributeType");
+            if (logicalName is not null && type is not null && OptionSetTypes.Contains(type))
+            {
+                results.Add((logicalName, type));
+            }
+        }
+
+        return results;
+    }
+
+    public EntityDefinition Read(string content) => Read(content, allowedAttributeMetadataIds: null, optionSetJsonByAttribute: null);
 
     /// <summary>
     /// As <see cref="Read(string)"/>, but keeps only the attributes whose
@@ -56,7 +102,19 @@ public sealed class EntityJsonDefinitionReader : IEntityDefinitionReader
     /// <see cref="Dataverse.IDataverseClient.TryGetSolutionAttributeMetadataIdsAsync"/>).
     /// Null means no filtering: every attribute in the response is kept.
     /// </summary>
-    public EntityDefinition Read(string content, IReadOnlySet<Guid>? allowedAttributeMetadataIds)
+    public EntityDefinition Read(string content, IReadOnlySet<Guid>? allowedAttributeMetadataIds) =>
+        Read(content, allowedAttributeMetadataIds, optionSetJsonByAttribute: null);
+
+    /// <summary>
+    /// As <see cref="Read(string, IReadOnlySet{Guid}?)"/>, but also merges in
+    /// each option-bearing attribute's choice values —
+    /// <paramref name="optionSetJsonByAttribute"/> maps a logical name (from
+    /// <see cref="ListOptionBearingAttributes"/>) to that attribute's own
+    /// <see cref="Dataverse.IDataverseClient.GetAttributeOptionSetJsonAsync"/>
+    /// response body. Null (or an attribute missing from it) means "not
+    /// fetched" — same as every other absent field, never an error.
+    /// </summary>
+    public EntityDefinition Read(string content, IReadOnlySet<Guid>? allowedAttributeMetadataIds, IReadOnlyDictionary<string, string>? optionSetJsonByAttribute)
     {
         JsonDocument doc;
         try
@@ -86,7 +144,7 @@ public sealed class EntityJsonDefinitionReader : IEntityDefinitionReader
                 attributeElements = attributeElements.Where(a => IsInAllowedSet(a, allowedAttributeMetadataIds));
             }
 
-            var attributes = attributeElements.Select(ParseAttribute).ToList();
+            var attributes = attributeElements.Select(a => ParseAttribute(a, optionSetJsonByAttribute)).ToList();
 
             return new EntityDefinition
             {
@@ -110,18 +168,27 @@ public sealed class EntityJsonDefinitionReader : IEntityDefinitionReader
         && Guid.TryParse(idProperty.GetString(), out var id)
         && allowedAttributeMetadataIds.Contains(id);
 
-    private static AttributeDefinition ParseAttribute(JsonElement attribute)
+    private static AttributeDefinition ParseAttribute(JsonElement attribute, IReadOnlyDictionary<string, string>? optionSetJsonByAttribute)
     {
         if (!attribute.TryGetProperty("LogicalName", out var logicalNameProperty) || logicalNameProperty.ValueKind != JsonValueKind.String)
         {
             throw new InvalidDataException("An attribute is missing its 'LogicalName' property.");
         }
 
+        var logicalName = logicalNameProperty.GetString()!;
+        var type = GetString(attribute, "AttributeType") ?? "Unknown";
+
+        OptionSetFields optionSetFields = default;
+        if (optionSetJsonByAttribute is not null && optionSetJsonByAttribute.TryGetValue(logicalName, out var optionSetJson))
+        {
+            optionSetFields = ParseOptionSetJson(optionSetJson, type);
+        }
+
         return new AttributeDefinition
         {
-            Name = logicalNameProperty.GetString()!,
+            Name = logicalName,
             SchemaName = GetString(attribute, "SchemaName"),
-            Type = GetString(attribute, "AttributeType") ?? "Unknown",
+            Type = type,
             DisplayName = GetLabel(attribute, "DisplayName"),
             Description = GetLabel(attribute, "Description"),
             RequiredLevel = DefaultValueConventions.RequiredLevelOrNull(GetManagedPropertyString(attribute, "RequiredLevel")),
@@ -134,8 +201,113 @@ public sealed class EntityJsonDefinitionReader : IEntityDefinitionReader
             Targets = GetStringArray(attribute, "Targets"),
             IsCustomField = DefaultValueConventions.TrueOrNull(GetBool(attribute, "IsCustomAttribute")),
             ValidForAdvancedFind = GetManagedPropertyBool(attribute, "IsValidForAdvancedFind"),
+            Options = optionSetFields.Options,
+            GlobalOptionSetName = optionSetFields.GlobalOptionSetName,
+            DefaultValue = optionSetFields.DefaultValue,
+            TrueOptionLabel = optionSetFields.TrueOptionLabel,
+            FalseOptionLabel = optionSetFields.FalseOptionLabel,
         };
     }
+
+    private readonly record struct OptionSetFields(
+        IReadOnlyList<AttributeOptionDefinition>? Options,
+        string? GlobalOptionSetName,
+        bool? DefaultValue,
+        string? TrueOptionLabel,
+        string? FalseOptionLabel);
+
+    /// <summary>
+    /// Parses one <see cref="Dataverse.IDataverseClient.GetAttributeOptionSetJsonAsync"/>
+    /// response body — a type-cast attribute with <c>OptionSet</c>/
+    /// <c>GlobalOptionSet</c> expanded (see that method's own doc comment for
+    /// the request shape). Boolean's <c>OptionSet</c> is a fixed
+    /// <c>TrueOption</c>/<c>FalseOption</c> pair rather than a list, so it's
+    /// handled separately from Picklist/MultiSelectPicklist/Status's
+    /// <c>Options</c> array — confirmed against Microsoft's own documented
+    /// shapes for each (see `docs/yaml-conventions.md`).
+    /// </summary>
+    private static OptionSetFields ParseOptionSetJson(string content, string attributeType)
+    {
+        using var doc = JsonDocument.Parse(content);
+        var root = doc.RootElement;
+
+        if (attributeType == "Boolean")
+        {
+            if (!root.TryGetProperty("OptionSet", out var booleanOptionSet) || booleanOptionSet.ValueKind != JsonValueKind.Object)
+            {
+                return default;
+            }
+
+            var trueLabel = GetOptionLabel(booleanOptionSet, "TrueOption") ?? "True";
+            var falseLabel = GetOptionLabel(booleanOptionSet, "FalseOption") ?? "False";
+
+            return new OptionSetFields(
+                Options: null,
+                GlobalOptionSetName: null,
+                // "false" is Dataverse's own default for a new Boolean
+                // column's DefaultValue (see the confirmed create example) —
+                // only "true" is worth stating, same TrueOrNull convention
+                // used for every other "off by default" flag.
+                DefaultValue: DefaultValueConventions.TrueOrNull(GetBool(root, "DefaultValue")),
+                TrueOptionLabel: DefaultValueConventions.BooleanOptionLabelOrNull(trueLabel, "True"),
+                FalseOptionLabel: DefaultValueConventions.BooleanOptionLabelOrNull(falseLabel, "False"));
+        }
+
+        // Picklist / MultiSelectPicklist / Status: a local OptionSet has its
+        // own Options array; a global one instead has a Name and its own
+        // Options array on GlobalOptionSet, with OptionSet itself null —
+        // confirmed against Microsoft's own docs (a picklist attribute never
+        // has both at once).
+        if (root.TryGetProperty("GlobalOptionSet", out var globalOptionSet) && globalOptionSet.ValueKind == JsonValueKind.Object)
+        {
+            return new OptionSetFields(Options: null, GlobalOptionSetName: GetString(globalOptionSet, "Name"), DefaultValue: null, TrueOptionLabel: null, FalseOptionLabel: null);
+        }
+
+        if (root.TryGetProperty("OptionSet", out var localOptionSet) && localOptionSet.ValueKind == JsonValueKind.Object)
+        {
+            var options = ParseOptions(localOptionSet);
+            return new OptionSetFields(Options: options.Count > 0 ? options : null, GlobalOptionSetName: null, DefaultValue: null, TrueOptionLabel: null, FalseOptionLabel: null);
+        }
+
+        return default;
+    }
+
+    private static List<AttributeOptionDefinition> ParseOptions(JsonElement optionSet)
+    {
+        var options = new List<AttributeOptionDefinition>();
+        if (!optionSet.TryGetProperty("Options", out var optionsProperty) || optionsProperty.ValueKind != JsonValueKind.Array)
+        {
+            return options;
+        }
+
+        foreach (var option in optionsProperty.EnumerateArray())
+        {
+            if (option.TryGetProperty("Value", out var valueProperty) && valueProperty.ValueKind == JsonValueKind.Number)
+            {
+                options.Add(new AttributeOptionDefinition
+                {
+                    Value = valueProperty.GetInt32(),
+                    Label = GetLabel(option, "Label") ?? string.Empty,
+                    // Only ever meaningful for a Status option — confirmed
+                    // against Microsoft's own StatusOptionMetadata reference
+                    // ("State: the state that the status is associated
+                    // with"); harmless to read for every other option-bearing
+                    // type too, just never populated there.
+                    State = option.TryGetProperty("State", out var stateProperty) && stateProperty.ValueKind == JsonValueKind.Number
+                        ? stateProperty.GetInt32()
+                        : null,
+                });
+            }
+        }
+
+        return options;
+    }
+
+    /// <summary>Reads a Boolean OptionSet's TrueOption/FalseOption label — same Label shape as everywhere else, one level deeper.</summary>
+    private static string? GetOptionLabel(JsonElement optionSet, string propertyName) =>
+        optionSet.TryGetProperty(propertyName, out var option) && option.ValueKind == JsonValueKind.Object
+            ? GetLabel(option, "Label")
+            : null;
 
     /// <summary>Reads a Dataverse label object's English (or first available) display text.</summary>
     private static string? GetLabel(JsonElement parent, string propertyName)

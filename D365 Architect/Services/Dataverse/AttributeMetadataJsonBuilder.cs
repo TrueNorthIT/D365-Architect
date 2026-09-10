@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using D365Architect.Services.Conversion;
 using D365Architect.Services.Conversion.Models;
 
 namespace D365Architect.Services.Dataverse;
@@ -7,9 +8,10 @@ namespace D365Architect.Services.Dataverse;
 /// Builds/mutates the JSON bodies Dataverse's Web API needs to create or
 /// update a column — confirmed against Microsoft's own documented
 /// create/update examples for each type covered, not guessed. See
-/// <see cref="SupportedTypes"/> for exactly which types that is and
-/// `docs/yaml-conventions.md`'s "Importing tables" section for why the rest
-/// are deliberately excluded rather than attempted anyway.
+/// <see cref="SupportedTypes"/>/<see cref="CreatableTypes"/> for exactly
+/// which types that is and `docs/yaml-conventions.md`'s "Importing tables"
+/// section for why the rest are deliberately excluded rather than attempted
+/// anyway.
 ///
 /// Update is a full-object replace, not a partial patch: Dataverse's own
 /// docs are explicit that <c>PUT</c> on a column "can't update individual
@@ -19,41 +21,66 @@ namespace D365Architect.Services.Dataverse;
 /// and mutates only the fields this tool tracks, in place — the same
 /// retrieve-and-patch principle <see cref="Conversion.FormXmlWriter"/>
 /// already applies to FormXML, applied here to a JSON object instead of an
-/// XML document.
+/// XML document. Microsoft's own docs confirm this pattern applies
+/// generically to every attribute type, not just the ones with type-specific
+/// fields to set — that's what lets <see cref="ApplyUpdateFields"/> cover
+/// <c>Owner</c>/<c>Lookup</c>/<c>Customer</c>/<c>State</c>/<c>Status</c> with
+/// an empty case each (only the shared DisplayName/Description/RequiredLevel
+/// fields ever change on those, the same way <c>BigInt</c> already works).
+///
+/// A choice column's own options are never touched by <see cref="ApplyUpdateFields"/>
+/// at all — Dataverse doesn't allow it as part of the attribute PUT; see
+/// <see cref="BuildOptionChangePlans"/> for the separate action-based
+/// mechanism (<c>InsertOptionValue</c>/<c>UpdateOptionValue</c>/<c>OrderOption</c>/
+/// <c>UpdateStateValue</c>) that handles those instead.
 /// </summary>
 public static class AttributeMetadataJsonBuilder
 {
     /// <summary>
-    /// Every attribute type this tool can safely create or update.
-    /// Deliberately excludes: <c>Picklist</c>/<c>Boolean</c> (need an
-    /// <c>OptionSet</c> definition this tool doesn't capture on export at
-    /// all yet — see <see cref="Conversion.EntityJsonDefinitionReader"/>'s
-    /// own doc comment); <c>Lookup</c>/<c>Customer</c>/<c>Owner</c> (not
-    /// creatable via this endpoint at all — Microsoft's own docs confirm a
-    /// Lookup attribute only comes into existence as part of creating a
-    /// whole relationship, a materially different and much larger
-    /// operation this tool doesn't attempt); <c>Double</c> (no official
-    /// Microsoft example of its create shape could be found — every other
-    /// type here is confirmed against one, and guessing at API shapes that
-    /// could corrupt a live table's schema isn't a risk worth taking); and
-    /// anything else not investigated at all
-    /// (<c>MultiSelectPicklist</c>/<c>State</c>/<c>Status</c>/
-    /// <c>Uniqueidentifier</c>/<c>PartyList</c>/<c>File</c>/<c>Image</c>/
-    /// <c>Virtual</c>/<c>EntityName</c>/<c>ManagedProperty</c>).
+    /// Every attribute type this tool can update via the ordinary
+    /// full-object PUT (<see cref="ApplyUpdateFields"/>) — a superset of
+    /// <see cref="CreatableTypes"/>, since <c>Owner</c>/<c>Lookup</c>/
+    /// <c>Customer</c>/<c>State</c>/<c>Status</c> already exist on every
+    /// table (or come from the separate relationship-creation path — see
+    /// <see cref="BuildRelationshipCreateBody"/>/<see cref="BuildCustomerRelationshipCreateBody"/>)
+    /// and so are only ever updated, never created this way.
+    /// Still excluded entirely: <c>Double</c> (no official Microsoft example
+    /// of its create *or* update shape could be found — every type here is
+    /// confirmed against one, and guessing at a shape that could corrupt a
+    /// live table's schema isn't a risk worth taking), and anything else not
+    /// investigated at all (<c>Uniqueidentifier</c>/<c>PartyList</c>/
+    /// <c>File</c>/<c>Image</c>/<c>EntityName</c>/<c>ManagedProperty</c>).
     /// </summary>
     public static readonly IReadOnlySet<string> SupportedTypes = new HashSet<string>
     {
         "String", "Memo", "Integer", "BigInt", "Decimal", "Money", "DateTime",
+        "Boolean", "Picklist", "MultiSelectPicklist",
+        "Owner", "Lookup", "Customer", "State", "Status",
+    };
+
+    /// <summary>
+    /// Types this tool can create via a plain attribute POST
+    /// (<see cref="BuildCreateBody"/>) — everything in <see cref="SupportedTypes"/>
+    /// except the five that are either never independently creatable
+    /// (<c>Owner</c>/<c>State</c>/<c>Status</c> already exist on every table)
+    /// or created a structurally different way
+    /// (<c>Lookup</c> via <see cref="BuildRelationshipCreateBody"/>,
+    /// <c>Customer</c> via <see cref="BuildCustomerRelationshipCreateBody"/>).
+    /// </summary>
+    public static readonly IReadOnlySet<string> CreatableTypes = new HashSet<string>
+    {
+        "String", "Memo", "Integer", "BigInt", "Decimal", "Money", "DateTime",
+        "Boolean", "Picklist", "MultiSelectPicklist",
     };
 
     /// <summary>
     /// Builds a brand-new attribute's create body from this tool's own
     /// curated <see cref="AttributeDefinition"/> — only ever called for an
     /// attribute that doesn't exist live yet, and only for a type in
-    /// <see cref="SupportedTypes"/>.
+    /// <see cref="CreatableTypes"/>.
     /// </summary>
     /// <exception cref="InvalidOperationException"><paramref name="attribute"/> has no <see cref="AttributeDefinition.SchemaName"/> — required to create a column, and never inferred.</exception>
-    /// <exception cref="NotSupportedException"><paramref name="attribute"/>'s own <see cref="AttributeDefinition.Type"/> isn't in <see cref="SupportedTypes"/>.</exception>
+    /// <exception cref="NotSupportedException"><paramref name="attribute"/>'s own <see cref="AttributeDefinition.Type"/> isn't in <see cref="CreatableTypes"/>.</exception>
     public static JsonObject BuildCreateBody(AttributeDefinition attribute)
     {
         if (attribute.SchemaName is null)
@@ -123,8 +150,53 @@ public static class AttributeMetadataJsonBuilder
                 body["Format"] = attribute.Format ?? "DateAndTime";
                 break;
 
+            case "Boolean":
+                body["DefaultValue"] = attribute.DefaultValue ?? false;
+                body["OptionSet"] = new JsonObject
+                {
+                    ["TrueOption"] = new JsonObject { ["Value"] = 1, ["Label"] = DataverseLabelJson.Build(attribute.TrueOptionLabel ?? "True") },
+                    ["FalseOption"] = new JsonObject { ["Value"] = 0, ["Label"] = DataverseLabelJson.Build(attribute.FalseOptionLabel ?? "False") },
+                    ["OptionSetType"] = "Boolean",
+                };
+                break;
+
+            case "Picklist":
+            case "MultiSelectPicklist":
+                if (attribute.Type == "MultiSelectPicklist")
+                {
+                    // Confirmed against Microsoft's own documented example:
+                    // unlike every other type here, AttributeType itself is
+                    // the literal string "Virtual", not "MultiSelectPicklist"
+                    // — @odata.type and AttributeTypeName.Value (set
+                    // generically above) are unaffected.
+                    body["AttributeType"] = "Virtual";
+                }
+
+                body["SourceTypeMask"] = 0;
+
+                if (attribute.GlobalOptionSetName is not null)
+                {
+                    // The alternate-key bind syntax Microsoft's own docs
+                    // confirm as equally valid to a MetadataId bind — avoids
+                    // this tool needing a separate lookup just to resolve a
+                    // name to an id first.
+                    body["GlobalOptionSet@odata.bind"] = $"/GlobalOptionSetDefinitions(Name='{attribute.GlobalOptionSetName}')";
+                }
+                else
+                {
+                    body["OptionSet"] = new JsonObject
+                    {
+                        ["@odata.type"] = "Microsoft.Dynamics.CRM.OptionSetMetadata",
+                        ["Options"] = BuildOptionsArray(attribute.Options!),
+                        ["IsGlobal"] = false,
+                        ["OptionSetType"] = "Picklist",
+                    };
+                }
+
+                break;
+
             default:
-                throw new NotSupportedException($"'{attribute.Type}' isn't one of the attribute types this tool can create yet — see {nameof(AttributeMetadataJsonBuilder)}.{nameof(SupportedTypes)}.");
+                throw new NotSupportedException($"'{attribute.Type}' isn't one of the attribute types this tool can create yet — see {nameof(AttributeMetadataJsonBuilder)}.{nameof(CreatableTypes)}.");
         }
 
         return body;
@@ -246,8 +318,376 @@ public static class AttributeMetadataJsonBuilder
 
                 break;
 
+            case "Boolean":
+                if (attribute.DefaultValue is not null)
+                {
+                    existing["DefaultValue"] = attribute.DefaultValue.Value;
+                }
+
+                break;
+
+            // Options themselves are never set here — see this class's own
+            // doc comment and BuildOptionChangePlans.
+            case "Picklist":
+            case "MultiSelectPicklist":
+                break;
+
+            // These five never have their own type-specific fields touched
+            // by an update — Owner/Lookup/Customer's own defining
+            // properties (Targets etc.) are immutable after creation
+            // (checked in TableImportService before this is ever called),
+            // and State/Status's options go through BuildOptionChangePlans
+            // instead, exactly like Picklist/MultiSelectPicklist above.
+            case "Owner":
+            case "Lookup":
+            case "Customer":
+            case "State":
+            case "Status":
+                break;
+
             default:
                 throw new NotSupportedException($"'{attribute.Type}' isn't one of the attribute types this tool can update yet — see {nameof(AttributeMetadataJsonBuilder)}.{nameof(SupportedTypes)}.");
         }
     }
+
+    /// <summary>
+    /// Builds the <c>RelationshipDefinitions</c> POST body that creates a
+    /// brand-new, single-target Lookup column — see
+    /// <see cref="Dataverse.IDataverseClient.CreateOneToManyRelationshipAsync"/>.
+    /// Confirmed against Microsoft's own documented example for the request
+    /// shape itself; <see cref="AttributeOptionDefinition"/>-style honesty
+    /// note: <c>AssociatedMenuConfiguration</c>/<c>CascadeConfiguration</c>
+    /// below are that example's own literal values, not independently
+    /// confirmed as what the Maker UI itself defaults a new lookup to — no
+    /// citation for that default was found, unlike every numeric bound this
+    /// class relies on elsewhere.
+    /// </summary>
+    /// <exception cref="InvalidOperationException"><paramref name="attribute"/> is missing <see cref="AttributeDefinition.SchemaName"/>, <see cref="AttributeDefinition.RelationshipSchemaName"/>, or a single <see cref="AttributeDefinition.Targets"/> entry — <see cref="AttributeChangeValidator.ValidateCreate"/> should already have caught this first.</exception>
+    public static JsonObject BuildRelationshipCreateBody(string entityLogicalName, AttributeDefinition attribute)
+    {
+        if (attribute.SchemaName is null)
+        {
+            throw new InvalidOperationException($"'{attribute.Name}' has no SchemaName in the local YAML — required to create a column, and this tool never guesses one.");
+        }
+
+        if (attribute.RelationshipSchemaName is null)
+        {
+            throw new InvalidOperationException($"'{attribute.Name}' has no RelationshipSchemaName in the local YAML — required to create a Lookup column.");
+        }
+
+        if (attribute.Targets is not { Count: 1 })
+        {
+            throw new InvalidOperationException($"'{attribute.Name}' must have exactly one Targets entry to create a plain Lookup column.");
+        }
+
+        var target = attribute.Targets[0];
+
+        var lookup = new JsonObject
+        {
+            ["@odata.type"] = "Microsoft.Dynamics.CRM.LookupAttributeMetadata",
+            ["AttributeType"] = "Lookup",
+            ["AttributeTypeName"] = new JsonObject { ["Value"] = "LookupType" },
+            ["SchemaName"] = attribute.SchemaName,
+            ["RequiredLevel"] = new JsonObject { ["Value"] = attribute.RequiredLevel ?? "None", ["CanBeChanged"] = true },
+        };
+
+        if (attribute.DisplayName is not null)
+        {
+            lookup["DisplayName"] = DataverseLabelJson.Build(attribute.DisplayName);
+        }
+
+        if (attribute.Description is not null)
+        {
+            lookup["Description"] = DataverseLabelJson.Build(attribute.Description);
+        }
+
+        return new JsonObject
+        {
+            ["SchemaName"] = attribute.RelationshipSchemaName,
+            ["@odata.type"] = "Microsoft.Dynamics.CRM.OneToManyRelationshipMetadata",
+            ["AssociatedMenuConfiguration"] = new JsonObject
+            {
+                ["Behavior"] = "UseCollectionName",
+                ["Group"] = "Details",
+                ["Label"] = DataverseLabelJson.Build(attribute.DisplayName ?? attribute.Name),
+                ["Order"] = 10000,
+            },
+            ["CascadeConfiguration"] = new JsonObject
+            {
+                ["Assign"] = "Cascade",
+                ["Delete"] = "Cascade",
+                ["Merge"] = "Cascade",
+                ["Reparent"] = "Cascade",
+                ["Share"] = "Cascade",
+                ["Unshare"] = "Cascade",
+            },
+            // A target's primary key is always its own logical name + "id"
+            // — Dataverse's own fixed, universal naming convention (e.g.
+            // accountid, contactid), safe to derive rather than ask for.
+            ["ReferencedAttribute"] = $"{target}id",
+            ["ReferencedEntity"] = target,
+            ["ReferencingEntity"] = entityLogicalName,
+            ["Lookup"] = lookup,
+        };
+    }
+
+    /// <summary>
+    /// Builds the <c>CreateCustomerRelationships</c> action body — see
+    /// <see cref="Dataverse.IDataverseClient.CreateCustomerRelationshipsAsync"/>.
+    /// Both relationship SchemaNames are derived from the attribute's own
+    /// <see cref="AttributeDefinition.SchemaName"/> plus the fixed
+    /// account/contact targets — Customer's shape never varies, so there's
+    /// nothing here worth its own YAML field for (see
+    /// `docs/yaml-conventions.md`).
+    /// </summary>
+    /// <exception cref="InvalidOperationException"><paramref name="attribute"/> has no <see cref="AttributeDefinition.SchemaName"/> — <see cref="AttributeChangeValidator.ValidateCreate"/> should already have caught this first.</exception>
+    public static JsonObject BuildCustomerRelationshipCreateBody(string entityLogicalName, AttributeDefinition attribute)
+    {
+        if (attribute.SchemaName is null)
+        {
+            throw new InvalidOperationException($"'{attribute.Name}' has no SchemaName in the local YAML — required to create a column, and this tool never guesses one.");
+        }
+
+        // Confirmed against Microsoft's own documented example: unlike a
+        // plain Lookup's own nested attribute, Customer's carries no
+        // RequiredLevel of its own.
+        var lookup = new JsonObject
+        {
+            ["@odata.type"] = "Microsoft.Dynamics.CRM.ComplexLookupAttributeMetadata",
+            ["AttributeType"] = "Lookup",
+            ["AttributeTypeName"] = new JsonObject { ["Value"] = "LookupType" },
+            ["SchemaName"] = attribute.SchemaName,
+        };
+
+        if (attribute.DisplayName is not null)
+        {
+            lookup["DisplayName"] = DataverseLabelJson.Build(attribute.DisplayName);
+        }
+
+        if (attribute.Description is not null)
+        {
+            lookup["Description"] = DataverseLabelJson.Build(attribute.Description);
+        }
+
+        return new JsonObject
+        {
+            ["OneToManyRelationships"] = new JsonArray(
+                new JsonObject { ["SchemaName"] = $"{attribute.SchemaName}_account", ["ReferencedEntity"] = "account", ["ReferencingEntity"] = entityLogicalName },
+                new JsonObject { ["SchemaName"] = $"{attribute.SchemaName}_contact", ["ReferencedEntity"] = "contact", ["ReferencingEntity"] = entityLogicalName }),
+            ["Lookup"] = lookup,
+        };
+    }
+
+    /// <summary>
+    /// Diffs an option-bearing column's local vs. existing choice values
+    /// into the action-based requests needed to reconcile them — never part
+    /// of the ordinary attribute PUT (<see cref="ApplyUpdateFields"/>).
+    /// Per-type behaviour (see `docs/yaml-conventions.md` for the full
+    /// rationale):
+    /// <list type="bullet">
+    /// <item>Boolean: only <c>TrueOptionLabel</c>/<c>FalseOptionLabel</c>
+    /// renames (fixed at Value 1/0).</item>
+    /// <item>Picklist/MultiSelectPicklist (local option set only — a
+    /// <see cref="AttributeDefinition.GlobalOptionSetName"/> column never
+    /// gets automatic option changes, see this class's own top-level doc
+    /// comment on scope): unmatched local values insert, matched values with
+    /// a different label rename, and — only when the value-set is otherwise
+    /// identical and just the order differs — one reorder request. An
+    /// existing value missing from the local YAML is never deleted
+    /// automatically, mirroring <see cref="Conversion.AttributeImportAction.WouldRemove"/>'s
+    /// same policy for a whole column.</item>
+    /// <item>State: only when the live column turns out to use a *local*
+    /// option set (see the next paragraph) — a rename of an already-live
+    /// value's label (<c>UpdateStateValue</c>). Nothing is ever inserted —
+    /// a table's state model is fixed at creation, and there's no
+    /// documented <c>InsertStateValue</c> action to do it with anyway.</item>
+    /// <item>Status: matched by <see cref="AttributeOptionDefinition.Value"/>
+    /// first, same as Picklist — a matched value with a different label
+    /// renames (<c>UpdateOptionValue</c>, the same local action Picklist
+    /// uses; Status's own OptionSet is ordinary in that respect). An
+    /// unmatched local value falls back to a *label* match against what's
+    /// live before treating it as new — confirmed against Microsoft's own
+    /// docs that <c>InsertStatusValue</c>'s request has no <c>Value</c> of
+    /// its own to match by (Dataverse always assigns one), so a status this
+    /// tool already inserted on a previous run, whose YAML hasn't been
+    /// re-exported to pick up the real assigned value yet, is recognized by
+    /// label instead of being inserted a second time. Only once *neither*
+    /// matches is it a genuine insert (<c>InsertStatusValue</c>) — and only
+    /// when <see cref="AttributeOptionDefinition.State"/> is set, since
+    /// Dataverse needs to know which State the new status belongs to and
+    /// this tool never guesses it; missing State surfaces as a warning
+    /// instead (see <see cref="AttributeChangeValidator.Warnings"/>).</item>
+    /// </list>
+    /// Confirmed live, not assumed: on a real tenant, both <c>statecode</c>
+    /// and <c>statuscode</c> come back backed by a *global* option set
+    /// (<c>{entity}_statecode</c>/<c>{entity}_statuscode</c>) on every table
+    /// checked, standard and custom alike — not the "local, per-column"
+    /// shape this class otherwise assumes for State/Status. Since this class
+    /// never touches a global option set's own options (see the "Global
+    /// option sets" scope decision), <see cref="BuildRenameOnlyOptionChangePlans"/>
+    /// only ever runs when <c>existing.GlobalOptionSetName</c> is null —
+    /// which in practice makes State/Status option renaming inert on most
+    /// real tables, by design rather than by omission.
+    /// </summary>
+    public static IReadOnlyList<OptionChangePlan> BuildOptionChangePlans(string entityLogicalName, AttributeDefinition local, AttributeDefinition existing)
+    {
+        return local.Type switch
+        {
+            "Boolean" => BuildBooleanOptionChangePlans(entityLogicalName, local, existing),
+            "State" when existing.GlobalOptionSetName is null => BuildRenameOnlyOptionChangePlans(entityLogicalName, local, existing, OptionChangeAction.UpdateStateValue),
+            "Status" when existing.GlobalOptionSetName is null => BuildStatusOptionChangePlans(entityLogicalName, local, existing),
+            "Picklist" or "MultiSelectPicklist" when local.Options is not null && local.GlobalOptionSetName is null && existing.GlobalOptionSetName is null => BuildLocalOptionSetChangePlans(entityLogicalName, local, existing),
+            _ => [],
+        };
+    }
+
+    private static IReadOnlyList<OptionChangePlan> BuildBooleanOptionChangePlans(string entityLogicalName, AttributeDefinition local, AttributeDefinition existing)
+    {
+        var plans = new List<OptionChangePlan>();
+        var existingTrueLabel = existing.TrueOptionLabel ?? "True";
+        var existingFalseLabel = existing.FalseOptionLabel ?? "False";
+
+        if (local.TrueOptionLabel is not null && local.TrueOptionLabel != existingTrueLabel)
+        {
+            plans.Add(BuildUpdateOptionPlan(entityLogicalName, local.Name, 1, local.TrueOptionLabel));
+        }
+
+        if (local.FalseOptionLabel is not null && local.FalseOptionLabel != existingFalseLabel)
+        {
+            plans.Add(BuildUpdateOptionPlan(entityLogicalName, local.Name, 0, local.FalseOptionLabel));
+        }
+
+        return plans;
+    }
+
+    private static IReadOnlyList<OptionChangePlan> BuildRenameOnlyOptionChangePlans(string entityLogicalName, AttributeDefinition local, AttributeDefinition existing, OptionChangeAction renameAction)
+    {
+        if (local.Options is null)
+        {
+            return [];
+        }
+
+        var existingByValue = (existing.Options ?? []).ToDictionary(o => o.Value);
+        var plans = new List<OptionChangePlan>();
+
+        foreach (var option in local.Options)
+        {
+            if (existingByValue.TryGetValue(option.Value, out var existingOption) && existingOption.Label != option.Label)
+            {
+                var body = new JsonObject
+                {
+                    ["AttributeLogicalName"] = local.Name,
+                    ["EntityLogicalName"] = entityLogicalName,
+                    ["Value"] = option.Value,
+                    ["Label"] = DataverseLabelJson.Build(option.Label),
+                    ["MergeLabels"] = true,
+                };
+                plans.Add(new OptionChangePlan(renameAction, body, $"rename option {option.Value} to '{option.Label}'"));
+            }
+
+            // A local value with no live match is never inserted here — see
+            // this method's own doc comment on AttributeChangeValidator.Warnings.
+        }
+
+        return plans;
+    }
+
+    /// <summary>
+    /// Status's own diff — deliberately not <see cref="OptionSetDiffer"/>
+    /// (which matches purely by Value): a value-only match would either
+    /// never detect a genuine insert (Status never lets this tool choose a
+    /// Value) or, worse, insert the same status reason twice across two
+    /// runs before the YAML is re-exported to pick up the real assigned
+    /// Value. See this class's own <see cref="BuildOptionChangePlans"/> doc
+    /// comment for the full match-by-Value-then-Label reasoning.
+    /// </summary>
+    private static IReadOnlyList<OptionChangePlan> BuildStatusOptionChangePlans(string entityLogicalName, AttributeDefinition local, AttributeDefinition existing)
+    {
+        if (local.Options is null)
+        {
+            return [];
+        }
+
+        var existingByValue = (existing.Options ?? []).ToDictionary(o => o.Value);
+        var existingLabels = (existing.Options ?? []).Select(o => o.Label).ToHashSet(StringComparer.Ordinal);
+        var plans = new List<OptionChangePlan>();
+
+        foreach (var option in local.Options)
+        {
+            if (existingByValue.TryGetValue(option.Value, out var existingOption))
+            {
+                if (existingOption.Label != option.Label)
+                {
+                    plans.Add(BuildUpdateOptionPlan(entityLogicalName, local.Name, option.Value, option.Label));
+                }
+
+                continue;
+            }
+
+            if (existingLabels.Contains(option.Label))
+            {
+                // No Value match, but the label already exists live — most
+                // likely a status this tool inserted on a previous run,
+                // with the YAML not yet re-exported to pick up Dataverse's
+                // own assigned Value. Never a duplicate insert.
+                continue;
+            }
+
+            if (option.State is not null)
+            {
+                plans.Add(BuildInsertStatusPlan(entityLogicalName, local.Name, option));
+            }
+
+            // No live match by Value or Label, and no State given: never
+            // inserted — see AttributeChangeValidator.Warnings for the
+            // surfaced note instead of a guess.
+        }
+
+        return plans;
+    }
+
+    private static OptionChangePlan BuildInsertStatusPlan(string entityLogicalName, string attributeLogicalName, AttributeOptionDefinition option) =>
+        new(OptionChangeAction.InsertStatusValue, new JsonObject
+        {
+            ["AttributeLogicalName"] = attributeLogicalName,
+            ["EntityLogicalName"] = entityLogicalName,
+            ["Label"] = DataverseLabelJson.Build(option.Label),
+            ["StateCode"] = option.State!.Value,
+        }, $"insert status '{option.Label}' (state {option.State})");
+
+    private static IReadOnlyList<OptionChangePlan> BuildLocalOptionSetChangePlans(string entityLogicalName, AttributeDefinition local, AttributeDefinition existing) =>
+        OptionSetDiffer.Diff(local.Options!, existing.Options,
+            option => BuildInsertOptionPlan(entityLogicalName, local.Name, option),
+            (value, label) => BuildUpdateOptionPlan(entityLogicalName, local.Name, value, label),
+            values => BuildOrderOptionsPlan(entityLogicalName, local.Name, values));
+
+    private static OptionChangePlan BuildInsertOptionPlan(string entityLogicalName, string attributeLogicalName, AttributeOptionDefinition option) =>
+        new(OptionChangeAction.InsertOption, new JsonObject
+        {
+            ["AttributeLogicalName"] = attributeLogicalName,
+            ["EntityLogicalName"] = entityLogicalName,
+            ["Value"] = option.Value,
+            ["Label"] = DataverseLabelJson.Build(option.Label),
+        }, $"insert option '{option.Label}' ({option.Value})");
+
+    private static OptionChangePlan BuildUpdateOptionPlan(string entityLogicalName, string attributeLogicalName, int value, string label) =>
+        new(OptionChangeAction.UpdateOption, new JsonObject
+        {
+            ["AttributeLogicalName"] = attributeLogicalName,
+            ["EntityLogicalName"] = entityLogicalName,
+            ["Value"] = value,
+            ["Label"] = DataverseLabelJson.Build(label),
+            ["MergeLabels"] = true,
+        }, $"rename option {value} to '{label}'");
+
+    private static OptionChangePlan BuildOrderOptionsPlan(string entityLogicalName, string attributeLogicalName, IReadOnlyList<int> values) =>
+        new(OptionChangeAction.OrderOptions, new JsonObject
+        {
+            ["EntityLogicalName"] = entityLogicalName,
+            ["AttributeLogicalName"] = attributeLogicalName,
+            ["Values"] = new JsonArray(values.Select(v => (JsonNode)JsonValue.Create(v)).ToArray()),
+        }, "reorder options");
+
+    private static JsonArray BuildOptionsArray(IReadOnlyList<AttributeOptionDefinition> options) =>
+        new(options.Select(o => (JsonNode)new JsonObject { ["Value"] = o.Value, ["Label"] = DataverseLabelJson.Build(o.Label) }).ToArray());
 }
