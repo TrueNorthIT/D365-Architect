@@ -649,6 +649,29 @@ all. Still deliberately excluded entirely:
 - Anything else (`Uniqueidentifier`, `PartyList`, `File`, `Image`,
   `EntityName`, `ManagedProperty`) simply hasn't been investigated.
 
+**`BigInt` is listed as updatable above, but updating an existing one is
+refused (`AttributeChangeValidator`) — confirmed live that Dataverse's
+attribute PUT never actually applies the change.** Creating a BigInt column
+works fine (its own documented create example has no `MinValue`/`MaxValue`,
+confirmed rather than an oversight — see `AttributeMetadataJsonBuilder.BuildCreateBody`'s
+own `BigInt` case), but updating one afterwards — `DisplayName`,
+`Description`, and `RequiredLevel` were each tested individually — returns
+`204` (success) and doesn't even bump the column's own `ModifiedOn`, yet the
+GET straight after shows the original value, unchanged, every time. Verified
+with a hand-built minimal PUT cloned directly from the same GET response
+this tool itself reads, bypassing this tool's own request construction
+entirely, to rule out anything on this side of the write — and re-checked
+after a full table publish, which made no difference either (so this isn't
+the same "needs publish to be visible" gap `systemforms`/`savedqueries`
+have — see "Importing FormXML" and "Importing views" above; the write
+itself never takes effect at all here, publish or not). No Microsoft Learn
+page documents this restriction explicitly — `BigIntAttributeMetadata`'s own
+reference page lists `PUT` as a supported operation with no caveat — so
+treat it as a confirmed-live platform quirk specific to this one type, not
+a citation. This tool refuses the update up front (an `Invalid` plan,
+same mechanism as an immutable `Type`/`SchemaName`/`Targets` change) rather
+than ever claim "Imported." for a write that silently never took effect.
+
 ### Boolean and Choice (Picklist/MultiSelectPicklist)
 
 Both need an `OptionSet` — the actual choice values — which Dataverse only

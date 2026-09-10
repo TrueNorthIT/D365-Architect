@@ -186,6 +186,26 @@ public static class AttributeChangeValidator
             return $"'{local.RequiredLevel}' isn't a valid RequiredLevel — expected one of: {string.Join(", ", ValidRequiredLevels)}.";
         }
 
+        // Confirmed live, not guessed: a BigInt column's attribute PUT
+        // accepts the request (204, ModifiedOn left unchanged) but never
+        // actually persists the change — DisplayName, Description, and
+        // RequiredLevel were each tested individually and all three
+        // silently no-op. Verified with a hand-built minimal body cloned
+        // straight from the same GET this tool itself reads, entirely
+        // bypassing this tool's own request construction, to rule out
+        // anything on this side of the write. This looks like a genuine
+        // Dataverse platform restriction specific to BigIntAttributeMetadata
+        // (see `docs/yaml-conventions.md`'s BigInt note) — creating a BigInt
+        // column is unaffected (see ValidateCreate, which never calls this
+        // with existing set), only updating an already-live one always
+        // silently does nothing, so it's refused up front rather than this
+        // tool ever reporting "Imported." for a write that never took
+        // effect.
+        if (existing is not null && local.Type == "BigInt")
+        {
+            return "BigInt columns can't be updated after creation — confirmed live that Dataverse's attribute PUT accepts the request but never actually applies any change to a BigInt column (not DisplayName, Description, or RequiredLevel), even though it reports success. This tool refuses the update rather than claim a change that silently never took effect.";
+        }
+
         if (local.Type is "String" or "Memo" && local.MaxLength is <= 0)
         {
             return $"MaxLength must be greater than 0 (was {local.MaxLength}).";
