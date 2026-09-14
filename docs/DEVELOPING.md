@@ -339,17 +339,89 @@ that doesn't exist yet on the default branch).
 
 ## Testing
 
-**There are no automated tests in this repo yet** — no test project, no
-xunit/nunit/mstest references. In their place, the doc comments throughout
-`Services/Conversion/` lean heavily on documented, empirical verification —
-phrases like "confirmed live against a real tenant," specific
-occurrence counts across real exported forms, and named incident histories
-(a violation once assumed harmless that actually failed live) stand in for
-what a test suite would otherwise assert. When you change behavior in
-`Services/Conversion/` or `Services/Dataverse/`, the existing bar is to verify
-against a real environment and document what you checked in the same style —
-not just reason about it — before merging. This is a real gap worth closing
-with actual tests over time, not a deliberate design choice to leave uncovered.
+**`D365 Architect.Tests`** (xUnit) covers the pure logic in `Services/Conversion/`
+and `Services/Dataverse/` — every reader, JSON builder, validator, and diff
+algorithm that doesn't itself make an HTTP call. Run it with:
+
+```
+dotnet test "D365 Architect.slnx"
+```
+
+CI (`.github/workflows/build-and-test.yml`) runs the same on every push and
+pull request, against every branch.
+
+**What's covered, and why it's structured this way:**
+
+- **Readers/builders/validators/diffing are tested directly against literal
+  JSON fixtures** — the exact shapes Dataverse's Web API actually returns
+  (`EntityJsonDefinitionReaderTests`, `GlobalChoiceJsonReaderTests`,
+  `AttributeMetadataJsonBuilderTests`, `GlobalChoiceMetadataJsonBuilderTests`,
+  `AttributeChangeValidatorTests`, `OptionSetDifferTests`, ...). Several of
+  these tests exist specifically because they encode a bug that was only ever
+  discoverable by testing against a real tenant — see "Regression tests worth
+  reading before touching their subject" below.
+- **`TableImportService`/`GlobalChoiceImportService`/`ViewImportService`'s own
+  orchestration logic** is tested against a hand-written
+  `FakeDataverseClient` (`TestSupport/FakeDataverseClient.cs`) — no mocking
+  library, matching this codebase's own preference for explicit code. Every
+  method not specifically configured by a test throws
+  `NotImplementedException` rather than silently returning a default, so a
+  test that exercises an unexpected call path fails loudly instead of passing
+  on a bogus result.
+- **`FormXmlWriter`/`FormJsonDefinitionReader`** get a dedicated round-trip
+  suite (`FormXmlWriterTests`) — patch-mode preservation of unmanaged
+  elements, dashboard refusal, and the deterministic-id guarantee that makes
+  re-running on unchanged YAML byte-identical.
+- **Internal classes are tested directly**, not just through their public
+  callers — the main project's `csproj` grants `D365 Architect.Tests`
+  `InternalsVisibleTo` for exactly this.
+
+**What this suite deliberately doesn't cover**: anything that needs a real
+HTTP round-trip to Dataverse — `DataverseClient` itself, `MsalAuthenticationService`,
+and the exact wire-level behavior any live API call actually has (a
+`JsonContent.Create` camelCasing quirk, a 204 that silently didn't apply, a
+missing `@odata.type` producing an entirely different failure than expected —
+see the regression list below for real examples). Nothing short of hitting a
+real tenant catches those; when you touch `DataverseClient`, `TableImportService`,
+`GlobalChoiceImportService`, `FormImportService`, or `ViewImportService`'s
+Dataverse-facing behavior, the existing bar (verify against a real
+environment and document what you checked, "confirmed live" style, the way
+the doc comments throughout `Services/Conversion/`/`Services/Dataverse/`
+already do) still applies **in addition to**, not instead of, adding/updating
+a unit test for the logic you can cover without one.
+
+**Regression tests worth reading before touching their subject** — each of
+these exists because a real, live Dataverse tenant behaved differently than
+the code assumed, confirmed and fixed in a since-merged session, and every one
+is called out by name in its test's own doc comment or `[Fact]` name:
+
+- `EntityJsonDefinitionReaderTests` — a live MultiSelectPicklist column's
+  `AttributeType` reports as `"Virtual"`, not `"MultiSelectPicklist"`; a
+  genuinely local option set can populate *both* `OptionSet` and
+  `GlobalOptionSet`, distinguishable only by `GlobalOptionSet`'s own
+  `IsGlobal` flag; a multi-line label containing `\r\n` must be normalized to
+  `\n` on read or it never round-trips through YAML byte-identical.
+- `AttributeMetadataJsonBuilderTests`/`GlobalChoiceMetadataJsonBuilderTests` —
+  binding a Picklist to an existing global choice needs the choice's raw
+  `MetadataId` GUID, never the `Name=` alternate-key form; an attribute/choice
+  update's cloned body needs `@odata.type` set explicitly or Dataverse
+  silently rejects whichever property doesn't belong on whatever it falls
+  back to resolving; a global choice's cloned update body must have `Options`
+  stripped before the PUT.
+- `AttributeChangeValidatorTests` — a BigInt column's attribute PUT always
+  succeeds (204) without ever actually persisting the change, so updating one
+  is refused outright rather than silently claiming success; a State option's
+  "no live match" warning must never be suppressed by a coincidental label
+  match the way Status's genuinely is.
+- `TableImportServiceTests`/`GlobalChoiceImportServiceTests` — two new
+  columns/choices in the same import can't silently collide on a
+  `SchemaName`/`RelationshipSchemaName`/`Name` Dataverse itself requires to be
+  unique.
+- `FormControlValidatorTests` — a control with both `Control` and
+  `CustomControlId` set must always be reported, even when the rendered
+  FormXML happens not to change as a result (`form import`'s own
+  `SkipBeforePrinting` is where that "even when nothing else differs" case
+  actually gets exercised end to end).
 
 ## Conventions to follow
 

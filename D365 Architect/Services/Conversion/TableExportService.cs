@@ -2,7 +2,7 @@ using D365Architect.Services.Dataverse;
 
 namespace D365Architect.Services.Conversion;
 
-public sealed class TableExportService(IDataverseClient dataverseClient, EntityJsonDefinitionReader reader) : ITableExportService
+public sealed class TableExportService(IDataverseClient dataverseClient, EntityJsonDefinitionReader reader, AttributeOptionSetFetcher optionSetFetcher) : ITableExportService
 {
     public async Task<string> ExportTableAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string? solutionUniqueName, CancellationToken cancellationToken)
     {
@@ -14,7 +14,8 @@ public sealed class TableExportService(IDataverseClient dataverseClient, EntityJ
         }
 
         var json = await dataverseClient.GetEntityDefinitionJsonAsync(environmentUrl, accessToken, entityLogicalName, cancellationToken);
-        var definition = reader.Read(json, allowedAttributeMetadataIds);
+        var optionSetJsonByAttribute = await optionSetFetcher.FetchAsync(environmentUrl, accessToken, entityLogicalName, json, cancellationToken);
+        var definition = reader.Read(json, allowedAttributeMetadataIds, optionSetJsonByAttribute);
         return EntityYamlSerializer.ToYaml(definition);
     }
 }

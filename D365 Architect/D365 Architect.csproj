@@ -21,6 +21,14 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Lets D365Architect.Tests exercise the internal readers/builders/
+         validators directly (GlobalChoiceJsonReader, OptionSetDiffer,
+         DataverseSchemaNaming, ...) rather than only whatever's reachable
+         through the public surface. -->
+    <InternalsVisibleTo Include="D365Architect.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Microsoft's own official FormXML XSD schema, vendored verbatim: see
          Resources/FormXmlSchema/NOTICE.md. Embedded (not just copied to the
          output directory) so FormXmlValidator still has it available from

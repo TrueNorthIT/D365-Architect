@@ -32,7 +32,10 @@ public interface IDataverseClient
     /// <summary>
     /// Fetches every view (<c>savedquery</c>) defined against a table from
     /// the Web API, as raw JSON — the shape
-    /// <see cref="Conversion.ViewJsonDefinitionReader"/> reads.
+    /// <see cref="Conversion.ViewJsonDefinitionReader"/> reads. Reflects the
+    /// *published* state, same as <see cref="TryGetSavedQueryAsync"/> — see
+    /// <see cref="UpdateSavedQueryAsync"/>'s own doc comment for what that
+    /// means for a just-written, not-yet-published change.
     /// </summary>
     Task<string> GetViewDefinitionsJsonAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken);
 
@@ -118,6 +121,16 @@ public interface IDataverseClient
     /// Doesn't check for a concurrent modification either (no ETag/If-Match)
     /// — see `docs/yaml-conventions.md` for what "checking differences" does
     /// and doesn't cover today.
+    ///
+    /// Confirmed live: an ordinary <c>systemforms</c> GET (what
+    /// <see cref="TryGetSystemFormByIdAsync"/> reads) reflects the *published*
+    /// <c>formxml</c>, not necessarily a write this method just made — a
+    /// successful PATCH followed immediately by a GET, with no publish in
+    /// between, doesn't show the change yet. This is genuine Dataverse
+    /// platform behavior, not a bug here, and it's harmless in ordinary use
+    /// since <see cref="PublishEntityAsync"/> always runs immediately after
+    /// this — but it's exactly the kind of thing that looks like "my write
+    /// didn't take" if ever investigated between the two calls.
     /// </summary>
     Task UpdateSystemFormXmlAsync(Uri environmentUrl, string accessToken, Guid formId, string formXml, CancellationToken cancellationToken);
 
@@ -158,6 +171,18 @@ public interface IDataverseClient
     /// (which <c>form import</c> now follows with its own call to
     /// <see cref="PublishEntityAsync"/>), <c>view import</c> doesn't call
     /// that either yet — a still-open gap, not a closed one, for views.
+    ///
+    /// Confirmed live, the same platform behavior <see cref="UpdateSystemFormXmlAsync"/>'s
+    /// own doc comment already notes for forms: a plain <c>savedqueries</c>
+    /// GET (what <see cref="TryGetSavedQueryAsync"/> reads, and what a
+    /// follow-up <c>view export</c> would use to verify this write) reflects
+    /// the *published* <c>fetchxml</c>/<c>layoutxml</c>, not necessarily a
+    /// write this method just made — the change genuinely took, but won't be
+    /// visible via a GET (this tool's own, or the Maker UI's) until
+    /// something publishes the table. The natural "import, then export to
+    /// confirm" workflow will look like the import silently reverted/didn't
+    /// take until that happens — worth knowing up front rather than
+    /// rediscovering it.
     /// </summary>
     Task UpdateSavedQueryAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, string? description, string? fetchXml, string? layoutXml, CancellationToken cancellationToken);
 
@@ -212,4 +237,151 @@ public interface IDataverseClient
     /// called for a type in <see cref="AttributeMetadataJsonBuilder.SupportedTypes"/>.
     /// </summary>
     Task CreateAttributeAsync(Uri environmentUrl, string accessToken, string entityLogicalName, JsonObject attributeMetadata, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Fetches one Boolean/Picklist/MultiSelectPicklist/Status attribute's
+    /// choice values — the same type-cast URL shape as
+    /// <see cref="GetAttributeMetadataJsonAsync"/>, plus
+    /// <c>?$expand=OptionSet,GlobalOptionSet</c>, since neither of those
+    /// collection-valued navigation properties comes back otherwise (nor
+    /// from the bulk <see cref="GetEntityDefinitionJsonAsync"/> query at
+    /// all — confirmed against Microsoft's own docs: you can't
+    /// <c>$select</c>/<c>$expand</c> them inside that polymorphic
+    /// <c>Attributes</c> collection). <b>Not</b> as simple as "a local option
+    /// set comes back with <c>OptionSet</c> populated and <c>GlobalOptionSet</c>
+    /// null; a global one, the reverse" — confirmed live that a genuinely
+    /// local (non-shared) option set can populate <em>both</em>, as literally
+    /// the same object, with <c>IsGlobal:false</c> on each; only
+    /// <c>GlobalOptionSet.IsGlobal</c> reliably says which one it is — see
+    /// <see cref="Conversion.EntityJsonDefinitionReader.ParseOptionSetJson"/>'s
+    /// own doc comment for exactly how that's handled.
+    /// </summary>
+    Task<string> GetAttributeOptionSetJsonAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string attributeLogicalName, string attributeType, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Creates a brand-new Lookup column by creating the one-to-many
+    /// <em>relationship</em> that owns it — confirmed against Microsoft's
+    /// own docs: a plain Lookup attribute only ever comes into existence
+    /// this way, never via <see cref="CreateAttributeAsync"/>. See
+    /// <see cref="AttributeMetadataJsonBuilder.BuildRelationshipCreateBody"/>
+    /// for how <paramref name="relationshipMetadata"/> gets built.
+    /// </summary>
+    Task CreateOneToManyRelationshipAsync(Uri environmentUrl, string accessToken, JsonObject relationshipMetadata, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Creates a brand-new Customer column via the dedicated
+    /// <c>CreateCustomerRelationships</c> action — Microsoft's own docs are
+    /// explicit that a Customer lookup needs this rather than a plain
+    /// attribute POST or a single <see cref="CreateOneToManyRelationshipAsync"/>
+    /// call, since it's really a pair of one-to-many relationships (to
+    /// <c>account</c> and <c>contact</c>) sharing one attribute. See
+    /// <see cref="AttributeMetadataJsonBuilder.BuildCustomerRelationshipCreateBody"/>.
+    /// </summary>
+    Task CreateCustomerRelationshipsAsync(Uri environmentUrl, string accessToken, JsonObject body, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Adds one option to an existing local (never global — see
+    /// `docs/yaml-conventions.md`) choice column, or Status column's
+    /// status-reason set, via the <c>InsertOptionValue</c> action. Never
+    /// called for a Status column — that's <see cref="InsertStatusValueAsync"/>
+    /// instead, Dataverse's own dedicated action for it.
+    /// </summary>
+    Task InsertOptionValueAsync(Uri environmentUrl, string accessToken, JsonObject body, CancellationToken cancellationToken);
+
+    /// <summary>Renames one existing option's label via the <c>UpdateOptionValue</c> action.</summary>
+    Task UpdateOptionValueAsync(Uri environmentUrl, string accessToken, JsonObject body, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Removes one option via the <c>DeleteOptionValue</c> action. Built for
+    /// completeness against Microsoft's documented shape; <c>table import</c>
+    /// never calls this itself today — same "never delete automatically"
+    /// policy already applied to whole columns (see `docs/yaml-conventions.md`).
+    /// </summary>
+    Task DeleteOptionValueAsync(Uri environmentUrl, string accessToken, JsonObject body, CancellationToken cancellationToken);
+
+    /// <summary>Reorders every option on a column at once via the <c>OrderOption</c> action.</summary>
+    Task OrderOptionsAsync(Uri environmentUrl, string accessToken, JsonObject body, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Adds a new status-reason option to a Status (<c>statuscode</c>)
+    /// column via the <c>InsertStatusValue</c> action — a Status column is
+    /// never independently created (every table already has one), so this
+    /// is the only way this tool ever adds to its options.
+    /// </summary>
+    Task InsertStatusValueAsync(Uri environmentUrl, string accessToken, JsonObject body, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Renames an existing State (<c>statecode</c>) option's label via the
+    /// <c>UpdateStateValue</c> action — the only change this tool ever makes
+    /// to a State column; new state values are never added (every table's
+    /// state model is fixed at creation).
+    /// </summary>
+    Task UpdateStateValueAsync(Uri environmentUrl, string accessToken, JsonObject body, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Looks up a global choice (<c>GlobalOptionSetDefinitions</c>) by its
+    /// unique <c>Name</c>, including its own options. Confirmed live, not
+    /// guessed, after two failed attempts: <c>GlobalOptionSetDefinitions</c>
+    /// is typed as the abstract <c>OptionSetMetadataBase</c> by default, so
+    /// (1) plain <c>?$select=Options</c> without a type-cast 400s ("no
+    /// property named 'Options'" on the base type) — needs the same
+    /// <c>/Microsoft.Dynamics.CRM.OptionSetMetadata</c> type-cast URL
+    /// segment <see cref="GetAttributeOptionSetJsonAsync"/> uses; and (2)
+    /// even after the type-cast, <c>Options</c> turns out <em>not</em> to be
+    /// expandable the way an attribute's own <c>OptionSet</c>/
+    /// <c>GlobalOptionSet</c> nav properties are — <c>?$expand=Options</c>
+    /// 400s too ("not a navigation property or complex property") — it must
+    /// be named in <c>$select</c> instead, alongside every other field this
+    /// tool reads (<c>MetadataId</c>, <c>Name</c>, <c>DisplayName</c>,
+    /// <c>Description</c>). Unlike a filtered list query, this is a direct
+    /// key lookup and so 404s rather than coming back empty when nothing
+    /// matches — returns null in that case rather than throwing, the same
+    /// as <see cref="TryGetSystemFormByIdAsync"/>.
+    /// </summary>
+    Task<string?> TryGetGlobalOptionSetJsonAsync(Uri environmentUrl, string accessToken, string name, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Fetches every global choice in the environment, options included —
+    /// the shape <see cref="Conversion.GlobalChoiceJsonReader.ReadMany"/>
+    /// reads. What <c>choice export</c> uses when no <c>--solution</c> is
+    /// given.
+    /// </summary>
+    Task<string> GetGlobalOptionSetsJsonAsync(Uri environmentUrl, string accessToken, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Resolves a solution's unique name to the MetadataIds of the Option
+    /// Set (global choice) components it contains — i.e. which global
+    /// choices that solution actually customizes, as opposed to every
+    /// global choice in the environment. Returns null if no solution with
+    /// that unique name exists. The
+    /// <see cref="TryGetSolutionAttributeMetadataIdsAsync"/> counterpart for
+    /// global choices, same <c>solutioncomponents</c> mechanism, just
+    /// <c>componenttype</c> 9 (Option Set) instead of 2 (Attribute) —
+    /// confirmed live against this environment's own <c>componenttype</c>
+    /// global choice (its Options list names value 9 "Option Set"), the
+    /// same empirical standard already applied to Attribute/View/SystemForm.
+    /// </summary>
+    Task<IReadOnlySet<Guid>?> TryGetSolutionOptionSetMetadataIdsAsync(Uri environmentUrl, string accessToken, string solutionUniqueName, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Creates a brand-new global choice — see
+    /// <c>GlobalChoiceMetadataJsonBuilder.BuildCreateBody</c> for how
+    /// <paramref name="body"/> gets built. Confirmed against Microsoft's own
+    /// documented <c>CreateOptionSet</c> example.
+    /// </summary>
+    Task CreateGlobalOptionSetAsync(Uri environmentUrl, string accessToken, JsonObject body, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Replaces an existing global choice's own metadata (<c>DisplayName</c>/
+    /// <c>Description</c> — never its <c>Options</c>, same "options are a
+    /// separate action" split as <see cref="UpdateAttributeAsync"/>) via a
+    /// full-object PUT, identified by <paramref name="metadataId"/> — unlike
+    /// <see cref="TryGetGlobalOptionSetJsonAsync"/>'s own by-Name lookup,
+    /// Microsoft's own documented <c>UpdateOptionSet</c> operation is only
+    /// confirmed by metadata id, not the Name alternate key, so this tool
+    /// always fetches first (via <see cref="TryGetGlobalOptionSetJsonAsync"/>,
+    /// which returns the id) rather than guessing the alternate key also
+    /// works here.
+    /// </summary>
+    Task UpdateGlobalOptionSetAsync(Uri environmentUrl, string accessToken, Guid metadataId, JsonObject body, CancellationToken cancellationToken);
 }

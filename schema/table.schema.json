@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "D365 Architect table definition",
-  "description": "Declarative YAML shape for a Dynamics table, produced by `d365architect table export`. A field left out of this file was left at Dataverse's own default, not \"unknown\" — see each field's own description for what that default is. Editing this file back into Dataverse (not yet supported) will leave an omitted field at that default rather than whatever it happened to be before.",
+  "description": "Declarative YAML shape for a Dynamics table, produced by `d365architect table export`. A field left out of this file was left at Dataverse's own default, not \"unknown\" — see each field's own description for what that default is. Editing this file back into Dataverse (via the matching `import` command) will leave an omitted field at that default rather than whatever it happened to be before.",
   "type": "object",
   "properties": {
     "entity": {
@@ -112,6 +112,52 @@
           "validForAdvancedFind": {
             "description": "Whether this column can be used in Advanced Find.",
             "type": "boolean"
+          },
+          "options": {
+            "description": "A Picklist/MultiSelectPicklist/State/Status column's own choice values, when it's backed by a *local* option set — null instead when it's backed by a global one (see GlobalOptionSetName; confirmed live that State/Status in particular normally are). Never set together with GlobalOptionSetName — a column uses one or the other, never both. See AttributeOptionDefinition for why Value is always explicit.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "description": "The option's integer value, e.g. 727000000. Ignored for a Status option being newly inserted — see this class's own doc comment.",
+                  "type": "integer"
+                },
+                "label": {
+                  "description": "The option's display label.",
+                  "type": "string"
+                },
+                "state": {
+                  "description": "Status only: which State (0 = Active, 1 = Inactive, by Dataverse's own convention — a table can define more) this status reason belongs to. Required to insert a brand-new Status option — Dataverse's InsertStatusValue action needs it and this tool never guesses it — but not otherwise meaningful (Picklist/ MultiSelectPicklist/State options don't have one; a State option's own Value already is its state).",
+                  "type": "integer"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "value",
+                "label"
+              ]
+            }
+          },
+          "globalOptionSetName": {
+            "description": "The shared GlobalOptionSetDefinitions choice this column uses instead of its own local Options — applies to Picklist/MultiSelectPicklist, and, confirmed live, State/Status too (every statecode/statuscode checked on a real tenant, standard and custom tables alike, turned out to be backed by a global {entity}_statecode/{entity}_statuscode choice, not a local one). This tool only ever *references* an existing global choice by name — it never creates, edits, or deletes one, since that's a shared, cross-table resource with a much wider blast radius than a single column; this also means State/Status option-renaming is inert whenever this is set (see `docs/yaml-conventions.md`).",
+            "type": "string"
+          },
+          "defaultValue": {
+            "description": "Boolean only: the value a new record gets for this column when nothing else is set.",
+            "type": "boolean"
+          },
+          "trueOptionLabel": {
+            "description": "Boolean only: the label shown for \"true\". Omitted when it's Dataverse's own default, \"True\".",
+            "type": "string"
+          },
+          "falseOptionLabel": {
+            "description": "Boolean only: the label shown for \"false\". Omitted when it's Dataverse's own default, \"False\".",
+            "type": "string"
+          },
+          "relationshipSchemaName": {
+            "description": "Lookup only, required to create a brand-new Lookup column: the schema name of the one-to-many relationship that owns this lookup — a separate name from the column's own SchemaName, never inferred. Not used for Customer (its two relationship names are derived from SchemaName instead — see `docs/yaml-conventions.md`) or for any other type.",
+            "type": "string"
           }
         },
         "additionalProperties": false,

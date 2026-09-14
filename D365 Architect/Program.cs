@@ -1,5 +1,6 @@
 using D365Architect.Commands;
 using D365Architect.Commands.Auth;
+using D365Architect.Commands.Choice;
 using D365Architect.Commands.Environments;
 using D365Architect.Commands.Form;
 using D365Architect.Commands.Schema;
@@ -29,6 +30,12 @@ services.AddHttpClient<IDataverseClient, DataverseClient>();
 services.AddSingleton<EntityXmlDefinitionReader>();
 services.AddSingleton<EntityJsonDefinitionReader>();
 
+// Boolean/Picklist/MultiSelectPicklist/Status choice values need their own
+// per-attribute request on top of the bulk entity read above — shared by
+// table export and table import (see AttributeOptionSetFetcher's own doc
+// comment).
+services.AddSingleton<AttributeOptionSetFetcher>();
+
 // Views and forms only ever need one strategy each — see ViewDefinition's
 // doc comment for why the XML-vs-JSON split that entities need doesn't
 // apply here.
@@ -47,6 +54,12 @@ services.AddSingleton<ITableExportService, TableExportService>();
 services.AddSingleton<IViewExportService, ViewExportService>();
 services.AddSingleton<IFormExportService, FormExportService>();
 
+// A global choice is its own top-level component, not scoped under a
+// table — see IGlobalChoiceImportService's own doc comment for why its
+// import can create one from scratch, unlike table/view/form import.
+services.AddSingleton<IGlobalChoiceExportService, GlobalChoiceExportService>();
+services.AddSingleton<IGlobalChoiceImportService, GlobalChoiceImportService>();
+
 // `form build-xml` reads the form's current live FormXML (when it already
 // exists) so it can patch onto it instead of building one from scratch —
 // see FormXmlWriter's own doc comment.
@@ -62,6 +75,12 @@ services.AddSingleton<IFormImportService, FormImportService>();
 // see each interface's own doc comment for exactly what's covered.
 services.AddSingleton<IViewImportService, ViewImportService>();
 services.AddSingleton<ITableImportService, TableImportService>();
+
+// The preview -> diff -> confirm -> apply flow shared by `form import`/
+// `table import`/`view import` (see ImportRunner's own doc comment) —
+// injected into each command like every other service here, rather than
+// shared via a base class they'd have to inherit from.
+services.AddSingleton<ImportRunner>();
 
 // 2. Hand that container to Spectre.Console.Cli via the TypeRegistrar/
 //    TypeResolver adapter, so every command is itself resolved through DI
@@ -83,6 +102,7 @@ app.Configure(config =>
     TableCommands.Configure(config);
     ViewCommands.Configure(config);
     FormCommands.Configure(config);
+    ChoiceCommands.Configure(config);
     SchemaCommands.Configure(config);
 });
 

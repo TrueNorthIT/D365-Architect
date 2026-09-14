@@ -83,22 +83,22 @@ public sealed class ExportFormCommand(IAuthenticationService authenticationServi
         }
         catch (AuthenticationRequiredException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message}[/]");
+            AnsiConsole.MarkupLine($"[red]{ex.Message.EscapeMarkup()}[/]");
             return 1;
         }
         catch (SolutionNotFoundException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message}[/]");
+            AnsiConsole.MarkupLine($"[red]{ex.Message.EscapeMarkup()}[/]");
             return 1;
         }
         catch (InvalidDataException ex)
         {
-            AnsiConsole.MarkupLine($"[red]Couldn't parse the form metadata for '{settings.Table}':[/] {ex.Message}");
+            AnsiConsole.MarkupLine($"[red]Couldn't parse the form metadata for '{settings.Table}':[/] {ex.Message.EscapeMarkup()}");
             return 1;
         }
         catch (HttpRequestException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message}[/]");
+            AnsiConsole.MarkupLine($"[red]{ex.Message.EscapeMarkup()}[/]");
             return 1;
         }
     }

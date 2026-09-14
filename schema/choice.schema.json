@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "D365 Architect global choice list",
+  "description": "Declarative YAML shape for a list of Dynamics global choices, produced by `d365architect choice export`. A field left out of this file was left at Dataverse's own default, not \"unknown\" — see each field's own description for what that default is. Editing this file back into Dataverse (via the matching `import` command) will leave an omitted field at that default rather than whatever it happened to be before.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "description": "The choice's unique name, e.g. \"new_colors\" — its stable identity (there's no separate internal id in this YAML, the way a form needs FormId): Dataverse's own Name never changes after creation, so it's always safe to look up by.",
+        "type": "string"
+      },
+      "displayName": {
+        "description": "The choice's display name.",
+        "type": "string"
+      },
+      "description": {
+        "description": "The choice's description.",
+        "type": "string"
+      },
+      "options": {
+        "description": "The choice's own values. Required to create a brand-new choice — see AttributeOptionDefinition for why a value is always explicit, never invented. Null on an update-only YAML means \"don't touch the options\", same as everywhere else in this tool.",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "description": "The option's integer value, e.g. 727000000. Ignored for a Status option being newly inserted — see this class's own doc comment.",
+              "type": "integer"
+            },
+            "label": {
+              "description": "The option's display label.",
+              "type": "string"
+            },
+            "state": {
+              "description": "Status only: which State (0 = Active, 1 = Inactive, by Dataverse's own convention — a table can define more) this status reason belongs to. Required to insert a brand-new Status option — Dataverse's InsertStatusValue action needs it and this tool never guesses it — but not otherwise meaningful (Picklist/ MultiSelectPicklist/State options don't have one; a State option's own Value already is its state).",
+              "type": "integer"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "value",
+            "label"
+          ]
+        }
+      }
+    },
+    "additionalProperties": false,
+    "required": [
+      "name"
+    ]
+  }
+}

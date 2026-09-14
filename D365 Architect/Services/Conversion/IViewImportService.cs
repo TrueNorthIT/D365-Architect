@@ -17,18 +17,17 @@ namespace D365Architect.Services.Conversion;
 /// <c>QueryType</c>/<c>IsDefault</c>/<c>IsQuickFindQuery</c> are documented
 /// on <see cref="ViewDefinition"/> itself as fields applying a YAML file
 /// back doesn't change.
+///
+/// <see cref="IImportService{TInput,TPreview}.PreviewAsync"/> throws
+/// <see cref="Dataverse.ViewNotFoundException"/> when no view named
+/// <c>view.Name</c> exists yet on <c>view.Entity</c>, and
+/// <see cref="Dataverse.AmbiguousSavedQueryException"/> when more than one
+/// view matches that table + name. <see cref="IImportService{TInput,TPreview}.ApplyAsync"/>
+/// doesn't publish the change.
 /// </summary>
-public interface IViewImportService
-{
-    /// <exception cref="Dataverse.ViewNotFoundException">No view named <c>view.Name</c> exists yet on <c>view.Entity</c>.</exception>
-    /// <exception cref="Dataverse.AmbiguousSavedQueryException">More than one view matches that table + name.</exception>
-    Task<ViewImportPreview> PreviewAsync(Uri environmentUrl, string accessToken, ViewDefinition view, CancellationToken cancellationToken);
+public interface IViewImportService : IImportService<ViewDefinition, ViewImportPreview>;
 
-    /// <summary>Writes <paramref name="preview"/>'s changes back to the same view it was previewed against. Doesn't publish the change.</summary>
-    Task ApplyAsync(Uri environmentUrl, string accessToken, ViewImportPreview preview, CancellationToken cancellationToken);
-}
-
-/// <param name="SavedQueryId">The view's id — what <see cref="IViewImportService.ApplyAsync"/> updates.</param>
+/// <param name="SavedQueryId">The view's id — what <see cref="IImportService{TInput,TPreview}.ApplyAsync"/> updates.</param>
 /// <param name="ExistingDescription">The view's current live description.</param>
 /// <param name="NewDescription">The local YAML's description — null means the YAML never had one, so it's left untouched, not cleared.</param>
 /// <param name="ExistingFetchXml">The view's current live FetchXML.</param>

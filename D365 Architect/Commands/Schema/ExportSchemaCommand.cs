@@ -34,9 +34,9 @@ public sealed class ExportSchemaCommand : Command<ExportSchemaCommand.Settings>
     private const string RoundTripContract =
         "A field left out of this file was left at Dataverse's own default, " +
         "not \"unknown\" — see each field's own description for what that " +
-        "default is. Editing this file back into Dataverse (not yet " +
-        "supported) will leave an omitted field at that default rather than " +
-        "whatever it happened to be before.";
+        "default is. Editing this file back into Dataverse (via the " +
+        "matching `import` command) will leave an omitted field at that " +
+        "default rather than whatever it happened to be before.";
 
     private static readonly IReadOnlyDictionary<string, AssetType> AssetTypes = new Dictionary<string, AssetType>(StringComparer.OrdinalIgnoreCase)
     {
@@ -46,12 +46,14 @@ public sealed class ExportSchemaCommand : Command<ExportSchemaCommand.Settings>
             $"Declarative YAML shape for a Dynamics view, produced by `d365architect view export`. {RoundTripContract}", "view.schema.json"),
         ["form"] = new AssetType(typeof(FormDefinition), "D365 Architect form definition",
             $"Declarative YAML shape for a Dynamics form, produced by `d365architect form export`. {RoundTripContract}", "form.schema.json"),
+        ["choice"] = new AssetType(typeof(IReadOnlyList<GlobalChoiceDefinition>), "D365 Architect global choice list",
+            $"Declarative YAML shape for a list of Dynamics global choices, produced by `d365architect choice export`. {RoundTripContract}", "choice.schema.json"),
     };
 
     public sealed class Settings : CommandSettings
     {
         [CommandOption("-f|--for <ASSET_TYPE>")]
-        [Description("Which asset type's YAML shape to generate a schema for: 'table', 'view', or 'form'.")]
+        [Description("Which asset type's YAML shape to generate a schema for: 'table', 'view', 'form', or 'choice'.")]
         public string For { get; init; } = "table";
 
         [CommandOption("-o|--output <PATH>")]
@@ -63,7 +65,7 @@ public sealed class ExportSchemaCommand : Command<ExportSchemaCommand.Settings>
     {
         if (!AssetTypes.TryGetValue(settings.For, out var assetType))
         {
-            AnsiConsole.MarkupLine($"[red]Unknown asset type '{settings.For}'.[/] Expected 'table', 'view', or 'form'.");
+            AnsiConsole.MarkupLine($"[red]Unknown asset type '{settings.For}'.[/] Expected 'table', 'view', 'form', or 'choice'.");
             return 1;
         }
 
