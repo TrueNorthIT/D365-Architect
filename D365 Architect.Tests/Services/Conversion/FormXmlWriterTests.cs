@@ -141,6 +141,157 @@ public sealed class FormXmlWriterTests
     }
 
     [Fact]
+    public void Write_HiddenField_WithClassIdAndRelationship_WritesBothAttributes()
+    {
+        var form = new FormDefinition
+        {
+            Name = "Test Form",
+            Entity = "tn_test",
+            HiddenFields = [new FormHiddenField { Field = "owninguser", ClassId = "{some-classid}", Relationship = "lead_owning_user" }],
+        };
+
+        var data = XElement.Parse(FormXmlWriter.Write(form)).Element("hiddencontrols")!.Element("data")!;
+        Assert.Equal("{some-classid}", (string)data.Attribute("classid")!);
+        Assert.Equal("lead_owning_user", (string)data.Attribute("relationship")!);
+    }
+
+    // ---- Fields silently dropped on export/import round-trip until fe72321 ----
+
+    [Fact]
+    public void Write_HiddenTabAndSection_WriteVisibleFalse()
+    {
+        var form = new FormDefinition
+        {
+            Name = "Test Form",
+            Entity = "tn_test",
+            Tabs =
+            [
+                new FormTab
+                {
+                    Name = "tab_1",
+                    Visible = false,
+                    Columns = [new FormColumn { Sections = [new FormSection { Name = "section_1", Visible = false }] }],
+                },
+            ],
+        };
+
+        var root = XElement.Parse(FormXmlWriter.Write(form));
+        var tab = root.Element("tabs")!.Element("tab")!;
+        var section = tab.Element("columns")!.Element("column")!.Element("sections")!.Element("section")!;
+
+        Assert.Equal("false", (string)tab.Attribute("visible")!);
+        Assert.Equal("false", (string)section.Attribute("visible")!);
+    }
+
+    [Fact]
+    public void Write_HiddenControlLabelAndSectionLabel_WriteShowLabelFalse()
+    {
+        var form = new FormDefinition
+        {
+            Name = "Test Form",
+            Entity = "tn_test",
+            Tabs =
+            [
+                new FormTab
+                {
+                    Name = "tab_1",
+                    Columns =
+                    [
+                        new FormColumn
+                        {
+                            Sections =
+                            [
+                                new FormSection
+                                {
+                                    Name = "section_1",
+                                    ShowLabel = false,
+                                    Controls = [new FormControl { Id = "tn_name", Field = "tn_name", ShowLabel = false, Control = "SingleLineText" }],
+                                },
+                            ],
+                        },
+                    ],
+                },
+            ],
+        };
+
+        var root = XElement.Parse(FormXmlWriter.Write(form));
+        var section = root.Element("tabs")!.Element("tab")!.Element("columns")!.Element("column")!.Element("sections")!.Element("section")!;
+        var cell = section.Element("rows")!.Element("row")!.Element("cell")!;
+
+        Assert.Equal("false", (string)section.Attribute("showlabel")!);
+        Assert.Equal("false", (string)cell.Attribute("showlabel")!);
+    }
+
+    [Fact]
+    public void Write_TabCollapsibleAndAvailableOnPhone_WritesBothAttributes()
+    {
+        var form = new FormDefinition
+        {
+            Name = "Test Form",
+            Entity = "tn_test",
+            Tabs = [new FormTab { Name = "tab_1", Collapsible = true, AvailableOnPhone = false, Columns = [] }],
+        };
+
+        var tab = XElement.Parse(FormXmlWriter.Write(form)).Element("tabs")!.Element("tab")!;
+        Assert.Equal("true", (string)tab.Attribute("collapsible")!);
+        Assert.Equal("false", (string)tab.Attribute("availableforphone")!);
+    }
+
+    [Fact]
+    public void Write_ControlIsUnboundAndIsRequired_WritesBothAttributes()
+    {
+        var form = new FormDefinition
+        {
+            Name = "Test Form",
+            Entity = "tn_test",
+            Tabs =
+            [
+                new FormTab
+                {
+                    Name = "tab_1",
+                    Columns =
+                    [
+                        new FormColumn
+                        {
+                            Sections =
+                            [
+                                new FormSection
+                                {
+                                    Name = "section_1",
+                                    Controls = [new FormControl { Id = "tn_name", Field = "tn_name", Control = "SingleLineText", IsUnbound = true, IsRequired = true }],
+                                },
+                            ],
+                        },
+                    ],
+                },
+            ],
+        };
+
+        var control = XElement.Parse(FormXmlWriter.Write(form)).Element("tabs")!.Element("tab")!.Element("columns")!.Element("column")!
+            .Element("sections")!.Element("section")!.Element("rows")!.Element("row")!.Element("cell")!.Element("control")!;
+
+        Assert.Equal("true", (string)control.Attribute("isunbound")!);
+        Assert.Equal("true", (string)control.Attribute("isrequired")!);
+    }
+
+    [Fact]
+    public void Write_LabelTranslations_WritesOneAdditionalLabelElementPerLanguage()
+    {
+        var form = new FormDefinition
+        {
+            Name = "Test Form",
+            Entity = "tn_test",
+            Tabs = [new FormTab { Name = "tab_1", Label = "General", Translations = new Dictionary<int, string> { [1036] = "Général" }, Columns = [] }],
+        };
+
+        var labels = XElement.Parse(FormXmlWriter.Write(form)).Element("tabs")!.Element("tab")!.Element("labels")!.Elements("label").ToList();
+
+        Assert.Equal(2, labels.Count);
+        Assert.Contains(labels, l => (string)l.Attribute("languagecode")! == "1033" && (string)l.Attribute("description")! == "General");
+        Assert.Contains(labels, l => (string)l.Attribute("languagecode")! == "1036" && (string)l.Attribute("description")! == "Général");
+    }
+
+    [Fact]
     public void Write_DisplayCondition_WithNoRoles_WritesEveryone()
     {
         var form = new FormDefinition
@@ -192,5 +343,196 @@ public sealed class FormXmlWriterTests
         var first = FormXmlWriter.Write(form);
         var second = FormXmlWriter.Write(form);
         Assert.Equal(first, second);
+    }
+
+    private static FormDefinition ReadBack(FormDefinition original)
+    {
+        var formXml = FormXmlWriter.Write(original);
+        var wrapped = JsonSerializer.Serialize(new
+        {
+            value = new[] { new { name = original.Name, formid = Guid.Empty, objecttypecode = original.Entity, formxml = formXml } },
+        });
+
+        return new FormJsonDefinitionReader().Read(wrapped)[0];
+    }
+
+    [Fact]
+    public void RoundTrip_PreviouslyDroppedTabAndSectionFields_AreAllPreserved()
+    {
+        // fe72321: Visible/ShowLabel/Translations/AvailableOnPhone/Collapsible
+        // had no model property at all and were silently lost on every
+        // export/import round-trip before that fix.
+        var original = new FormDefinition
+        {
+            Name = "Test Form",
+            Entity = "tn_test",
+            Tabs =
+            [
+                new FormTab
+                {
+                    Name = "tab_1",
+                    Label = "General",
+                    Translations = new Dictionary<int, string> { [1036] = "Général" },
+                    Visible = false,
+                    Collapsible = true,
+                    AvailableOnPhone = false,
+                    Columns =
+                    [
+                        new FormColumn
+                        {
+                            Sections =
+                            [
+                                new FormSection
+                                {
+                                    Name = "section_1",
+                                    Visible = false,
+                                    ShowLabel = false,
+                                    AvailableOnPhone = true,
+                                },
+                            ],
+                        },
+                    ],
+                },
+            ],
+        };
+
+        var tab = ReadBack(original).Tabs[0];
+        var section = tab.Columns[0].Sections[0];
+
+        Assert.False(tab.Visible);
+        Assert.True(tab.Collapsible);
+        Assert.False(tab.AvailableOnPhone);
+        Assert.Equal("Général", tab.Translations![1036]);
+
+        Assert.False(section.Visible);
+        Assert.False(section.ShowLabel);
+        Assert.True(section.AvailableOnPhone);
+    }
+
+    [Fact]
+    public void RoundTrip_PreviouslyDroppedControlAndHiddenFieldFields_AreAllPreserved()
+    {
+        var original = new FormDefinition
+        {
+            Name = "Test Form",
+            Entity = "tn_test",
+            Tabs =
+            [
+                new FormTab
+                {
+                    Name = "tab_1",
+                    Columns =
+                    [
+                        new FormColumn
+                        {
+                            Sections =
+                            [
+                                new FormSection
+                                {
+                                    Name = "section_1",
+                                    Controls =
+                                    [
+                                        new FormControl
+                                        {
+                                            Id = "tn_lookup",
+                                            Field = "tn_lookup",
+                                            Label = "Lookup Field",
+                                            Control = "Lookup",
+                                            Translations = new Dictionary<int, string> { [1036] = "Recherche" },
+                                            IsUnbound = true,
+                                            IsRequired = true,
+                                            ShowLabel = false,
+                                            AvailableOnPhone = true,
+                                        },
+                                    ],
+                                },
+                            ],
+                        },
+                    ],
+                },
+            ],
+            HiddenFields = [new FormHiddenField { Field = "owninguser", Relationship = "lead_owning_user" }],
+        };
+
+        var readBack = ReadBack(original);
+        var control = readBack.Tabs[0].Columns[0].Sections[0].Controls[0];
+        var hiddenField = readBack.HiddenFields![0];
+
+        Assert.True(control.IsUnbound);
+        Assert.True(control.IsRequired);
+        Assert.False(control.ShowLabel);
+        Assert.True(control.AvailableOnPhone);
+        Assert.Equal("Recherche", control.Translations![1036]);
+
+        Assert.Equal("lead_owning_user", hiddenField.Relationship);
+    }
+
+    [Fact]
+    public void RoundTrip_FalseInsideDataSetNode_IsPreserved_ButOrdinaryParameterFalse_IsStripped()
+    {
+        // 42ac565: "false" is dropped as equivalent to "omitted" for every
+        // FormXml.xsd-governed parameter, but a <data-set>-wrapped block
+        // belongs to a PCF control's own manifest instead, where a
+        // boolean's structural presence (not just its value) can be
+        // meaningful - confirmed live for ActivityCalendarControl's
+        // IsUserView. Dropping it there breaks the import.
+        var dataSet = new Dictionary<string, object>
+        {
+            ["attributes"] = new Dictionary<string, object> { ["name"] = "Calendar" },
+            ["ViewId"] = "11111111-1111-1111-1111-111111111111",
+            ["IsUserView"] = "false",
+        };
+
+        var original = new FormDefinition
+        {
+            Name = "Test Form",
+            Entity = "tn_test",
+            Tabs =
+            [
+                new FormTab
+                {
+                    Name = "tab_1",
+                    Columns =
+                    [
+                        new FormColumn
+                        {
+                            Sections =
+                            [
+                                new FormSection
+                                {
+                                    Name = "section_1",
+                                    Controls =
+                                    [
+                                        new FormControl
+                                        {
+                                            Id = "tn_calendar",
+                                            Control = "Subgrid",
+                                            Parameters = new Dictionary<string, object> { ["data-set"] = dataSet },
+                                        },
+                                        new FormControl
+                                        {
+                                            Id = "tn_plain",
+                                            Control = "Subgrid",
+                                            Parameters = new Dictionary<string, object> { ["ShowChart"] = "false" },
+                                        },
+                                    ],
+                                },
+                            ],
+                        },
+                    ],
+                },
+            ],
+        };
+
+        var controls = ReadBack(original).Tabs[0].Columns[0].Sections[0].Controls;
+
+        var parameters = (IDictionary<string, object>)controls[0].Parameters!;
+        var readBackDataSet = (IDictionary<string, object>)parameters["data-set"];
+        Assert.Equal("false", readBackDataSet["IsUserView"]);
+
+        // The sibling control's plain (non-data-set) "false" parameter is
+        // dropped exactly as before - this fix must not weaken that rule
+        // for the ordinary, XSD-governed case.
+        Assert.Null(controls[1].Parameters);
     }
 }
