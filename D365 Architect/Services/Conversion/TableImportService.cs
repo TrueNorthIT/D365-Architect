@@ -12,7 +12,12 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
         var existingOptionSetJsonByAttribute = await optionSetFetcher.FetchAsync(environmentUrl, accessToken, entity.LogicalName, existingJson, cancellationToken);
         var existingEntity = reader.Read(existingJson, allowedAttributeMetadataIds: null, existingOptionSetJsonByAttribute);
 
-        var existingYaml = EntityYamlSerializer.ToYaml(existingEntity);
+        // Re-sorted to the local file's own column order before rendering —
+        // see EntityDefinition.WithAttributes for why: otherwise the diff
+        // below misreports columns that are simply in a different order
+        // (Dataverse's return order vs. whatever order the human wrote them
+        // in) as wholesale removed-and-re-added.
+        var existingYaml = EntityYamlSerializer.ToYaml(existingEntity.WithAttributes(OrderForDiff(existingEntity.Attributes, entity.Attributes)));
         var newYaml = EntityYamlSerializer.ToYaml(entity);
 
         var tableUpdateBody = await BuildTableUpdateBodyAsync(environmentUrl, accessToken, entity, existingEntity, cancellationToken);
@@ -217,6 +222,34 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
 
     private static bool TargetsMatch(IReadOnlyList<string> local, IReadOnlyList<string>? existing) =>
         existing is not null && local.ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(existing);
+
+    /// <summary>
+    /// <paramref name="existing"/>'s columns, re-sorted to match
+    /// <paramref name="local"/>'s own column order (by name) — see
+    /// <see cref="EntityDefinition.WithAttributes"/> for why. A column
+    /// present on both sides sorts to where it appears in
+    /// <paramref name="local"/>; anything live-only (nothing in
+    /// <paramref name="local"/> to match against) keeps its original,
+    /// live-returned relative order and simply sorts after everything
+    /// matched — <see cref="Enumerable.OrderBy{T,TKey}(IEnumerable{T},Func{T,TKey})"/>
+    /// is a stable sort, so those ties don't need a secondary key.
+    /// </summary>
+    private static IReadOnlyList<AttributeDefinition> OrderForDiff(IReadOnlyList<AttributeDefinition> existing, IReadOnlyList<AttributeDefinition> local)
+    {
+        // GroupBy rather than a straight ToDictionary: a malformed local
+        // YAML naming the same column twice shouldn't blow up the preview
+        // over what's only ever a display-ordering nicety — first mention
+        // wins, same as every other by-name lookup over local.Attributes
+        // elsewhere in this file.
+        var localOrder = local
+            .Select((a, i) => (a.Name, i))
+            .GroupBy(t => t.Name, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First().i, StringComparer.OrdinalIgnoreCase);
+
+        return existing
+            .OrderBy(a => localOrder.TryGetValue(a.Name, out var i) ? i : int.MaxValue)
+            .ToList();
+    }
 
     /// <summary>
     /// Owner/State/Status are created automatically with every table and can
