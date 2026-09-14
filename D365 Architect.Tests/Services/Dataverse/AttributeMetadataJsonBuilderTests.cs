@@ -312,16 +312,46 @@ public sealed class AttributeMetadataJsonBuilderTests
         var cascade = body["CascadeConfiguration"]!;
         Assert.Equal("NoCascade", (string)cascade["Assign"]!);
         Assert.Equal("RemoveLink", (string)cascade["Delete"]!);
-        Assert.Equal("Cascade", (string)cascade["Merge"]!);
-        Assert.Equal("Cascade", (string)cascade["Reparent"]!);
+        Assert.Equal("NoCascade", (string)cascade["Merge"]!);
+        Assert.Equal("NoCascade", (string)cascade["Reparent"]!);
         Assert.Equal("NoCascade", (string)cascade["Share"]!);
         Assert.Equal("NoCascade", (string)cascade["Unshare"]!);
     }
 
     [Theory]
+    [InlineData("Referential")]
+    [InlineData("ReferentialRestrictDelete")]
+    public void BuildRelationshipCreateBody_NonParentalBehaviors_NeverTripParentalDeterminant(string behavior)
+    {
+        // Regression test for the exact bug this tool shipped once already:
+        // Microsoft's own documented rule (entity-relationship-behavior
+        // #BKMK_ParentalEntityRelationships) is that a relationship counts
+        // as Parental — and so collides with an existing Parental
+        // relationship on the same entity — if Delete=Cascade, OR any of
+        // Assign/Share/Unshare/Reparent is Cascade/UserOwned/Active. An
+        // earlier "Referential" preset here set Reparent: Cascade and still
+        // hit 0x80047007 despite being named Referential. Confirmed live.
+        var attribute = Attr("Lookup", configure: b =>
+        {
+            b.RelationshipSchemaName = "tn_test_contact";
+            b.Targets = ["contact"];
+            b.RelationshipBehavior = behavior;
+        });
+
+        var body = AttributeMetadataJsonBuilder.BuildRelationshipCreateBody("tn_test", attribute);
+        var cascade = body["CascadeConfiguration"]!;
+
+        Assert.NotEqual("Cascade", (string)cascade["Delete"]!);
+        foreach (var action in new[] { "Assign", "Share", "Unshare", "Reparent" })
+        {
+            Assert.Equal("NoCascade", (string)cascade[action]!);
+        }
+    }
+
+    [Theory]
     [InlineData("Parental", "Cascade", "Cascade", "Cascade", "Cascade", "Cascade", "Cascade")]
-    [InlineData("ReferentialRestrictDelete", "NoCascade", "Restrict", "Cascade", "Cascade", "NoCascade", "NoCascade")]
-    [InlineData("referential", "NoCascade", "RemoveLink", "Cascade", "Cascade", "NoCascade", "NoCascade")]
+    [InlineData("ReferentialRestrictDelete", "NoCascade", "Restrict", "NoCascade", "NoCascade", "NoCascade", "NoCascade")]
+    [InlineData("referential", "NoCascade", "RemoveLink", "NoCascade", "NoCascade", "NoCascade", "NoCascade")]
     public void BuildRelationshipCreateBody_RelationshipBehavior_ChoosesMatchingCascadeConfiguration(
         string behavior, string assign, string delete, string merge, string reparent, string share, string unshare)
     {

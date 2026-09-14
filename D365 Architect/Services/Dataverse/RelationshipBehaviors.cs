@@ -17,10 +17,19 @@ public static class RelationshipBehaviors
 {
     /// <summary>
     /// Referential — the Maker UI's own default for a brand-new lookup.
-    /// Confirmed live: this is what avoids <c>0x80047007</c> ("is parented
-    /// to Entity ... Cannot create another parental relation") when the
-    /// referencing entity already has a Parental relationship elsewhere,
-    /// unlike this tool's original hardcoded all-Cascade body.
+    /// This is what avoids <c>0x80047007</c> ("is parented to Entity ...
+    /// Cannot create another parental relation") when the referencing
+    /// entity already has a Parental relationship elsewhere, unlike this
+    /// tool's original hardcoded all-Cascade body — but confirmed live
+    /// (the hard way, on a real tenant) that an earlier version of this
+    /// preset still hit that same error despite naming itself Referential:
+    /// it had <c>Reparent: Cascade</c>, and Microsoft's own docs on what
+    /// makes a relationship "parental" for this exact restriction (see
+    /// `entity-relationship-behavior#BKMK_ParentalEntityRelationships`)
+    /// say a relationship counts as Parental if *any* of Delete=Cascade,
+    /// or Assign/Share/Unshare/Reparent ∈ {Cascade, UserOwned, Active} —
+    /// Merge isn't a determinant at all. Every field below reflects that
+    /// table, not this class's own earlier, wrong assumption.
     /// </summary>
     public const string Referential = "Referential";
 
@@ -36,18 +45,20 @@ public static class RelationshipBehaviors
     /// <returns>The <c>CascadeConfiguration</c> body for <paramref name="behavior"/> (case-insensitive), or null when it isn't one of <see cref="Names"/>.</returns>
     public static JsonObject? CascadeConfigurationOrNull(string behavior)
     {
-        // Values confirmed against Microsoft's own documented
-        // CascadeConfiguration meaning for each named Behavior: Parental
-        // cascades everything; Referential only cascades Merge/Reparent
-        // (an existing child follows its parent's identity) and otherwise
-        // leaves Assign/Share/Unshare alone and merely unlinks (rather than
-        // blocking or cascading) on Delete; Referential, Restrict Delete is
-        // identical except deleting a parent with children is blocked
-        // outright instead of unlinking them.
+        // Every field here follows Microsoft's own documented
+        // "Parental"/"Not Parental" table (see this class's own Referential
+        // doc comment for the citation): Referential/ReferentialRestrictDelete
+        // keep Assign/Share/Unshare/Reparent at NoCascade and Merge at
+        // NoCascade too (confirmed against a real Referential relationship's
+        // own live CascadeConfiguration — Merge isn't a "Not Parental"
+        // requirement, but NoCascade is genuinely what a plain lookup gets,
+        // not Cascade), differing only in Delete: RemoveLink (unlink
+        // children) vs Restrict (block the delete outright). Parental
+        // cascades everything, including Merge.
         return behavior.ToUpperInvariant() switch
         {
-            "REFERENTIAL" => Build(assign: "NoCascade", delete: "RemoveLink", merge: "Cascade", reparent: "Cascade", share: "NoCascade", unshare: "NoCascade"),
-            "REFERENTIALRESTRICTDELETE" => Build(assign: "NoCascade", delete: "Restrict", merge: "Cascade", reparent: "Cascade", share: "NoCascade", unshare: "NoCascade"),
+            "REFERENTIAL" => Build(assign: "NoCascade", delete: "RemoveLink", merge: "NoCascade", reparent: "NoCascade", share: "NoCascade", unshare: "NoCascade"),
+            "REFERENTIALRESTRICTDELETE" => Build(assign: "NoCascade", delete: "Restrict", merge: "NoCascade", reparent: "NoCascade", share: "NoCascade", unshare: "NoCascade"),
             "PARENTAL" => Build(assign: "Cascade", delete: "Cascade", merge: "Cascade", reparent: "Cascade", share: "Cascade", unshare: "Cascade"),
             _ => null,
         };
