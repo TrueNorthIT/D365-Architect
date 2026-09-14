@@ -157,4 +157,17 @@ public sealed class AttributeDefinition
     /// </summary>
     [YamlMember(Order = 21)]
     public string? RelationshipSchemaName { get; init; }
+
+    /// <summary>
+    /// Lookup only: the new relationship's Behavior — "Referential",
+    /// "ReferentialRestrictDelete", or "Parental" (see
+    /// <see cref="Dataverse.RelationshipBehaviors"/>). Only present when set
+    /// to something other than "Referential" — the Maker UI's own default
+    /// for a brand-new lookup, and the only one of the three that never
+    /// collides with another Parental relationship the referencing table
+    /// might already have (see `docs/yaml-conventions.md`).
+    /// </summary>
+    [YamlMember(Order = 22)]
+    [Schema.SchemaEnum(typeof(Dataverse.RelationshipBehaviors), nameof(Dataverse.RelationshipBehaviors.Names))]
+    public string? RelationshipBehavior { get; init; }
 }

@@ -29,6 +29,7 @@ public sealed class AttributeDefinitionBuilder(string type, string? schemaName =
     public string? TrueOptionLabel { get; set; }
     public string? FalseOptionLabel { get; set; }
     public string? RelationshipSchemaName { get; set; }
+    public string? RelationshipBehavior { get; set; }
 
     public AttributeDefinition Build() => new()
     {
@@ -51,6 +52,7 @@ public sealed class AttributeDefinitionBuilder(string type, string? schemaName =
         TrueOptionLabel = TrueOptionLabel,
         FalseOptionLabel = FalseOptionLabel,
         RelationshipSchemaName = RelationshipSchemaName,
+        RelationshipBehavior = RelationshipBehavior,
     };
 
     public static AttributeDefinition Create(string type, string? schemaName = "tn_Test", Action<AttributeDefinitionBuilder>? configure = null)

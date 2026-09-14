@@ -411,14 +411,19 @@ public static class AttributeMetadataJsonBuilder
     /// brand-new, single-target Lookup column — see
     /// <see cref="Dataverse.IDataverseClient.CreateOneToManyRelationshipAsync"/>.
     /// Confirmed against Microsoft's own documented example for the request
-    /// shape itself; <see cref="AttributeOptionDefinition"/>-style honesty
-    /// note: <c>AssociatedMenuConfiguration</c>/<c>CascadeConfiguration</c>
-    /// below are that example's own literal values, not independently
-    /// confirmed as what the Maker UI itself defaults a new lookup to — no
-    /// citation for that default was found, unlike every numeric bound this
-    /// class relies on elsewhere.
+    /// shape itself; <c>CascadeConfiguration</c> below defaults to the Maker
+    /// UI's own default relationship behavior for a brand-new lookup —
+    /// "Referential" (see <see cref="RelationshipBehaviors"/>) — rather than
+    /// "Parental" (all-Cascade): an entity can only be the child in one
+    /// Parental relationship at a time, so defaulting new lookups to
+    /// Parental broke creating a second lookup to a different parent entity
+    /// once one Parental relationship already existed (confirmed live:
+    /// Dataverse error 0x80047007, "is parented to Entity ... Cannot create
+    /// another parental relation"). <see cref="AttributeDefinition.RelationshipBehavior"/>
+    /// overrides that default when a maker deliberately wants Parental (or
+    /// Referential, Restrict Delete) instead.
     /// </summary>
-    /// <exception cref="InvalidOperationException"><paramref name="attribute"/> is missing <see cref="AttributeDefinition.SchemaName"/>, <see cref="AttributeDefinition.RelationshipSchemaName"/>, or a single <see cref="AttributeDefinition.Targets"/> entry — <see cref="AttributeChangeValidator.ValidateCreate"/> should already have caught this first.</exception>
+    /// <exception cref="InvalidOperationException"><paramref name="attribute"/> is missing <see cref="AttributeDefinition.SchemaName"/>, <see cref="AttributeDefinition.RelationshipSchemaName"/>, or a single <see cref="AttributeDefinition.Targets"/> entry, or has a <see cref="AttributeDefinition.RelationshipBehavior"/> that isn't one of <see cref="RelationshipBehaviors.Names"/> — <see cref="AttributeChangeValidator.ValidateCreate"/> should already have caught this first.</exception>
     public static JsonObject BuildRelationshipCreateBody(string entityLogicalName, AttributeDefinition attribute)
     {
         if (attribute.SchemaName is null)
@@ -435,6 +440,9 @@ public static class AttributeMetadataJsonBuilder
         {
             throw new InvalidOperationException($"'{attribute.Name}' must have exactly one Targets entry to create a plain Lookup column.");
         }
+
+        var cascadeConfiguration = RelationshipBehaviors.CascadeConfigurationOrNull(attribute.RelationshipBehavior ?? RelationshipBehaviors.Referential)
+            ?? throw new InvalidOperationException($"'{attribute.RelationshipBehavior}' isn't a valid RelationshipBehavior for '{attribute.Name}' — expected one of: {string.Join(", ", RelationshipBehaviors.Names)}.");
 
         var target = attribute.Targets[0];
 
@@ -468,15 +476,7 @@ public static class AttributeMetadataJsonBuilder
                 ["Label"] = DataverseLabelJson.Build(attribute.DisplayName ?? attribute.Name),
                 ["Order"] = 10000,
             },
-            ["CascadeConfiguration"] = new JsonObject
-            {
-                ["Assign"] = "Cascade",
-                ["Delete"] = "Cascade",
-                ["Merge"] = "Cascade",
-                ["Reparent"] = "Cascade",
-                ["Share"] = "Cascade",
-                ["Unshare"] = "Cascade",
-            },
+            ["CascadeConfiguration"] = cascadeConfiguration,
             // A target's primary key is always its own logical name + "id"
             // — Dataverse's own fixed, universal naming convention (e.g.
             // accountid, contactid), safe to derive rather than ask for.

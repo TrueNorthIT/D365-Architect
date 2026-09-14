@@ -294,6 +294,98 @@ public sealed class AttributeMetadataJsonBuilderTests
         Assert.Equal("Microsoft.Dynamics.CRM.LookupAttributeMetadata", (string)body["Lookup"]!["@odata.type"]!);
     }
 
+    [Fact]
+    public void BuildRelationshipCreateBody_UsesReferentialCascadeBehavior_NotParental()
+    {
+        // Parental (all-Cascade) would block creating this lookup outright
+        // if the entity already has a Parental relationship to a different
+        // parent — Dataverse only allows one. New lookups must default to
+        // Referential, matching the Maker UI, not Parental.
+        var attribute = Attr("Lookup", configure: b =>
+        {
+            b.RelationshipSchemaName = "tn_test_contact";
+            b.Targets = ["contact"];
+        });
+
+        var body = AttributeMetadataJsonBuilder.BuildRelationshipCreateBody("tn_test", attribute);
+
+        var cascade = body["CascadeConfiguration"]!;
+        Assert.Equal("NoCascade", (string)cascade["Assign"]!);
+        Assert.Equal("RemoveLink", (string)cascade["Delete"]!);
+        Assert.Equal("NoCascade", (string)cascade["Merge"]!);
+        Assert.Equal("NoCascade", (string)cascade["Reparent"]!);
+        Assert.Equal("NoCascade", (string)cascade["Share"]!);
+        Assert.Equal("NoCascade", (string)cascade["Unshare"]!);
+    }
+
+    [Theory]
+    [InlineData("Referential")]
+    [InlineData("ReferentialRestrictDelete")]
+    public void BuildRelationshipCreateBody_NonParentalBehaviors_NeverTripParentalDeterminant(string behavior)
+    {
+        // Regression test for the exact bug this tool shipped once already:
+        // Microsoft's own documented rule (entity-relationship-behavior
+        // #BKMK_ParentalEntityRelationships) is that a relationship counts
+        // as Parental — and so collides with an existing Parental
+        // relationship on the same entity — if Delete=Cascade, OR any of
+        // Assign/Share/Unshare/Reparent is Cascade/UserOwned/Active. An
+        // earlier "Referential" preset here set Reparent: Cascade and still
+        // hit 0x80047007 despite being named Referential. Confirmed live.
+        var attribute = Attr("Lookup", configure: b =>
+        {
+            b.RelationshipSchemaName = "tn_test_contact";
+            b.Targets = ["contact"];
+            b.RelationshipBehavior = behavior;
+        });
+
+        var body = AttributeMetadataJsonBuilder.BuildRelationshipCreateBody("tn_test", attribute);
+        var cascade = body["CascadeConfiguration"]!;
+
+        Assert.NotEqual("Cascade", (string)cascade["Delete"]!);
+        foreach (var action in new[] { "Assign", "Share", "Unshare", "Reparent" })
+        {
+            Assert.Equal("NoCascade", (string)cascade[action]!);
+        }
+    }
+
+    [Theory]
+    [InlineData("Parental", "Cascade", "Cascade", "Cascade", "Cascade", "Cascade", "Cascade")]
+    [InlineData("ReferentialRestrictDelete", "NoCascade", "Restrict", "NoCascade", "NoCascade", "NoCascade", "NoCascade")]
+    [InlineData("referential", "NoCascade", "RemoveLink", "NoCascade", "NoCascade", "NoCascade", "NoCascade")]
+    public void BuildRelationshipCreateBody_RelationshipBehavior_ChoosesMatchingCascadeConfiguration(
+        string behavior, string assign, string delete, string merge, string reparent, string share, string unshare)
+    {
+        var attribute = Attr("Lookup", configure: b =>
+        {
+            b.RelationshipSchemaName = "tn_test_contact";
+            b.Targets = ["contact"];
+            b.RelationshipBehavior = behavior;
+        });
+
+        var body = AttributeMetadataJsonBuilder.BuildRelationshipCreateBody("tn_test", attribute);
+
+        var cascade = body["CascadeConfiguration"]!;
+        Assert.Equal(assign, (string)cascade["Assign"]!);
+        Assert.Equal(delete, (string)cascade["Delete"]!);
+        Assert.Equal(merge, (string)cascade["Merge"]!);
+        Assert.Equal(reparent, (string)cascade["Reparent"]!);
+        Assert.Equal(share, (string)cascade["Share"]!);
+        Assert.Equal(unshare, (string)cascade["Unshare"]!);
+    }
+
+    [Fact]
+    public void BuildRelationshipCreateBody_InvalidRelationshipBehavior_Throws()
+    {
+        var attribute = Attr("Lookup", configure: b =>
+        {
+            b.RelationshipSchemaName = "tn_test_contact";
+            b.Targets = ["contact"];
+            b.RelationshipBehavior = "NotARealBehavior";
+        });
+
+        Assert.Throws<InvalidOperationException>(() => AttributeMetadataJsonBuilder.BuildRelationshipCreateBody("tn_test", attribute));
+    }
+
     // ---- BuildCustomerRelationshipCreateBody (Customer) ----
 
     [Fact]

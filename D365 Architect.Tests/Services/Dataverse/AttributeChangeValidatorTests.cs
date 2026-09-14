@@ -128,6 +128,35 @@ public sealed class AttributeChangeValidatorTests
         Assert.Null(AttributeChangeValidator.ValidateCreate(attribute));
     }
 
+    [Theory]
+    [InlineData("Parental")]
+    [InlineData("ReferentialRestrictDelete")]
+    [InlineData("referential")]
+    public void ValidateCreate_LookupWithValidRelationshipBehavior_Succeeds(string behavior)
+    {
+        var attribute = Attr("Lookup", schemaName: "tn_Contact", name: "tn_contact", configure: b =>
+        {
+            b.RelationshipSchemaName = "tn_test_contact";
+            b.Targets = ["contact"];
+            b.RelationshipBehavior = behavior;
+        });
+        Assert.Null(AttributeChangeValidator.ValidateCreate(attribute));
+    }
+
+    [Fact]
+    public void ValidateCreate_LookupWithInvalidRelationshipBehavior_Fails()
+    {
+        var attribute = Attr("Lookup", schemaName: "tn_Contact", name: "tn_contact", configure: b =>
+        {
+            b.RelationshipSchemaName = "tn_test_contact";
+            b.Targets = ["contact"];
+            b.RelationshipBehavior = "NotARealBehavior";
+        });
+        var error = AttributeChangeValidator.ValidateCreate(attribute);
+        Assert.NotNull(error);
+        Assert.Contains("RelationshipBehavior", error);
+    }
+
     [Fact]
     public void ValidateCreate_CustomerWithWrongTargets_Fails()
     {

@@ -68,4 +68,32 @@ public sealed class EntityDefinition
     /// <summary>The table's columns.</summary>
     [YamlMember(Order = 9)]
     public IReadOnlyList<AttributeDefinition> Attributes { get; init; } = [];
+
+    /// <summary>
+    /// A copy with <see cref="Attributes"/> replaced — everything else
+    /// carried over unchanged. Exists for <c>table import</c>'s diff display:
+    /// re-exporting a table right now returns columns in Dataverse's own
+    /// order (e.g. creation order), which is almost never the order a human
+    /// wrote them in the local YAML — diffing the two as plain text then
+    /// misreports pure reordering as whole columns being removed and
+    /// re-added (a plain line-level LCS diff can't match a moved block that
+    /// crosses another moved block without breaking one of them up). Calling
+    /// this with the live columns re-sorted to the local file's own column
+    /// order before diffing means identical columns line up positionally
+    /// regardless of which order Dataverse happens to return them in, so
+    /// only genuine differences show.
+    /// </summary>
+    public EntityDefinition WithAttributes(IReadOnlyList<AttributeDefinition> attributes) => new()
+    {
+        LogicalName = LogicalName,
+        SchemaName = SchemaName,
+        DisplayName = DisplayName,
+        PluralDisplayName = PluralDisplayName,
+        Description = Description,
+        OwnershipType = OwnershipType,
+        IsActivity = IsActivity,
+        HasActivities = HasActivities,
+        HasNotes = HasNotes,
+        Attributes = attributes,
+    };
 }
