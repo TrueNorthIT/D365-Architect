@@ -143,7 +143,7 @@ public static class AttributeChangeValidator
         return null;
     }
 
-    /// <summary>A plain (non-Customer) Lookup's create needs its own relationship SchemaName and exactly one target — see BuildRelationshipCreateBody's own doc comment on why more than one is out of scope.</summary>
+    /// <summary>A plain (non-Customer) Lookup's create needs its own relationship SchemaName and exactly one target — see BuildRelationshipCreateBody's own doc comment on why more than one is out of scope. RelationshipBehavior, when given, must be one of <see cref="RelationshipBehaviors.Names"/>.</summary>
     private static string? ValidateLookupForCreate(AttributeDefinition local)
     {
         if (local.RelationshipSchemaName is null)
@@ -159,6 +159,11 @@ public static class AttributeChangeValidator
         if (local.Targets is not { Count: 1 })
         {
             return $"'{local.Name}' must have exactly one Targets entry to create a plain Lookup column — more than one is a multi-table lookup, which this tool doesn't support creating yet.";
+        }
+
+        if (local.RelationshipBehavior is not null && !RelationshipBehaviors.Names.Contains(local.RelationshipBehavior, StringComparer.OrdinalIgnoreCase))
+        {
+            return $"'{local.RelationshipBehavior}' isn't a valid RelationshipBehavior for '{local.Name}' — expected one of: {string.Join(", ", RelationshipBehaviors.Names)} (or omit it for the default, Referential).";
         }
 
         return null;

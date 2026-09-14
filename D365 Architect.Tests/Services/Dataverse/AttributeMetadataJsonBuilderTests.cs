@@ -294,6 +294,68 @@ public sealed class AttributeMetadataJsonBuilderTests
         Assert.Equal("Microsoft.Dynamics.CRM.LookupAttributeMetadata", (string)body["Lookup"]!["@odata.type"]!);
     }
 
+    [Fact]
+    public void BuildRelationshipCreateBody_UsesReferentialCascadeBehavior_NotParental()
+    {
+        // Parental (all-Cascade) would block creating this lookup outright
+        // if the entity already has a Parental relationship to a different
+        // parent — Dataverse only allows one. New lookups must default to
+        // Referential, matching the Maker UI, not Parental.
+        var attribute = Attr("Lookup", configure: b =>
+        {
+            b.RelationshipSchemaName = "tn_test_contact";
+            b.Targets = ["contact"];
+        });
+
+        var body = AttributeMetadataJsonBuilder.BuildRelationshipCreateBody("tn_test", attribute);
+
+        var cascade = body["CascadeConfiguration"]!;
+        Assert.Equal("NoCascade", (string)cascade["Assign"]!);
+        Assert.Equal("RemoveLink", (string)cascade["Delete"]!);
+        Assert.Equal("Cascade", (string)cascade["Merge"]!);
+        Assert.Equal("Cascade", (string)cascade["Reparent"]!);
+        Assert.Equal("NoCascade", (string)cascade["Share"]!);
+        Assert.Equal("NoCascade", (string)cascade["Unshare"]!);
+    }
+
+    [Theory]
+    [InlineData("Parental", "Cascade", "Cascade", "Cascade", "Cascade", "Cascade", "Cascade")]
+    [InlineData("ReferentialRestrictDelete", "NoCascade", "Restrict", "Cascade", "Cascade", "NoCascade", "NoCascade")]
+    [InlineData("referential", "NoCascade", "RemoveLink", "Cascade", "Cascade", "NoCascade", "NoCascade")]
+    public void BuildRelationshipCreateBody_RelationshipBehavior_ChoosesMatchingCascadeConfiguration(
+        string behavior, string assign, string delete, string merge, string reparent, string share, string unshare)
+    {
+        var attribute = Attr("Lookup", configure: b =>
+        {
+            b.RelationshipSchemaName = "tn_test_contact";
+            b.Targets = ["contact"];
+            b.RelationshipBehavior = behavior;
+        });
+
+        var body = AttributeMetadataJsonBuilder.BuildRelationshipCreateBody("tn_test", attribute);
+
+        var cascade = body["CascadeConfiguration"]!;
+        Assert.Equal(assign, (string)cascade["Assign"]!);
+        Assert.Equal(delete, (string)cascade["Delete"]!);
+        Assert.Equal(merge, (string)cascade["Merge"]!);
+        Assert.Equal(reparent, (string)cascade["Reparent"]!);
+        Assert.Equal(share, (string)cascade["Share"]!);
+        Assert.Equal(unshare, (string)cascade["Unshare"]!);
+    }
+
+    [Fact]
+    public void BuildRelationshipCreateBody_InvalidRelationshipBehavior_Throws()
+    {
+        var attribute = Attr("Lookup", configure: b =>
+        {
+            b.RelationshipSchemaName = "tn_test_contact";
+            b.Targets = ["contact"];
+            b.RelationshipBehavior = "NotARealBehavior";
+        });
+
+        Assert.Throws<InvalidOperationException>(() => AttributeMetadataJsonBuilder.BuildRelationshipCreateBody("tn_test", attribute));
+    }
+
     // ---- BuildCustomerRelationshipCreateBody (Customer) ----
 
     [Fact]
