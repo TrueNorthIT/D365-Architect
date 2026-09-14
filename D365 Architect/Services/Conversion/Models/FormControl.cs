@@ -43,6 +43,21 @@ public sealed class FormControl
     public string? Label { get; init; }
 
     /// <summary>
+    /// This label's text in every language besides the one shown as
+    /// <see cref="Label"/>, keyed by Dataverse's own languagecode (e.g.
+    /// 1036 for French). Absent on a single-language tenant (the
+    /// overwhelming common case) or when this control has only its own.
+    /// </summary>
+    /// <remarks>
+    /// Previously every translation but the primary one was silently
+    /// discarded on export — confirmed as a real gap, not a stripped
+    /// default: this is genuine maker-authored text on a multi-language
+    /// tenant, lost permanently on every round-trip until this was added.
+    /// </remarks>
+    [YamlMember(Order = 3)]
+    public IReadOnlyDictionary<int, string>? Translations { get; init; }
+
+    /// <summary>
     /// Which control renders this cell — a Dataverse standard control by
     /// name, e.g. "SingleLineText", "Lookup", "Subgrid". Use
     /// customControlId instead for a custom/PCF control or one not in this
@@ -53,7 +68,7 @@ public sealed class FormControl
     /// each entry was confirmed against real, live Dataverse output rather
     /// than guessed. Mutually exclusive with <see cref="CustomControlId"/>.
     /// </remarks>
-    [YamlMember(Order = 3)]
+    [YamlMember(Order = 4)]
     [SchemaEnum(typeof(StandardFormControls), nameof(StandardFormControls.FriendlyNames))]
     public string? Control { get; init; }
 
@@ -69,7 +84,7 @@ public sealed class FormControl
     /// every control ever registered on a real tenant, and a wrong guess
     /// would misrepresent real data rather than just under-describe it.
     /// </remarks>
-    [YamlMember(Order = 4)]
+    [YamlMember(Order = 5)]
     public string? CustomControlId { get; init; }
 
     /// <summary>
@@ -81,27 +96,68 @@ public sealed class FormControl
     public string? ClassId { get; init; }
 
     /// <summary>
+    /// Only present when true — an unbound lookup control (its own
+    /// `TargetEntities` parameter list names which tables it can point at,
+    /// rather than the control being bound to a real relationship). Omit
+    /// for an ordinary bound control; applying this file back won't unbind
+    /// it.
+    /// </summary>
+    [YamlMember(Order = 6)]
+    public bool? IsUnbound { get; init; }
+
+    /// <summary>
     /// Only present when true — most controls on a form are enabled/editable.
     /// Omit to leave this control enabled; applying this file back won't
     /// disable it.
     /// </summary>
-    [YamlMember(Order = 4)]
+    [YamlMember(Order = 7)]
     public bool? Disabled { get; init; }
+
+    /// <summary>
+    /// Only present when true — this field is forced "Business Required" on
+    /// this form specifically, independent of the column's own
+    /// metadata-level requirement level. Omit for the common case (no
+    /// form-level override); applying this file back won't add one.
+    /// </summary>
+    [YamlMember(Order = 8)]
+    public bool? IsRequired { get; init; }
 
     /// <summary>
     /// Only present when false — a deliberately hidden field, distinct from
     /// one simply not on the form at all. Omit to leave this control
     /// visible; applying this file back won't hide it.
     /// </summary>
-    [YamlMember(Order = 5)]
+    [YamlMember(Order = 9)]
     public bool? Visible { get; init; }
+
+    /// <summary>
+    /// Only present when false — this control's own field label is
+    /// deliberately hidden (common on a subgrid, which already shows its
+    /// own title bar and doesn't need a redundant label above it). Omit to
+    /// leave this control's label shown; applying this file back won't hide
+    /// it.
+    /// </summary>
+    [YamlMember(Order = 10)]
+    public bool? ShowLabel { get; init; }
+
+    /// <summary>
+    /// Whether this control shows on the phone-optimized layout —
+    /// FormXML's `availableforphone` attribute, shown exactly as stated
+    /// rather than defaulted/stripped like this file's other booleans:
+    /// which direction (true or false) is the common case for this
+    /// specific attribute hasn't been confirmed against real tenant
+    /// samples, so nothing is assumed either way. Absent when this
+    /// control's FormXML doesn't set it at all.
+    /// </summary>
+    [YamlMember(Order = 11)]
+    public bool? AvailableOnPhone { get; init; }
 
     /// <summary>
     /// How many of the section's own sub-columns this control's cell spans.
     /// Only present when greater than 1 — a single column is the common
     /// case; applying this file back won't change a cell's own span.
     /// </summary>
-    [YamlMember(Order = 6)]
+    [YamlMember(Order = 12)]
     public int? ColumnSpan { get; init; }
 
     /// <summary>
@@ -111,7 +167,7 @@ public sealed class FormControl
     /// present when greater than 1 — a single row is the common case;
     /// applying this file back won't change a cell's own span.
     /// </summary>
-    [YamlMember(Order = 7)]
+    [YamlMember(Order = 13)]
     public int? RowSpan { get; init; }
 
     /// <summary>
@@ -131,7 +187,7 @@ public sealed class FormControl
     /// an explicit `false` mean the same thing to Dataverse; omitting it
     /// changes nothing when applied back), `true` is always kept.
     /// </remarks>
-    [YamlMember(Order = 8)]
+    [YamlMember(Order = 14)]
     public object? Parameters { get; init; }
 
     /// <summary>
@@ -140,7 +196,7 @@ public sealed class FormControl
     /// subgrid, or per-client (Web/Phone/Tablet) replacements. Absent when
     /// this control has none.
     /// </summary>
-    [YamlMember(Order = 9)]
+    [YamlMember(Order = 15)]
     public IReadOnlyList<FormAdditionalControl>? AdditionalControls { get; init; }
 
     /// <summary>
@@ -149,6 +205,6 @@ public sealed class FormControl
     /// form-wide event bindings at the top level. Absent when this control
     /// has none.
     /// </summary>
-    [YamlMember(Order = 10)]
+    [YamlMember(Order = 16)]
     public IReadOnlyList<FormEvent>? Events { get; init; }
 }

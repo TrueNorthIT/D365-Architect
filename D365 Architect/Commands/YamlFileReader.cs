@@ -1,5 +1,3 @@
-using Spectre.Console;
-
 namespace D365Architect.Commands;
 
 /// <summary>
@@ -17,7 +15,7 @@ internal static class YamlFileReader
     {
         if (!File.Exists(path))
         {
-            AnsiConsole.MarkupLine($"[red]'{path}' doesn't exist.[/]");
+            ErrorConsole.Print($"'{path}' doesn't exist.");
             return null;
         }
 
@@ -28,7 +26,7 @@ internal static class YamlFileReader
         }
         catch (YamlDotNet.Core.YamlException ex)
         {
-            AnsiConsole.MarkupLine($"[red]Couldn't parse '{path}' as a {kind}:[/] {ex.Message.EscapeMarkup()}");
+            ErrorConsole.Print($"Couldn't parse '{path}' as a {kind}: {ex.Message}");
             return null;
         }
     }

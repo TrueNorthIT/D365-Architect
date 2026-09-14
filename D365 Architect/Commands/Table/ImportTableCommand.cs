@@ -144,7 +144,7 @@ public sealed class ImportTableCommand(ITableImportService tableImportService, I
         {
             foreach (var warning in plan.Warnings)
             {
-                AnsiConsole.MarkupLine($"[yellow]      ⚠ {warning.EscapeMarkup()}[/]");
+                ErrorConsole.Warn($"      ⚠ {warning}");
             }
         }
     }

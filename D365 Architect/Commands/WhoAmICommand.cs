@@ -42,7 +42,7 @@ public sealed class WhoAmICommand(IAuthenticationService authenticationService, 
         }
         catch (AuthenticationRequiredException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message.EscapeMarkup()}[/]");
+            ErrorConsole.Print(ex);
             return 1;
         }
     }

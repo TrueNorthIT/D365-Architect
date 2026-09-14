@@ -12,6 +12,17 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
+    // System.Net.Http.Json's JsonContent.Create camelCases property names by
+    // default when no options are given (confirmed live: {"ParameterXml": ...}
+    // came out on the wire as {"parameterXml": ...}, which Dataverse's
+    // PublishXml action then rejected as an unrecognised parameter — Dataverse
+    // Web API property/parameter names are case-sensitive and not
+    // consistently camelCase, e.g. PublishXmlRequest.ParameterXml is PascalCase
+    // while systemforms' own formxml attribute is already all-lowercase).
+    // Anonymous-object request bodies need their member names sent exactly as
+    // written, so they go through this instead of the implicit default.
+    private static readonly JsonSerializerOptions VerbatimJsonOptions = new();
+
     public async Task<WhoAmIResult> WhoAmIAsync(Uri environmentUrl, string accessToken, CancellationToken cancellationToken)
     {
         using var request = CreateRequest(environmentUrl, "WhoAmI", accessToken);
@@ -228,7 +239,7 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
     public async Task UpdateSystemFormXmlAsync(Uri environmentUrl, string accessToken, Guid formId, string formXml, CancellationToken cancellationToken)
     {
         using var request = CreateRequest(environmentUrl, $"systemforms({formId})", accessToken, HttpMethod.Patch);
-        request.Content = JsonContent.Create(new { formxml = formXml });
+        request.Content = JsonContent.Create(new { formxml = formXml }, options: VerbatimJsonOptions);
 
         using var response = await httpClient.SendAsync(request, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);
@@ -246,23 +257,7 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
                 new XElement("entity", entityLogicalName))).ToString(SaveOptions.DisableFormatting);
 
         using var request = CreateRequest(environmentUrl, "PublishXml", accessToken, HttpMethod.Post);
-
-        // Confirmed live: JsonContent.Create<T>(T) with no explicit
-        // JsonSerializerOptions applies JsonSerializerDefaults.Web —
-        // PropertyNamingPolicy.CamelCase — to an anonymous type, silently
-        // lowercasing ParameterXml to parameterXml on the wire. Dataverse
-        // then 400s: "The parameter 'parameterXml' ... is not a valid
-        // parameter for the operation 'PublishXml'." Invisible from the C#
-        // alone (the property really is declared PascalCase); only visible
-        // by inspecting the actual request bytes. Building the body as an
-        // explicit JsonObject instead — the same pattern every other write
-        // body in this class already uses — sidesteps any implicit naming
-        // policy entirely, which is exactly why none of those other calls
-        // hit this: they either already target an all-lowercase Dataverse
-        // property name (UpdateSystemFormXmlAsync's own formxml) or, like
-        // here now, build an explicit JsonObject rather than an anonymous
-        // type.
-        request.Content = JsonContent.Create(new JsonObject { ["ParameterXml"] = parameterXml });
+        request.Content = JsonContent.Create(new { ParameterXml = parameterXml }, options: VerbatimJsonOptions);
 
         using var response = await httpClient.SendAsync(request, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);

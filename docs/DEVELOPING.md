@@ -92,9 +92,21 @@ PreviewAsync()                     // builds a preview: what would change, and w
 ```
 
 Errors are caught per-command and mapped to a plain red message
-(`AnsiConsole.MarkupLine($"[red]{ex.Message}[/]")`) plus exit code 1 — never a
-raw stack trace. Domain-specific exceptions (`FormNotFoundException`,
-`AmbiguousSystemFormException`, `AuthenticationRequiredException`, etc.) exist
+(`ErrorConsole.Print(ex)`, see `Commands/ErrorConsole.cs`) plus exit code 1 —
+never a raw stack trace. Route every error/warning message through
+`ErrorConsole.Print`/`Warn` rather than `AnsiConsole.MarkupLine` directly —
+`ex.Message` (and a file path, or a raw CLI argument) can carry external
+content this tool doesn't control (a Dataverse HTTP error body, in
+particular), and an unescaped `[...]` sequence inside it makes
+Spectre.Console try to parse it as markup and throw its own unrelated
+`Could not find color or style '...'` error, masking whatever the real error
+was — confirmed live once, before `ErrorConsole` existed and every call site
+had to remember `.EscapeMarkup()` by hand. `ErrorConsole` takes a plain
+interpolated string (`ErrorConsole.Print($"Couldn't parse '{path}' as a
+view: {ex.Message}")`) and escapes every interpolated value automatically —
+see its own doc comment for how. Domain-specific exceptions
+(`FormNotFoundException`, `AmbiguousSystemFormException`,
+`AuthenticationRequiredException`, etc.) exist
 specifically to give that message something meaningful to say.
 
 ## Services/
@@ -234,13 +246,21 @@ Schema, rather than hand-maintaining a second copy that could drift:
   `StandardFormControls.FriendlyNames`), read via reflection so the schema's
   enum can never drift from what validation actually accepts.
 
-**Regenerate `schema/*.schema.json` whenever a curated model's shape or doc
-comments change** — those three files are committed, not built by CI, and
-`schema export`'s own doc comment describes them as "re-run for all three
-whenever a model changes." (One already-generated description is out of date
-as of this writing — `schema/table.schema.json` still says table import is
-"not yet supported" — worth a fresh `schema export --for table` next time
-you're touching that model.)
+**`schema/*.schema.json` regenerates itself automatically** — the `.csproj`'s
+own `RegenerateSchemas` target runs `schema export --for table/view/form`
+after every ordinary `dotnet build`/`dotnet publish`, so these three
+committed files can no longer silently drift from a model's actual shape the
+way they previously could when regenerating them meant a developer had to
+remember to run `schema export` by hand (confirmed missed at least once:
+`schema/form.schema.json` shipped without several fields for one whole PR
+before this target existed). Skipped for a design-time build (an IDE's own
+continuous background build, not a real one) and for the standalone win-x64
+publish (`PublishSingleFile=true` — that output doesn't carry the XML doc
+file `YamlSchemaGenerator` needs; see above). A plain `dotnet build` still
+writes these files as a side effect, so expect them to show as modified in
+`git status` whenever a curated model's shape or doc comments change — that's
+the target working, not a mistake; review and commit the diff like any other
+generated-but-committed artifact.
 
 ### `EnvironmentService`/`IEnvironmentService` — not real yet
 
@@ -270,21 +290,26 @@ violation differently:
 
 - `form build-xml` only ever writes a **local file** — every violation is
   printed, but nothing blocks the write, since there's nothing live at stake.
-- `form import` writes to a **live environment** — only one specific,
-  confirmed-safe violation pattern (`headerdensity`/`showinformselector`
-  attributes real Dataverse FormXML carries that the XSD doesn't declare) is
-  treated as informational. Every other violation blocks the import outright
-  (before the confirmation prompt) unless `--allow-schema-violations` is
-  passed.
+- `form import` writes to a **live environment** — only two specific,
+  confirmed-safe violation patterns are treated as informational:
+  `headerdensity`/`showinformselector` attributes real Dataverse FormXML
+  carries that the XSD doesn't declare, and the Timeline control's
+  `UClientActivitiesConfigurationJSON`/`UClientNotesConfigurationJSON`
+  (also missing from the vendored XSD, but standard Microsoft-shipped
+  content, confirmed safe by the user's own explicit D365 admin knowledge
+  rather than a live write). Every other violation blocks the import
+  outright (before the confirmation prompt) unless
+  `--allow-schema-violations` is passed.
 
 That split exists because of a real incident, not caution for its own sake: a
 *different* violation was once assumed similarly harmless and a real
 `form import` attempt failed live with a raw Dataverse 400. See
 [`yaml-conventions.md`](yaml-conventions.md#rebuilding-formxml-form-build-xml)
-for the full incident history and exactly which pattern is exempt. If you're
-ever tempted to widen `FormXmlValidationMessage.IsKnownHarmless`, that history
-is the reason to be very sure first — confirm against a real write, not just
-against the schema.
+for the full incident history and exactly which patterns are exempt. If
+you're ever tempted to widen `FormXmlValidationMessage.IsKnownHarmless`
+further, that history is the reason to be very sure first — confirm against
+a real write or an equally direct confirmation, not just because the
+content looks like it ought to be fine.
 
 ## YAML conventions
 

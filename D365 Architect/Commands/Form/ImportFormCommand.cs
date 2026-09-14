@@ -79,7 +79,7 @@ public sealed class ImportFormCommand(IFormImportService formImportService, Impo
             {
                 if (preview.IdentityMismatchWarning is not null)
                 {
-                    AnsiConsole.MarkupLine($"[yellow]Warning:[/] {preview.IdentityMismatchWarning.EscapeMarkup()}");
+                    ErrorConsole.Warn($"Warning: {preview.IdentityMismatchWarning}");
                     AnsiConsole.WriteLine();
                 }
             },

@@ -150,6 +150,11 @@ public static class FormXmlWriter
             element.SetAttributeValue("classid", field.ClassId);
         }
 
+        if (field.Relationship is not null)
+        {
+            element.SetAttributeValue("relationship", field.Relationship);
+        }
+
         return element;
     }
 
@@ -169,7 +174,22 @@ public static class FormXmlWriter
 
         if (tab.Label is not null)
         {
-            element.Add(WriteLabels(tab.Label));
+            element.Add(WriteLabels(tab.Label, tab.Translations));
+        }
+
+        if (tab.Visible == false)
+        {
+            element.SetAttributeValue("visible", "false");
+        }
+
+        if (tab.Collapsible is not null)
+        {
+            element.SetAttributeValue("collapsible", tab.Collapsible.Value ? "true" : "false");
+        }
+
+        if (tab.AvailableOnPhone is not null)
+        {
+            element.SetAttributeValue("availableforphone", tab.AvailableOnPhone.Value ? "true" : "false");
         }
 
         element.Add(new XElement("columns", tab.Columns.Select(column => WriteColumn(scopeKey, column, controlDescriptions))));
@@ -203,7 +223,22 @@ public static class FormXmlWriter
 
         if (section.Label is not null)
         {
-            element.Add(WriteLabels(section.Label));
+            element.Add(WriteLabels(section.Label, section.Translations));
+        }
+
+        if (section.Visible == false)
+        {
+            element.SetAttributeValue("visible", "false");
+        }
+
+        if (section.ShowLabel == false)
+        {
+            element.SetAttributeValue("showlabel", "false");
+        }
+
+        if (section.AvailableOnPhone is not null)
+        {
+            element.SetAttributeValue("availableforphone", section.AvailableOnPhone.Value ? "true" : "false");
         }
 
         // Controls are a flat, row-major list (see FormSection.Columns'
@@ -232,6 +267,16 @@ public static class FormXmlWriter
             cell.SetAttributeValue("visible", "false");
         }
 
+        if (control.ShowLabel == false)
+        {
+            cell.SetAttributeValue("showlabel", "false");
+        }
+
+        if (control.AvailableOnPhone is not null)
+        {
+            cell.SetAttributeValue("availableforphone", control.AvailableOnPhone.Value ? "true" : "false");
+        }
+
         if (control.ColumnSpan is > 1)
         {
             cell.SetAttributeValue("colspan", control.ColumnSpan.Value);
@@ -244,7 +289,7 @@ public static class FormXmlWriter
 
         if (control.Label is not null)
         {
-            cell.Add(WriteLabels(control.Label));
+            cell.Add(WriteLabels(control.Label, control.Translations));
         }
 
         var controlElement = new XElement("control", new XAttribute("id", control.Id));
@@ -267,9 +312,19 @@ public static class FormXmlWriter
             controlElement.SetAttributeValue("classid", resolvedClassId);
         }
 
+        if (control.IsUnbound == true)
+        {
+            controlElement.SetAttributeValue("isunbound", "true");
+        }
+
         if (control.Disabled == true)
         {
             controlElement.SetAttributeValue("disabled", "true");
+        }
+
+        if (control.IsRequired == true)
+        {
+            controlElement.SetAttributeValue("isrequired", "true");
         }
 
         if (control.AdditionalControls is { Count: > 0 })
@@ -521,9 +576,26 @@ public static class FormXmlWriter
         return element;
     }
 
-    private static XElement WriteLabels(string label) => new(
-        "labels",
-        new XElement("label", new XAttribute("description", label), new XAttribute("languagecode", "1033")));
+    // Note: the primary label is always written back as languagecode 1033
+    // (English) regardless of which languagecode it actually came from on a
+    // tenant whose own base language isn't English — a pre-existing
+    // limitation, not introduced here; Translations below is what actually
+    // fixes the real reported gap (every *other* language's text being
+    // silently discarded).
+    private static XElement WriteLabels(string label, IReadOnlyDictionary<int, string>? translations)
+    {
+        var element = new XElement("labels", new XElement("label", new XAttribute("description", label), new XAttribute("languagecode", "1033")));
+
+        if (translations is not null)
+        {
+            foreach (var (languageCode, text) in translations)
+            {
+                element.Add(new XElement("label", new XAttribute("description", text), new XAttribute("languagecode", languageCode)));
+            }
+        }
+
+        return element;
+    }
 
     /// <summary>
     /// Derives a stable GUID from human-authored data (names, ids) rather

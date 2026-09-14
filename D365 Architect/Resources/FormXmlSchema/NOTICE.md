@@ -23,14 +23,25 @@ loose files, so this still works from the
 **Worth knowing before treating a validation result as gospel**: even this
 official, downloadable XSD — not just the informal prose on Microsoft's own
 FormXML schema *documentation* page — disagrees with real, live Dataverse
-output in at least one confirmed way: a `<form>`'s own `headerdensity` and
-`showinformselector` attributes (seen on every real form checked this
-project) aren't declared anywhere in `FormType`, and `FormType` has no
-`xs:anyAttribute` wildcard to fall back on — so a real form's FormXML can
-(and does) fail strict validation against Microsoft's own schema in ways
-that have nothing to do with whether this tool's `FormXmlWriter` rebuilt it
-correctly. See `docs/yaml-conventions.md` for the fuller list, corrected
-against this actual XSD rather than the docs page's prose (which turned out
-to be the less accurate of the two in a few more places — e.g. it describes
+output in at least two confirmed ways:
+
+- A `<form>`'s own `headerdensity` and `showinformselector` attributes (seen
+  on every real form checked this project) aren't declared anywhere in
+  `FormType`, and `FormType` has no `xs:anyAttribute` wildcard to fall back
+  on — so a real form's FormXML can (and does) fail strict validation
+  against Microsoft's own schema in ways that have nothing to do with
+  whether this tool's `FormXmlWriter` rebuilt it correctly.
+- The Timeline control's own `UnifiedClientTimelineWallParameters` group
+  doesn't declare `UClientActivitiesConfigurationJSON` or
+  `UClientNotesConfigurationJSON` — the standard, Microsoft-shipped default
+  per-activity-type JSON config that control ships with on effectively
+  every entity form with a timeline. Found byte-identical across two
+  independently-exported real forms, so this schema download's own
+  `UnifiedClientTimelineWallParameters` group is simply stale relative to
+  whatever platform update added per-activity-type configuration.
+
+See `docs/yaml-conventions.md` for the fuller list, corrected against this
+actual XSD rather than the docs page's prose (which turned out to be the
+less accurate of the two in a few more places — e.g. it describes
 `customControl`'s `id` as required and a cell's nested `<events>` as
 undocumented, while this XSD already declares both correctly).
