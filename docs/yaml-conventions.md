@@ -181,10 +181,10 @@ FormXML is large enough that "does the reader handle everything in it" isn't
 answerable by inspection alone. This table is the result of walking
 Microsoft's own published schema (https://learn.microsoft.com/power-apps/developer/model-driven-apps/form-xml-schema)
 element-by-element against `FormJsonDefinitionReader`, then checking real
-occurrence counts across every form exported from two different tables
-(`account`, `tn_inspection`) in a live tenant — not just spot-checked. Every
-row is one of: captured, or a documented, deliberate decision not to —
-"accounted for" either way, never silently missing.
+occurrence counts across every form exported from two different tables — a
+standard one (`account`) and a custom one — in a live tenant, not just
+spot-checked. Every row is one of: captured, or a documented, deliberate
+decision not to — "accounted for" either way, never silently missing.
 
 | FormXML element/attribute | Status | Real occurrences | Notes |
 |---|---|---|---|
@@ -670,30 +670,224 @@ doesn't wipe out other languages' labels this tool never touched (a
 documented Dataverse gotcha: that header's absence defaults to overwriting
 them).
 
-**Only these seven column types are ever created or updated**: `String`,
-`Memo`, `Integer`, `BigInt`, `Decimal`, `Money`, `DateTime` — see
-`AttributeMetadataJsonBuilder.SupportedTypes`. Deliberately excluded, and
-why:
-- **`Picklist`/`Boolean`** need an `OptionSet` definition (the actual
-  choice values) — this tool doesn't capture that on export at all yet
-  (see `EntityJsonDefinitionReader`'s own doc comment: it needs a separate,
-  per-attribute, type-cast request Dataverse doesn't expose in bulk).
-  Writing a Picklist/Boolean column without knowing its options isn't
-  possible to do correctly.
-- **`Lookup`/`Customer`/`Owner`** aren't creatable via this endpoint at
-  all — confirmed against Microsoft's own docs: a Lookup attribute only
-  comes into existence as part of creating a whole *relationship*
-  (`RelationshipDefinitions`, a materially larger and different operation),
-  and a Customer lookup specifically documents a dedicated
-  `CreateCustomerRelationships` action instead of a plain attribute POST.
-- **`Double`** has no officially documented create-body example anywhere
-  Microsoft's own Web API docs could confirm one — every other type here
-  is backed by a real, verbatim example; guessing at the one that isn't,
-  for an operation that edits a live table's schema, isn't a risk worth
-  taking.
-- Anything else (`MultiSelectPicklist`, `State`, `Status`,
-  `Uniqueidentifier`, `PartyList`, `File`, `Image`, `Virtual`,
+**"PUT the whole thing straight back" needs one more thing Dataverse doesn't
+give you for free: an explicit `@odata.type` on the body itself.** The
+type-cast GET URL (`.../Microsoft.Dynamics.CRM.{Type}AttributeMetadata`)
+tells Dataverse how to *read* the response, but that context never comes
+back as part of the response body — the same gap
+`GlobalOptionSetDefinitions`' update hit first (see "Global choices"
+below). Left unset, Dataverse falls back to resolving the concrete subtype
+some other way and then rejects whichever of that type's own properties
+don't belong on whatever it fell back to — confirmed live on both Boolean
+(rejected `DefaultValue`) and Picklist (rejected a handful of
+formula-column properties, one at a time, since Dataverse stops validating
+at the first bad property it finds). `AttributeMetadataJsonBuilder.ApplyUpdateFields`
+sets `existing["@odata.type"] = $"Microsoft.Dynamics.CRM.{attribute.Type}AttributeMetadata";`
+as its very first line, matching the same expression `BuildCreateBody`
+already uses on create, and that alone resolved both cases live with no
+per-property stripping needed. Not independently re-verified for every
+other updatable type, but there's no reason to expect this more explicit
+body would regress any of them.
+
+**Fifteen column types can be updated; ten of those can also be created** —
+see `AttributeMetadataJsonBuilder.SupportedTypes`/`CreatableTypes`.
+Updatable: `String`, `Memo`, `Integer`, `BigInt`, `Decimal`, `Money`,
+`DateTime`, `Boolean`, `Picklist`, `MultiSelectPicklist`, `Owner`, `Lookup`,
+`Customer`, `State`, `Status`. Creatable via a plain attribute POST: all of
+those except `Owner`/`Lookup`/`Customer`/`State`/`Status` — see the next two
+sections for why each of those five is created a different way, or never at
+all. Still deliberately excluded entirely:
+- **`Double`** has no officially documented create-*or*-update-body example
+  anywhere Microsoft's own Web API docs could confirm one — every other
+  type here is backed by a real, verbatim example; guessing at the one that
+  isn't, for an operation that edits a live table's schema, isn't a risk
+  worth taking.
+- Anything else (`Uniqueidentifier`, `PartyList`, `File`, `Image`,
   `EntityName`, `ManagedProperty`) simply hasn't been investigated.
+
+**`BigInt` is listed as updatable above, but updating an existing one is
+refused (`AttributeChangeValidator`) — confirmed live that Dataverse's
+attribute PUT never actually applies the change.** Creating a BigInt column
+works fine (its own documented create example has no `MinValue`/`MaxValue`,
+confirmed rather than an oversight — see `AttributeMetadataJsonBuilder.BuildCreateBody`'s
+own `BigInt` case), but updating one afterwards — `DisplayName`,
+`Description`, and `RequiredLevel` were each tested individually — returns
+`204` (success) and doesn't even bump the column's own `ModifiedOn`, yet the
+GET straight after shows the original value, unchanged, every time. Verified
+with a hand-built minimal PUT cloned directly from the same GET response
+this tool itself reads, bypassing this tool's own request construction
+entirely, to rule out anything on this side of the write — and re-checked
+after a full table publish, which made no difference either (so this isn't
+the same "needs publish to be visible" gap `systemforms`/`savedqueries`
+have — see "Importing FormXML" and "Importing views" above; the write
+itself never takes effect at all here, publish or not). No Microsoft Learn
+page documents this restriction explicitly — `BigIntAttributeMetadata`'s own
+reference page lists `PUT` as a supported operation with no caveat — so
+treat it as a confirmed-live platform quirk specific to this one type, not
+a citation. This tool refuses the update up front (an `Invalid` plan,
+same mechanism as an immutable `Type`/`SchemaName`/`Targets` change) rather
+than ever claim "Imported." for a write that silently never took effect.
+
+### Boolean and Choice (Picklist/MultiSelectPicklist)
+
+Both need an `OptionSet` — the actual choice values — which Dataverse only
+returns via a separate, per-attribute, type-cast request
+(`IDataverseClient.GetAttributeOptionSetJsonAsync`, `?$expand=OptionSet,
+GlobalOptionSet` on top of the same type-cast URL `GetAttributeMetadataJsonAsync`
+already used for updates), never on the bulk `Attributes` query every other
+column reads from. `AttributeOptionSetFetcher` runs that request once per
+option-bearing attribute (`EntityJsonDefinitionReader.OptionSetTypes` —
+`Boolean`/`Picklist`/`MultiSelectPicklist`/`Status`/`State`) ahead of
+`EntityJsonDefinitionReader.Read`, for both `table export` and `table
+import`'s own re-read of the live entity.
+
+**Reading a live MultiSelectPicklist column back has its own confirmed
+quirk, the mirror image of the create-side one below**: its `AttributeType`
+comes back as the literal string `"Virtual"`, not `"MultiSelectPicklist"` —
+only `AttributeTypeName.Value` (`"MultiSelectPicklistType"`) actually says
+what it is. `EntityJsonDefinitionReader.NormalizeAttributeType` undoes this
+before anything else (option-set detection, YAML `type`, or
+`AttributeMetadataJsonBuilder.SupportedTypes`/`CreatableTypes`) ever keys off
+the raw value — left unnormalized, every MultiSelectPicklist column would
+round-trip as `Type: Virtual` and `table import` would report it as
+unsupported instead of creating/updating it.
+
+YAML shape:
+- **Boolean**: `defaultValue` (omitted when `false`, Dataverse's own
+  default), `trueOptionLabel`/`falseOptionLabel` (omitted when exactly
+  `"True"`/`"False"`). Values are always `1`/`0` — Dataverse's own fixed
+  convention for a Boolean column, never something this tool lets a maker
+  choose.
+- **Picklist/MultiSelectPicklist**: either `options` (a local choice — a
+  list of `{value, label}`, confirmed against Microsoft's own documented
+  create shape) or `globalOptionSetName` (an existing global choice,
+  referenced via the `GlobalOptionSet@odata.bind` navigation property) —
+  never both. **Confirmed live: on create, that bind only accepts a raw
+  MetadataId GUID, not the `Name=` alternate-key form** — Dataverse 500s
+  with "Guid should contain 32 digits with 4 dashes" otherwise, even though
+  the alternate-key form works for other bind targets in this tool. So
+  `TableImportService` resolves `globalOptionSetName` to its live
+  MetadataId first (via `IDataverseClient.TryGetGlobalOptionSetJsonAsync`)
+  before ever building the create body — see
+  `AttributeMetadataJsonBuilder.BuildCreateBody`'s own doc comment on
+  `globalOptionSetMetadataId`. **A `value` is always explicit in the local YAML,
+  never invented**: Dataverse doesn't assign one for a whole new `OptionSet`
+  on create (unlike a single later `InsertOptionValue` call), and guessing a
+  base value risks colliding with the organization's own publisher-assigned
+  prefix — the same "never guess" policy already applied to `schemaName`.
+
+**`table import` itself never creates, edits, or deletes a
+`GlobalOptionSetDefinitions` record — only referencing an existing one by
+name is supported.** Managing the global choice itself (creating one, or
+editing its own `displayName`/`description`/`options`) is `choice
+export`/`choice import`'s job instead — its own, separate command, since a
+global choice is shared across every table that uses it and isn't scoped
+under any one table's import the way a column is. See "Global choices"
+below.
+
+Updating an existing choice column's own options never happens via the
+ordinary attribute PUT — Dataverse doesn't allow it there. Instead
+`AttributeMetadataJsonBuilder.BuildOptionChangePlans` diffs `options`/
+`trueOptionLabel`/`falseOptionLabel` against what's live and produces one
+`OptionChangePlan` per action needed: `InsertOptionValue` for an unmatched
+local value, `UpdateOptionValue` for a matched value with a different label
+(Boolean's fixed True/False options included), and — **only** when the
+value-set is otherwise identical and just the order differs — one
+`OrderOption` reorder. **An existing option missing from the local YAML is
+never deleted automatically**, mirroring `AttributeImportAction.WouldRemove`'s
+same policy for a whole column; `IDataverseClient.DeleteOptionValueAsync`
+exists for completeness but `table import`'s diff never calls it.
+
+### Lookup, Customer, and Owner
+
+`Owner` (`ownerid`) exists automatically on every table and is never
+creatable via this tool — only its shared fields (`displayName`, etc.) can
+be updated. A plain `Lookup` is different from every other creatable type:
+Microsoft's own docs are explicit that it only comes into existence as part
+of creating a whole *relationship* (`POST RelationshipDefinitions`,
+`@odata.type: OneToManyRelationshipMetadata`), never a plain attribute POST
+— see `AttributeMetadataJsonBuilder.BuildRelationshipCreateBody`. `Customer`
+needs the even more specific `CreateCustomerRelationships` action instead
+(a Customer column is really a *pair* of one-to-many relationships, to
+`account` and `contact`, sharing one attribute) — see
+`BuildCustomerRelationshipCreateBody`.
+
+YAML shape for creating a brand-new plain `Lookup`: `relationshipSchemaName`
+(the relationship's own schema name — distinct from, and validated the same
+way as, the column's own `schemaName`; never inferred) plus exactly one
+`targets` entry. **A `targets` list with more than one entry is a
+"multi-table lookup"** — a materially more complex relationship shape
+Microsoft's own docs split into a separate article — and isn't supported for
+creation here; it's reported as `Invalid` with that reason. `Customer`
+needs no `relationshipSchemaName` of its own: both of its relationship
+schema names are derived from the column's `schemaName` plus the fixed
+`account`/`contact` targets, and its `targets` must be exactly
+`["account", "contact"]` — Dataverse's own fixed shape for the type, not
+something a maker chooses. The target's primary key
+(`ReferencedAttribute`) is always derived as `"{target}id"`, Dataverse's own
+universal naming convention, rather than asked for. `AssociatedMenuConfiguration`/
+`CascadeConfiguration` on a new Lookup relationship use Microsoft's own
+documented example values (`Cascade` throughout) — flagged here as *not*
+independently confirmed to be the Maker UI's own default, unlike every
+numeric bound this tool relies on elsewhere.
+
+**`targets` is immutable after creation** for all three types, checked
+before `AttributesMatch` alongside the existing `Type`/`SchemaName` checks —
+an attempted change comes back `Invalid` rather than being silently ignored
+or left for Dataverse's own API error to explain.
+
+### State and Status
+
+Neither is ever independently created — every table already has one
+`statecode` (`State`) and one `statuscode` (`Status`) — so both are
+update-only:
+- **State**: `UpdateStateValue` renames an existing state's label. Nothing
+  is ever inserted — a table's state model is fixed at table-creation time,
+  and there's no documented `InsertStateValue` action to do it with anyway.
+- **Status**: existing status-reason labels rename via the same local
+  `UpdateOptionValue` action Picklist uses (Status's own `OptionSet` is
+  ordinary in that respect). **A brand-new status reason can be inserted**
+  via the dedicated `InsertStatusValue` action, given a `state` on the local
+  option (`AttributeOptionDefinition.State`) — Dataverse needs to know which
+  State the new status belongs to, and this tool never guesses it; a
+  missing `state` on an otherwise-unmatched local option surfaces as a
+  warning instead of being silently skipped or assumed `0` (Active).
+
+**Matched by `value`, then by `label` — not `value` alone**, unlike every
+other option-bearing type: confirmed against Microsoft's own docs that
+`InsertStatusValue`'s request body has no `Value` parameter at all —
+Dataverse always assigns a new status reason's value itself, so the local
+YAML's `value` for a not-yet-inserted status is never sent and is never
+something a live re-export will echo back unchanged. Matching purely by
+`value` (as Picklist does) would therefore either never recognize a
+previously-inserted status as already present, or — worse — insert the same
+label a second time on a later run before the YAML had been re-exported to
+pick up the real assigned value. `AttributeMetadataJsonBuilder.BuildStatusOptionChangePlans`
+falls back to a `label` match specifically to make that re-run safe: a local
+option matching an existing one by `label` alone (no `value` match) is
+treated as already present, never inserted again.
+
+**Confirmed live, not assumed — both are normally backed by a *global*
+option set.** Every `statecode`/`statuscode` checked on a real tenant
+(`account`, `contact`, standard *and* custom columns alike) came back with
+`globalOptionSetName` set, not a local `options` list. Since this tool never
+edits a global option set's own options (see "Boolean and Choice" above),
+`BuildOptionChangePlans` only ever attempts a State rename or Status
+rename/insert when the live column turns out to be backed by a *local*
+option set instead (`existing.GlobalOptionSetName is null`) — in practice
+this makes State/Status changes inert on most real tables checked this
+session, by design rather than by omission. The same guard suppresses the
+"no live match" warning above for a global-backed column. **Not confirmed
+live**: the actual `InsertStatusValue` write path itself — every table
+checked this session (`account`, `contact`) turned out global-backed, so
+there was no local-`statuscode` table available to insert against. The
+shape is built directly from Microsoft's own documented request/response
+(confirmed for read via `StatusOptionMetadata`'s own `State` property, and
+for write via `InsertStatusValue`'s own parameter table), the same
+confidence bar as every `AttributeChangeValidator` bound that isn't a direct
+citation — but flagged here rather than claimed as tested, since inserting
+a wrong shape into a live table's schema is exactly the risk this tool
+exists to avoid.
 
 A column of any of these excluded types still shows up in the diff and the
 per-column plan (`AttributeImportAction.SkippedUnsupportedType`) — visible,
@@ -757,6 +951,17 @@ real table, not just reasoned about:
   reasonable extension, not an independently-cited one.
 - **`MinValue` greater than `MaxValue`** on an Integer, Decimal, or Money
   column — a plain sanity check, not something that needed a docs lookup.
+- **Creating a Picklist/MultiSelectPicklist with no `options` and no
+  `globalOptionSetName`, both at once, or duplicate option `value`s** — see
+  "Boolean and Choice" above.
+- **Creating a `Lookup` with no `relationshipSchemaName`, an invalid one, or
+  more than one `targets` entry** — see "Lookup, Customer, and Owner" above.
+- **Creating a `Customer` whose `targets` aren't exactly `["account",
+  "contact"]`** — fixed by Dataverse for the type, not a maker choice.
+- **Attempting to create an `Owner`/`State`/`Status` column** — all three
+  already exist automatically on every table.
+- **Changing `targets` on an existing `Lookup`/`Customer`/`Owner` column** —
+  immutable after creation, checked the same way as `Type`/`SchemaName`.
 
 The MaxLength-ceiling and Precision-range checks above only fire when that
 specific value is actually being *changed* to something new — never when
@@ -819,3 +1024,107 @@ you make are applied to the model-driven applications."* `table import`
 doesn't call it yet — the change is real and stored the moment `apply`
 succeeds, but won't be visible in model-driven apps until published
 separately.
+
+## Global choices (`choice export`/`choice import`)
+
+A global choice (`GlobalOptionSetDefinitions`) is its own top-level
+component, not scoped under any one table — `table import` only ever
+*references* one by name (see "Boolean and Choice" above); creating or
+editing the choice itself is `choice export`/`choice import`'s job, via
+`GlobalChoiceExportService`/`GlobalChoiceImportService`.
+
+**A `*.choice.yml` file is a YAML list, not a single choice** — deliberately
+a different shape from `table export`'s "one file per table": a global
+choice is a small record (a name, a couple of labels, a handful of
+options), and a real environment easily has hundreds of them (confirmed
+live against a real tenant — the overwhelming majority Microsoft's own
+system choices) — one file per choice would be far too granular to be
+useful, where a table's own columns already *are* the natural "list" inside
+its one file. `choice export` (no arguments) fetches every global choice at
+once; `--solution <name>` scopes it down to just the ones a solution
+actually customizes, the same `--solution` convention `table export`
+already has, via a new `IDataverseClient.TryGetSolutionOptionSetMetadataIdsAsync`
+(componenttype `9`, confirmed live against a real tenant's own
+`componenttype` global choice — its Options list names value `9` "Option
+Set" — rather than trusted from a blog post). The exported list is sorted
+by `name` for a stable, diffable file — the bulk query's own ordering isn't
+documented.
+
+`choice import` reads that same list shape and produces one plan per
+choice named in the file (`GlobalChoiceImportPlan`), printed as a "Choice
+plan" alongside one aggregate YAML diff — the same "one big diff, plus a
+separate per-item plan" structure `table import` already uses for its
+columns, not a per-choice diff each. **It only ever acts on the choices the
+file actually names** — unlike a table's `AttributeImportAction.WouldRemove`,
+there's no "present live but missing from the file" flag here: most
+`*.choice.yml` files are already a deliberately curated subset (solution-scoped,
+or hand-picked), and flagging every one of an environment's other few
+hundred choices the file doesn't happen to mention would be noise, not a
+useful signal.
+
+**`choice import` can create a brand-new global choice**, unlike `table
+import` (which never creates the table itself) — a global choice doesn't
+belong to an already-live table the way a column does, so there's nothing
+else it needs to already exist under. When nothing live matches a listed
+choice's `name` yet, that whole entry becomes its create body; otherwise
+it's an ordinary update, following the exact same split as a column's own
+options (see "Boolean and Choice" above): `displayName`/`description`
+update via a full-object PUT (`GlobalChoiceMetadataJsonBuilder.ApplyUpdateFields`),
+`options` via the separate `InsertOptionValue`/`UpdateOptionValue`/
+`OrderOption` actions instead — confirmed against Microsoft's own docs that
+`UpdateOptionSet`'s PUT "doesn't include the options." That PUT needs two
+things `TryGetGlobalOptionSetJsonAsync`'s cloned response doesn't already
+have: its own `Options` stripped back out (present on the clone purely so
+`OptionSetDiffer` can read it, but rejected outright on the non-type-cast
+update URL), and an explicit `@odata.type` set (the type-cast *GET* URL
+doesn't carry over into the response body, so without it Dataverse can't
+tell which concrete type to PUT and 500s trying to instantiate the abstract
+base) — both confirmed live, and both handled by
+`GlobalChoiceMetadataJsonBuilder.ApplyUpdateFields` before anything else
+runs. The plain attribute PUT (`AttributeMetadataJsonBuilder.ApplyUpdateFields`,
+"Importing tables" above) hit the same missing-`@odata.type` gap
+independently and is fixed the identical way. The local/global
+option-level diff (`OptionSetDiffer`) is shared code, not reimplemented
+here — same match-by-`value` insert/rename/reorder algorithm, same "never
+delete an existing option automatically" policy, just addressed by
+`OptionSetName` instead of `AttributeLogicalName`/`EntityLogicalName` in
+the request bodies.
+
+Every global choice this tool creates is `OptionSetType: "Picklist"` —
+confirmed against Microsoft's own documented `CreateOptionSet` example —
+so that property isn't part of the YAML at all; the same Picklist-typed
+choice already works for both single- and multi-select columns (see
+`GlobalChoiceMetadataJsonBuilder`'s own doc comment). Each entry's `name`
+needs the same customization-prefix shape as a column's `schemaName`
+(`DataverseSchemaNaming.SchemaNamePattern`, shared between the two
+validators rather than duplicated), and is its own stable identity — there's
+no separate internal id anywhere in this YAML, since Dataverse's `Name`
+never changes after creation.
+
+**Getting the read query right took three live attempts, not one** —
+worth recording since it contradicts what the create/update docs alone
+would suggest: `GlobalOptionSetDefinitions` is typed as the abstract
+`OptionSetMetadataBase` by default, so a plain `?$select=Options` 400s
+("no property named 'Options'" on the base type) — it needs the same
+`/Microsoft.Dynamics.CRM.OptionSetMetadata` type-cast URL segment an
+attribute's own type-cast GET uses (and, confirmed live, applies to the
+*bulk* collection query the same way — `GlobalOptionSetDefinitions/Microsoft.Dynamics.CRM.OptionSetMetadata?$select=...`
+works, returning every choice's `Options` inline in one request rather than
+one per choice). *Even after* the type-cast, `?$expand=Options` still 400s
+too ("not a navigation property or complex property") — unlike an
+attribute's `OptionSet`/`GlobalOptionSet` (both genuine navigation
+properties), a global choice's own `Options` has to be named directly in
+`$select` instead. See `IDataverseClient.TryGetGlobalOptionSetJsonAsync`/`GetGlobalOptionSetsJsonAsync`'s
+own doc comments for the exact confirmed URLs.
+
+**What this doesn't do yet**: deleting an option (`IDataverseClient.DeleteOptionValueAsync`
+exists but is never called automatically, same policy as a table column's
+options), reordering/renaming an option on a *managed* global choice this
+tool doesn't own the publisher of (Dataverse's own restriction, not this
+tool's), and publishing — same still-open gap `table import` has.
+
+**`--solution` confirmed live** against a real solution on a real tenant:
+correctly narrowed the unscoped export down to just that solution's own
+choices, correctly excluded choices outside it (spot-checked against known
+Microsoft system choices), and the scoped file round-tripped through
+`choice import --whatif` with zero false diffs.

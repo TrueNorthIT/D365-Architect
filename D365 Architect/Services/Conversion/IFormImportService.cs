@@ -15,47 +15,48 @@ namespace D365Architect.Services.Conversion;
 /// the YAML has one (the ordinary case, and immune to a rename or a shared
 /// name — see <see cref="FormDefinition.FormId"/>'s own doc comment), or by
 /// table + name as a fallback for a file exported before that field
-/// existed; creating a brand-new form isn't supported yet (see
-/// <see cref="Dataverse.FormNotFoundException"/>).
+/// existed; creating a brand-new form isn't supported yet.
+///
+/// <see cref="IImportService{TInput,TPreview}.PreviewAsync"/> throws
+/// <see cref="Dataverse.FormNotFoundException"/> when nothing matches
+/// <c>form.FormId</c> (or, lacking one, <c>form.Entity</c>/<c>form.Name</c>),
+/// <see cref="Dataverse.AmbiguousSystemFormException"/> when <c>form.FormId</c>
+/// is absent and more than one form matches that table + name, and
+/// <see cref="NotSupportedException"/> when the form is a dashboard.
+///
+/// <see cref="IImportService{TInput,TPreview}.ApplyAsync"/> only writes the
+/// rebuilt FormXML (see
+/// <see cref="Dataverse.IDataverseClient.UpdateSystemFormXmlAsync"/>) — it
+/// deliberately doesn't publish. Publishing the form's owning table is
+/// <see cref="PublishAsync"/>'s own, separate step instead: it doesn't fit
+/// <see cref="IImportService{TInput,TPreview}"/>'s shared shape (table/view
+/// import never publish at all), so `form import` calls it explicitly right
+/// after <c>ApplyAsync</c> rather than it happening as a hidden side effect
+/// of the write.
 /// </summary>
-public interface IFormImportService
+public interface IFormImportService : IImportService<FormDefinition, FormImportPreview>
 {
-    /// <summary>
-    /// Looks up the form, rebuilds its FormXML, and validates it — without
-    /// writing anything, so the caller can show a diff and validation
-    /// warnings and get explicit confirmation before <see cref="ApplyAsync"/>.
-    /// </summary>
-    /// <exception cref="Dataverse.FormNotFoundException">No form matches <c>form.FormId</c> (or, lacking one, <c>form.Entity</c>/<c>form.Name</c>).</exception>
-    /// <exception cref="Dataverse.AmbiguousSystemFormException"><c>form.FormId</c> is absent and more than one form matches that table + name.</exception>
-    /// <exception cref="NotSupportedException"><paramref name="form"/> is a dashboard.</exception>
-    Task<FormImportPreview> PreviewAsync(Uri environmentUrl, string accessToken, FormDefinition form, CancellationToken cancellationToken);
-
-    /// <summary>
-    /// Writes <paramref name="preview"/>'s already-built FormXML back to the
-    /// same form it was previewed against, then publishes it — see
-    /// <see cref="Dataverse.IDataverseClient.UpdateSystemFormXmlAsync"/> and
-    /// <see cref="Dataverse.IDataverseClient.PublishEntityAsync"/>.
-    /// </summary>
-    Task ApplyAsync(Uri environmentUrl, string accessToken, FormImportPreview preview, CancellationToken cancellationToken);
+    /// <summary>Publishes <paramref name="preview"/>'s owning table, making a just-applied change visible to end users without a separate manual publish step.</summary>
+    Task PublishAsync(Uri environmentUrl, string accessToken, FormImportPreview preview, CancellationToken cancellationToken);
 }
 
 /// <summary>
-/// The result of <see cref="IFormImportService.PreviewAsync"/> — everything
-/// <see cref="IFormImportService.ApplyAsync"/> needs
+/// The result of <see cref="IImportService{TInput,TPreview}.PreviewAsync"/> — everything
+/// <see cref="IImportService{TInput,TPreview}.ApplyAsync"/> needs
 /// (<see cref="FormId"/>/<see cref="NewFormXml"/>), plus everything a human
 /// needs to decide whether to call it.
 /// </summary>
-/// <param name="FormId">The systemform's id — what <see cref="IFormImportService.ApplyAsync"/> updates.</param>
+/// <param name="FormId">The systemform's id — what <see cref="IImportService{TInput,TPreview}.ApplyAsync"/> updates.</param>
 /// <param name="Entity">
 /// The form's owning table's logical name — the live one when the form was
 /// resolved by id (see <see cref="Dataverse.ExistingSystemForm.EntityLogicalName"/>),
 /// falling back to the YAML's own <see cref="FormDefinition.Entity"/>
-/// otherwise. What <see cref="IFormImportService.ApplyAsync"/> passes to
+/// otherwise. What <see cref="IFormImportService.PublishAsync"/> passes to
 /// <see cref="Dataverse.IDataverseClient.PublishEntityAsync"/> after
-/// writing the new FormXML.
+/// <c>ApplyAsync</c> writes the new FormXML.
 /// </param>
 /// <param name="ExistingFormXml">The form's real, current, unmodified live FormXML, exactly as Dataverse returned it.</param>
-/// <param name="NewFormXml">The rebuilt FormXML <see cref="IFormImportService.ApplyAsync"/> will write — <see cref="FormXmlWriter"/>'s output, patched onto <paramref name="ExistingFormXml"/>.</param>
+/// <param name="NewFormXml">The rebuilt FormXML <see cref="IImportService{TInput,TPreview}.ApplyAsync"/> will write — <see cref="FormXmlWriter"/>'s output, patched onto <paramref name="ExistingFormXml"/>.</param>
 /// <param name="ExistingComparableFormXml">
 /// <paramref name="ExistingFormXml"/> rebuilt through <see cref="FormXmlWriter"/>
 /// from its own decomposed content — the same writer, the same base

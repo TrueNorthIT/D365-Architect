@@ -54,7 +54,7 @@ public sealed class BuildFormXmlCommand(IAuthenticationService authenticationSer
 
     protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
-        var form = await FormYamlFileReader.TryReadAsync(settings.Input, cancellationToken);
+        var form = await YamlFileReader.TryReadAsync(settings.Input, "form", FormYamlDeserializer.FromYaml, cancellationToken);
         if (form is null)
         {
             return 1;

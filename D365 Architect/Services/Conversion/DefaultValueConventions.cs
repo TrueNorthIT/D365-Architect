@@ -30,4 +30,11 @@ internal static class DefaultValueConventions
     /// shows up as false on a handful of internal system views.)
     /// </summary>
     public static bool? FalseOrNull(bool? value) => value == false ? false : null;
+
+    /// <summary>
+    /// A Boolean column's TrueOption/FalseOption label defaults to "True"/"False"
+    /// unless a maker renamed it — only the renamed case is worth stating.
+    /// </summary>
+    public static string? BooleanOptionLabelOrNull(string? value, string defaultLabel) =>
+        string.Equals(value, defaultLabel, StringComparison.Ordinal) ? null : value;
 }

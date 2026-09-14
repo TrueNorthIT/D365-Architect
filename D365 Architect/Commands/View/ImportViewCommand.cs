@@ -1,7 +1,6 @@
-using System.ComponentModel;
 using D365Architect.Commands;
-using D365Architect.Services.Authentication;
 using D365Architect.Services.Conversion;
+using D365Architect.Services.Conversion.Models;
 using D365Architect.Services.Dataverse;
 using Spectre.Console;
 using Spectre.Console.Cli;
@@ -9,7 +8,7 @@ using Spectre.Console.Cli;
 namespace D365Architect.Commands.View;
 
 /// <summary>
-/// `d365architect view import --input account-active.view.yml [--yes]`
+/// `d365architect view import --input account-active.view.yml [--yes] [--whatif]`
 /// Writes a `*.view.yml` file's Description/FetchXml/LayoutXml directly
 /// back into Dataverse. Needs sign-in.
 ///
@@ -25,82 +24,66 @@ namespace D365Architect.Commands.View;
 /// <see cref="IViewImportService"/>'s own doc comment for why.
 ///
 /// What this doesn't do yet: publish the change (Dataverse customizations
-/// still need publishing separately before end users see it).
+/// still need publishing separately before end users see it) — and
+/// confirmed live, that gap isn't just cosmetic for verification either: a
+/// plain <c>savedqueries</c> GET reflects the *published* state, so a
+/// follow-up `view export` won't show a just-written FetchXml/LayoutXml
+/// change until something publishes the table (same platform behavior
+/// documented on <see cref="Services.Dataverse.IDataverseClient.UpdateSavedQueryAsync"/>,
+/// confirmed for forms first — see <see cref="Services.Dataverse.IDataverseClient.UpdateSystemFormXmlAsync"/>).
+/// The write itself genuinely takes regardless.
+///
+/// The shared preview → diff → confirm → apply flow itself lives in the
+/// injected <see cref="ImportRunner"/>, alongside `form import`/`table
+/// import` — this class supplies only what's actually different about a
+/// view: how to read/preview/apply it, its three separate field diffs, and
+/// its own exceptions.
 /// </summary>
-public sealed class ImportViewCommand(IAuthenticationService authenticationService, IViewImportService viewImportService)
+public sealed class ImportViewCommand(IViewImportService viewImportService, ImportRunner importRunner)
     : AsyncCommand<ImportViewCommand.Settings>
 {
-    public sealed class Settings : CommandSettings
-    {
-        [CommandOption("-i|--input <PATH>")]
-        [Description("Path to the *.view.yml file to import.")]
-        public required string Input { get; init; }
-
-        [CommandOption("-y|--yes")]
-        [Description("Skip the confirmation prompt and import immediately.")]
-        public bool Yes { get; init; }
-    }
+    public sealed class Settings : ImportSettingsBase;
 
     protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
-        var view = await ViewYamlFileReader.TryReadAsync(settings.Input, cancellationToken);
-        if (view is null)
+        var spec = new ImportFlowSpec<Settings, ViewDefinition, ViewImportPreview>
         {
-            return 1;
-        }
+            ReadInputAsync = (s, ct) => YamlFileReader.TryReadAsync(s.Input, "view", ViewYamlDeserializer.FromYaml, ct),
 
-        try
-        {
-            var auth = await authenticationService.GetCurrentContextAsync(cancellationToken);
+            SubjectName = view => view.Name,
 
-            var preview = await AnsiConsole.Status().StartAsync($"Looking up '{view.Name}'...",
-                async _ => await viewImportService.PreviewAsync(auth.EnvironmentUrl, auth.AccessToken, view, cancellationToken));
+            PreviewStatusMessage = view => $"Looking up '{view.Name}'...",
 
-            if (!preview.HasChanges)
+            SkipBeforePrinting = preview => preview.HasChanges
+                ? null
+                : "the local YAML already matches what's live in Dataverse. Nothing to import.",
+
+            PrintChanges = preview =>
             {
-                AnsiConsole.MarkupLine("[green]No changes[/] — the local YAML already matches what's live in Dataverse. Nothing to import.");
-                return 0;
-            }
+                PrintFieldDiff("description", preview.ExistingDescription, preview.NewDescription, pretty: false);
+                PrintFieldDiff("fetchxml", preview.ExistingFetchXml, preview.NewFetchXml, pretty: true);
+                PrintFieldDiff("layoutxml", preview.ExistingLayoutXml, preview.NewLayoutXml, pretty: true);
+                AnsiConsole.WriteLine();
+            },
 
-            AnsiConsole.MarkupLine($"[bold]Changes for '{view.Name}':[/]");
-            PrintFieldDiff("description", preview.ExistingDescription, preview.NewDescription, pretty: false);
-            PrintFieldDiff("fetchxml", preview.ExistingFetchXml, preview.NewFetchXml, pretty: true);
-            PrintFieldDiff("layoutxml", preview.ExistingLayoutXml, preview.NewLayoutXml, pretty: true);
-            AnsiConsole.WriteLine();
+            ApplyStatusMessage = "Importing...",
 
-            if (!settings.Yes && !AnsiConsole.Confirm("Import these changes into Dataverse?", defaultValue: false))
+            ApplyAsync = (auth, preview, ct) => viewImportService.ApplyAsync(auth.EnvironmentUrl, auth.AccessToken, preview, ct),
+
+            PrintSuccess = (view, preview) =>
             {
-                AnsiConsole.MarkupLine("[yellow]Aborted.[/] Nothing was written.");
-                return 0;
-            }
+                AnsiConsole.MarkupLine($"[green]Imported.[/] '{view.Name}' updated in Dataverse.");
+                AnsiConsole.MarkupLine("[grey]Note: this only updates the view's own fields — publish customizations separately (e.g. in the maker portal) before end users see the change; this tool doesn't publish yet. Until you do, a follow-up 'view export' won't show this change either — it reads the same unpublished state, not a sign the import failed.[/]");
+            },
 
-            await AnsiConsole.Status().StartAsync("Importing...",
-                async _ => await viewImportService.ApplyAsync(auth.EnvironmentUrl, auth.AccessToken, preview, cancellationToken));
+            FormatDomainException = (ex, view) => ex switch
+            {
+                ViewNotFoundException or AmbiguousSavedQueryException => $"[red]{ex.Message.EscapeMarkup()}[/]",
+                _ => null,
+            },
+        };
 
-            AnsiConsole.MarkupLine($"[green]Imported.[/] '{view.Name}' updated in Dataverse.");
-            AnsiConsole.MarkupLine("[grey]Note: this only updates the view's own fields — publish customizations separately (e.g. in the maker portal) before end users see the change; this tool doesn't publish yet.[/]");
-            return 0;
-        }
-        catch (AuthenticationRequiredException ex)
-        {
-            ErrorConsole.Print(ex);
-            return 1;
-        }
-        catch (ViewNotFoundException ex)
-        {
-            ErrorConsole.Print(ex);
-            return 1;
-        }
-        catch (AmbiguousSavedQueryException ex)
-        {
-            ErrorConsole.Print(ex);
-            return 1;
-        }
-        catch (HttpRequestException ex)
-        {
-            ErrorConsole.Print(ex);
-            return 1;
-        }
+        return await importRunner.RunAsync(settings, viewImportService, spec, cancellationToken);
     }
 
     /// <summary>

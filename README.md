@@ -185,6 +185,7 @@ d365architect table import --input account.table.yml
 |---------------|--------------------------------------------------------------|----------|
 | `-i, --input` | Path to the `*.table.yml` file to import                       | Yes      |
 | `-y, --yes`   | Skip the confirmation prompt and import immediately            | No       |
+| `--whatif`    | Only show the diff/plan — never prompt and never write anything | No      |
 
 Before writing anything, this prints the full diff between the local file
 and re-exporting the table right now, plus a separate **column plan**
@@ -200,7 +201,8 @@ just shows up in the plan as "not applied", nothing more. The table itself
 is never created if it doesn't exist yet, either. Unless `--yes` is passed,
 you get a confirmation prompt (defaulting to "no") before anything actually
 changes in Dataverse, and if there's genuinely nothing to apply, nothing is
-written at all.
+written at all. Pass `--whatif` to see the diff/plan and stop there — no
+prompt, no write, regardless of `--yes`.
 
 Every create/update is also checked for common invalid changes *before*
 anything is sent — changing a column's type or SchemaName after creation,
@@ -274,6 +276,7 @@ d365architect view import --input active-accounts.view.yml
 |---------------|--------------------------------------------------------------|----------|
 | `-i, --input` | Path to the `*.view.yml` file to import                        | Yes      |
 | `-y, --yes`   | Skip the confirmation prompt and import immediately             | No       |
+| `--whatif`    | Only show the diff — never prompt and never write anything      | No       |
 
 Simpler than `form import`: since FetchXML/LayoutXML are kept verbatim
 (never decomposed and rebuilt), the diff compares the live values against
@@ -282,7 +285,8 @@ the local YAML directly, with no canonicalization step needed first. Only
 default status, and Quick Find flag are never changed by this command. Only
 ever updates a view that already exists; unless `--yes` is passed, you get
 a confirmation prompt (defaulting to "no") before anything actually changes
-in Dataverse.
+in Dataverse. Pass `--whatif` to see the diff and stop there — no prompt,
+no write, regardless of `--yes`.
 
 **What this doesn't do yet**: publish the change — same as `table import`.
 Unlike `view import`, `form import` now does publish automatically after
@@ -466,6 +470,7 @@ d365architect form import --input account-main-form.form.yml
 |------------------------------|--------------------------------------------------------------|----------|
 | `-i, --input`                | Path to the `*.form.yml` file to import                       | Yes      |
 | `-y, --yes`                  | Skip the confirmation prompt and import immediately            | No       |
+| `--whatif`                   | Only show the diff — never prompt and never write anything     | No       |
 | `--allow-schema-violations`  | Proceed even with a schema violation that isn't a confirmed-safe pattern | No |
 
 Before writing anything, this looks up the form — by the YAML's own
@@ -479,7 +484,8 @@ replace it — the concrete answer to "must have a way to check differences
 between client and server". If the rebuild is identical to what's already
 live, nothing is written at all. Otherwise, unless `--yes` is passed, you
 get a confirmation prompt (defaulting to "no") before anything actually
-changes in Dataverse.
+changes in Dataverse. Pass `--whatif` to see the diff and stop there — no
+prompt, no write, regardless of `--yes`.
 
 **Unlike `build-xml`, a schema violation here can genuinely block the
 import.** Only the one specific, confirmed-safe pattern (`headerdensity`/

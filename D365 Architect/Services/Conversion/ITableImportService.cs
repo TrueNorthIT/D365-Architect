@@ -27,23 +27,17 @@ namespace D365Architect.Services.Conversion;
 /// prefix all come back as <see cref="AttributeImportAction.Invalid"/>
 /// rather than being attempted and left to Dataverse's own API error to
 /// explain.
+///
+/// <see cref="IImportService{TInput,TPreview}.ApplyAsync"/> applies every
+/// <see cref="AttributeImportAction.Create"/>/<see cref="AttributeImportAction.Update"/>
+/// plan in the preview, plus the table-level update if
+/// <see cref="TableImportPreview.TableUpdateBody"/> is set. It doesn't
+/// publish the change — Dataverse customizations still need publishing
+/// separately (see `docs/yaml-conventions.md`).
 /// </summary>
-public interface ITableImportService
-{
-    Task<TableImportPreview> PreviewAsync(Uri environmentUrl, string accessToken, EntityDefinition entity, CancellationToken cancellationToken);
+public interface ITableImportService : IImportService<EntityDefinition, TableImportPreview>;
 
-    /// <summary>
-    /// Applies every <see cref="AttributeImportAction.Create"/>/
-    /// <see cref="AttributeImportAction.Update"/> plan in
-    /// <paramref name="preview"/>, plus the table-level update if
-    /// <see cref="TableImportPreview.TableUpdateBody"/> is set. Doesn't
-    /// publish the change — Dataverse customizations still need publishing
-    /// separately (see `docs/yaml-conventions.md`).
-    /// </summary>
-    Task ApplyAsync(Uri environmentUrl, string accessToken, TableImportPreview preview, CancellationToken cancellationToken);
-}
-
-/// <summary>What (if anything) <see cref="ITableImportService.ApplyAsync"/> will do for one column.</summary>
+/// <summary>What (if anything) <see cref="IImportService{TInput,TPreview}.ApplyAsync"/> will do for one column.</summary>
 public enum AttributeImportAction
 {
     /// <summary>Present in the local YAML, not live yet — will be created.</summary>
@@ -57,10 +51,27 @@ public enum AttributeImportAction
 
     /// <summary>
     /// A difference was found (or the column is new), but its type isn't one
-    /// <see cref="AttributeMetadataJsonBuilder.SupportedTypes"/> covers —
-    /// shown for visibility, never applied.
+    /// <see cref="AttributeMetadataJsonBuilder.SupportedTypes"/>/<see cref="AttributeMetadataJsonBuilder.CreatableTypes"/>
+    /// covers — shown for visibility, never applied.
     /// </summary>
     SkippedUnsupportedType,
+
+    /// <summary>
+    /// A brand-new, single-target Lookup column — created by creating the
+    /// one-to-many relationship that owns it (see
+    /// <see cref="AttributeMetadataJsonBuilder.BuildRelationshipCreateBody"/>/
+    /// <see cref="Dataverse.IDataverseClient.CreateOneToManyRelationshipAsync"/>),
+    /// never a plain attribute POST.
+    /// </summary>
+    CreateLookupRelationship,
+
+    /// <summary>
+    /// A brand-new Customer column — created via the dedicated
+    /// <c>CreateCustomerRelationships</c> action (see
+    /// <see cref="AttributeMetadataJsonBuilder.BuildCustomerRelationshipCreateBody"/>/
+    /// <see cref="Dataverse.IDataverseClient.CreateCustomerRelationshipsAsync"/>).
+    /// </summary>
+    CreateCustomerRelationship,
 
     /// <summary>
     /// Live but absent from the local YAML. Never applied — this tool never
@@ -89,14 +100,48 @@ public enum AttributeImportAction
 /// <param name="LogicalName">The column's logical name.</param>
 /// <param name="Action">What will happen — see <see cref="AttributeImportAction"/>'s own members.</param>
 /// <param name="Reason">Set for <see cref="AttributeImportAction.SkippedUnsupportedType"/>/<see cref="AttributeImportAction.WouldRemove"/>/<see cref="AttributeImportAction.Invalid"/>, explaining why nothing will happen.</param>
-/// <param name="RequestBody">The full JSON body to POST (create) or PUT (update); null for every other action.</param>
+/// <param name="RequestBody">The full JSON body to POST (create/relationship-create) or PUT (update); null for every other action.</param>
 /// <param name="Warnings">
 /// Non-blocking cautions for an <see cref="AttributeImportAction.Update"/>
 /// that Dataverse allows but warns against (e.g. lowering MaxLength below
-/// what existing data might exceed) — see <see cref="AttributeChangeValidator.Warnings"/>.
-/// Null for every other action.
+/// what existing data might exceed, or a local option/status value with no
+/// live match this tool won't insert automatically) — see
+/// <see cref="AttributeChangeValidator.Warnings"/>. Null for every other
+/// action.
 /// </param>
-public sealed record AttributeImportPlan(string LogicalName, AttributeImportAction Action, string? Reason, JsonObject? RequestBody, IReadOnlyList<string>? Warnings = null);
+/// <param name="OptionChanges">
+/// Separate option-value actions (insert/rename/reorder) to run alongside
+/// this plan's own <paramref name="RequestBody"/> — see
+/// <see cref="AttributeMetadataJsonBuilder.BuildOptionChangePlans"/>. Only
+/// ever set for an <see cref="AttributeImportAction.Update"/> on an
+/// option-bearing type (Boolean/Picklist/MultiSelectPicklist/State/Status);
+/// null for every other action.
+/// </param>
+public sealed record AttributeImportPlan(string LogicalName, AttributeImportAction Action, string? Reason, JsonObject? RequestBody, IReadOnlyList<string>? Warnings = null, IReadOnlyList<OptionChangePlan>? OptionChanges = null);
+
+/// <summary>What kind of option-value action <see cref="OptionChangePlan"/> carries — see <see cref="AttributeMetadataJsonBuilder.BuildOptionChangePlans"/>.</summary>
+public enum OptionChangeAction
+{
+    /// <summary>A brand-new option on an existing local Picklist/MultiSelectPicklist column — <c>InsertOptionValue</c>.</summary>
+    InsertOption,
+
+    /// <summary>An existing option's label changed — <c>UpdateOptionValue</c> (also used for Boolean's fixed True/False options, and for Status).</summary>
+    UpdateOption,
+
+    /// <summary>The same set of options, reordered — <c>OrderOption</c>.</summary>
+    OrderOptions,
+
+    /// <summary>An existing State option's label changed — <c>UpdateStateValue</c>.</summary>
+    UpdateStateValue,
+
+    /// <summary>A brand-new status reason on an existing Status column — <c>InsertStatusValue</c>. Dataverse assigns its Value itself; never used for anything else.</summary>
+    InsertStatusValue,
+}
+
+/// <param name="Action">Which action to call — see <see cref="OptionChangeAction"/>'s own members.</param>
+/// <param name="RequestBody">The full JSON body to POST to that action.</param>
+/// <param name="Description">A short, human-readable summary for the column plan printout, e.g. "insert option 'Red' (727000000)".</param>
+public sealed record OptionChangePlan(OptionChangeAction Action, JsonObject RequestBody, string Description);
 
 /// <param name="EntityLogicalName">The table this preview is for.</param>
 /// <param name="ExistingYaml">What re-exporting the table right now would produce.</param>
@@ -110,6 +155,7 @@ public sealed record AttributeImportPlan(string LogicalName, AttributeImportActi
 /// <param name="AttributePlans">One plan per column seen on either side — see <see cref="AttributeImportAction"/>.</param>
 public sealed record TableImportPreview(string EntityLogicalName, string ExistingYaml, string NewYaml, JsonObject? TableUpdateBody, IReadOnlyList<AttributeImportPlan> AttributePlans)
 {
-    /// <summary>True when there's at least one actual write to make — a table-level change, or a Create/Update column plan.</summary>
-    public bool HasChanges => TableUpdateBody is not null || AttributePlans.Any(p => p.Action is AttributeImportAction.Create or AttributeImportAction.Update);
+    /// <summary>True when there's at least one actual write to make — a table-level change, or a column plan that writes something (Create/Update/CreateLookupRelationship/CreateCustomerRelationship).</summary>
+    public bool HasChanges => TableUpdateBody is not null || AttributePlans.Any(p =>
+        p.Action is AttributeImportAction.Create or AttributeImportAction.Update or AttributeImportAction.CreateLookupRelationship or AttributeImportAction.CreateCustomerRelationship);
 }
