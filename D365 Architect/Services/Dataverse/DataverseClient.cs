@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
@@ -337,15 +338,8 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         return await response.Content.ReadAsStringAsync(cancellationToken);
     }
 
-    public async Task UpdateEntityAsync(Uri environmentUrl, string accessToken, string entityLogicalName, JsonObject entityMetadata, CancellationToken cancellationToken)
-    {
-        using var request = CreateRequest(environmentUrl, $"EntityDefinitions(LogicalName='{Uri.EscapeDataString(entityLogicalName)}')", accessToken, HttpMethod.Put);
-        request.Headers.Add("MSCRM.MergeLabels", "true");
-        request.Content = JsonContent.Create(entityMetadata);
-
-        using var response = await httpClient.SendAsync(request, cancellationToken);
-        await EnsureSuccessAsync(response, cancellationToken);
-    }
+    public async Task UpdateEntityAsync(Uri environmentUrl, string accessToken, string entityLogicalName, JsonObject entityMetadata, CancellationToken cancellationToken) =>
+        await SendWriteAsync(environmentUrl, accessToken, new DataverseWrite.UpdateEntity(entityLogicalName, entityMetadata), cancellationToken);
 
     public async Task<string> GetAttributeMetadataJsonAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string attributeLogicalName, string attributeType, CancellationToken cancellationToken)
     {
@@ -360,32 +354,14 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         return await response.Content.ReadAsStringAsync(cancellationToken);
     }
 
-    public async Task UpdateAttributeAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string attributeLogicalName, JsonObject attributeMetadata, CancellationToken cancellationToken)
-    {
-        // No type-cast segment here, unlike the GET -- confirmed against
-        // Microsoft's own documented example: the type comes from the body's
-        // own "@odata.type", not the URL.
-        var relativePath = $"EntityDefinitions(LogicalName='{Uri.EscapeDataString(entityLogicalName)}')" +
-            $"/Attributes(LogicalName='{Uri.EscapeDataString(attributeLogicalName)}')";
+    // No type-cast segment on the update URL, unlike the GET -- confirmed
+    // against Microsoft's own documented example: the type comes from the
+    // body's own "@odata.type", not the URL.
+    public async Task UpdateAttributeAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string attributeLogicalName, JsonObject attributeMetadata, CancellationToken cancellationToken) =>
+        await SendWriteAsync(environmentUrl, accessToken, new DataverseWrite.UpdateAttribute(entityLogicalName, attributeLogicalName, attributeMetadata), cancellationToken);
 
-        using var request = CreateRequest(environmentUrl, relativePath, accessToken, HttpMethod.Put);
-        request.Headers.Add("MSCRM.MergeLabels", "true");
-        request.Content = JsonContent.Create(attributeMetadata);
-
-        using var response = await httpClient.SendAsync(request, cancellationToken);
-        await EnsureSuccessAsync(response, cancellationToken);
-    }
-
-    public async Task CreateAttributeAsync(Uri environmentUrl, string accessToken, string entityLogicalName, JsonObject attributeMetadata, CancellationToken cancellationToken)
-    {
-        var relativePath = $"EntityDefinitions(LogicalName='{Uri.EscapeDataString(entityLogicalName)}')/Attributes";
-
-        using var request = CreateRequest(environmentUrl, relativePath, accessToken, HttpMethod.Post);
-        request.Content = JsonContent.Create(attributeMetadata);
-
-        using var response = await httpClient.SendAsync(request, cancellationToken);
-        await EnsureSuccessAsync(response, cancellationToken);
-    }
+    public async Task CreateAttributeAsync(Uri environmentUrl, string accessToken, string entityLogicalName, JsonObject attributeMetadata, CancellationToken cancellationToken) =>
+        await SendWriteAsync(environmentUrl, accessToken, new DataverseWrite.CreateAttribute(entityLogicalName, attributeMetadata), cancellationToken);
 
     public async Task<string> GetAttributeOptionSetJsonAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string attributeLogicalName, string attributeType, CancellationToken cancellationToken)
     {
@@ -401,43 +377,40 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         return await response.Content.ReadAsStringAsync(cancellationToken);
     }
 
-    public async Task CreateOneToManyRelationshipAsync(Uri environmentUrl, string accessToken, JsonObject relationshipMetadata, CancellationToken cancellationToken)
-    {
-        using var request = CreateRequest(environmentUrl, "RelationshipDefinitions", accessToken, HttpMethod.Post);
-        request.Content = JsonContent.Create(relationshipMetadata);
+    public async Task CreateOneToManyRelationshipAsync(Uri environmentUrl, string accessToken, JsonObject relationshipMetadata, CancellationToken cancellationToken) =>
+        await SendWriteAsync(environmentUrl, accessToken, new DataverseWrite.CreateOneToManyRelationship(relationshipMetadata), cancellationToken);
 
-        using var response = await httpClient.SendAsync(request, cancellationToken);
-        await EnsureSuccessAsync(response, cancellationToken);
-    }
-
-    public async Task CreateCustomerRelationshipsAsync(Uri environmentUrl, string accessToken, JsonObject body, CancellationToken cancellationToken)
-    {
-        using var request = CreateRequest(environmentUrl, "CreateCustomerRelationships", accessToken, HttpMethod.Post);
-        request.Content = JsonContent.Create(body);
-
-        using var response = await httpClient.SendAsync(request, cancellationToken);
-        await EnsureSuccessAsync(response, cancellationToken);
-    }
+    public async Task CreateCustomerRelationshipsAsync(Uri environmentUrl, string accessToken, JsonObject body, CancellationToken cancellationToken) =>
+        await SendWriteAsync(environmentUrl, accessToken, new DataverseWrite.CreateCustomerRelationships(body), cancellationToken);
 
     public async Task InsertOptionValueAsync(Uri environmentUrl, string accessToken, JsonObject body, CancellationToken cancellationToken) =>
-        await PostActionAsync(environmentUrl, "InsertOptionValue", accessToken, body, cancellationToken);
+        await SendWriteAsync(environmentUrl, accessToken, new DataverseWrite.InsertOptionValue(body), cancellationToken);
 
     public async Task UpdateOptionValueAsync(Uri environmentUrl, string accessToken, JsonObject body, CancellationToken cancellationToken) =>
-        await PostActionAsync(environmentUrl, "UpdateOptionValue", accessToken, body, cancellationToken);
+        await SendWriteAsync(environmentUrl, accessToken, new DataverseWrite.UpdateOptionValue(body), cancellationToken);
 
     public async Task DeleteOptionValueAsync(Uri environmentUrl, string accessToken, JsonObject body, CancellationToken cancellationToken) =>
         await PostActionAsync(environmentUrl, "DeleteOptionValue", accessToken, body, cancellationToken);
 
     public async Task OrderOptionsAsync(Uri environmentUrl, string accessToken, JsonObject body, CancellationToken cancellationToken) =>
-        await PostActionAsync(environmentUrl, "OrderOption", accessToken, body, cancellationToken);
+        await SendWriteAsync(environmentUrl, accessToken, new DataverseWrite.OrderOptions(body), cancellationToken);
 
     public async Task InsertStatusValueAsync(Uri environmentUrl, string accessToken, JsonObject body, CancellationToken cancellationToken) =>
-        await PostActionAsync(environmentUrl, "InsertStatusValue", accessToken, body, cancellationToken);
+        await SendWriteAsync(environmentUrl, accessToken, new DataverseWrite.InsertStatusValue(body), cancellationToken);
 
     public async Task UpdateStateValueAsync(Uri environmentUrl, string accessToken, JsonObject body, CancellationToken cancellationToken) =>
-        await PostActionAsync(environmentUrl, "UpdateStateValue", accessToken, body, cancellationToken);
+        await SendWriteAsync(environmentUrl, accessToken, new DataverseWrite.UpdateStateValue(body), cancellationToken);
 
-    /// <summary>Shared by every simple "POST an action, ignore the response body" call above — same shape as <see cref="PublishEntityAsync"/>'s own request/response handling.</summary>
+    /// <summary>
+    /// Shared by every simple "POST an action, ignore the response body"
+    /// call above that isn't (yet) a <see cref="DataverseWrite"/> case — same
+    /// shape as <see cref="PublishEntityAsync"/>'s own request/response
+    /// handling. Only <see cref="DeleteOptionValueAsync"/> still goes through
+    /// this directly: it's never actually called (see its own doc comment on
+    /// <see cref="IDataverseClient"/>), so it was left out of the
+    /// <see cref="ExecuteTransactionAsync"/> batching path rather than
+    /// growing a union case nothing exercises.
+    /// </summary>
     private async Task PostActionAsync(Uri environmentUrl, string actionName, string accessToken, JsonObject body, CancellationToken cancellationToken)
     {
         using var request = CreateRequest(environmentUrl, actionName, accessToken, HttpMethod.Post);
@@ -445,6 +418,144 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
 
         using var response = await httpClient.SendAsync(request, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);
+    }
+
+    /// <summary>Sends one <see cref="DataverseWrite"/> as its own ordinary HTTP request — what every individual write method above now delegates to, sharing <see cref="ToHttpRequest"/> with <see cref="ExecuteTransactionAsync"/> so the two paths can never drift apart on URL/header shape.</summary>
+    private async Task SendWriteAsync(Uri environmentUrl, string accessToken, DataverseWrite write, CancellationToken cancellationToken)
+    {
+        var (method, relativeUrl, body, headerName, headerValue) = ToHttpRequest(write);
+
+        using var request = CreateRequest(environmentUrl, relativeUrl, accessToken, method);
+        if (headerName is not null)
+        {
+            request.Headers.Add(headerName, headerValue);
+        }
+
+        request.Content = JsonContent.Create(body);
+
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+    }
+
+    public async Task ExecuteTransactionAsync(Uri environmentUrl, string accessToken, IReadOnlyList<DataverseWrite> writes, CancellationToken cancellationToken)
+    {
+        if (writes.Count == 0)
+        {
+            return;
+        }
+
+        var batchBoundary = $"batch_{Guid.NewGuid()}";
+        var changesetBoundary = $"changeset_{Guid.NewGuid()}";
+        var requestBody = BuildTransactionRequestBody(batchBoundary, changesetBoundary, writes);
+
+        using var request = CreateRequest(environmentUrl, "$batch", accessToken, HttpMethod.Post);
+        request.Content = new StringContent(requestBody, Encoding.UTF8);
+        request.Content.Headers.ContentType = MediaTypeHeaderValue.Parse($"multipart/mixed; boundary=\"{batchBoundary}\"");
+
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new HttpRequestException($"Dataverse transaction failed ({(int)response.StatusCode} {response.StatusCode}): {responseBody}");
+        }
+
+        var responseBoundary = response.Content.Headers.ContentType?.Parameters
+            .FirstOrDefault(p => p.Name.Equals("boundary", StringComparison.OrdinalIgnoreCase))?.Value?.Trim('"');
+        if (responseBoundary is null)
+        {
+            throw new HttpRequestException($"Dataverse's $batch response had no multipart boundary to parse: {responseBody}");
+        }
+
+        var parts = ODataBatchResponseParser.ParseParts(responseBody, responseBoundary);
+        var failures = parts.Where(p => p.StatusCode is < 200 or >= 300).ToList();
+        if (failures.Count > 0)
+        {
+            // A changeset is all-or-nothing: if anything below failed,
+            // nothing in this transaction was kept, whether or not this
+            // particular failure was the one Dataverse chose to report (it
+            // stops at the first failure and rolls the rest back rather than
+            // continuing — no `Prefer: odata.continue-on-error` is sent).
+            var details = string.Join(" | ", failures.Select(f => $"[{f.StatusCode}] {f.Body}"));
+            throw new HttpRequestException($"Dataverse transaction rolled back — nothing in this batch of {writes.Count} write(s) was applied. {details}");
+        }
+    }
+
+    /// <summary>
+    /// Maps one <see cref="DataverseWrite"/> to the request
+    /// <see cref="SendWriteAsync"/>/<see cref="ExecuteTransactionAsync"/>
+    /// both need to build it — the method, the path relative to
+    /// <c>api/data/v9.2/</c>, the JSON body, and (for an update, so a
+    /// changed <c>DisplayName</c> doesn't wipe out other languages' labels)
+    /// the <c>MSCRM.MergeLabels</c> header <see cref="UpdateEntityAsync"/>/
+    /// <see cref="UpdateAttributeAsync"/> already sent before this existed.
+    /// The one and only place these URLs are built for every case here —
+    /// every individual write method above is now a one-line call into this
+    /// (via <see cref="SendWriteAsync"/>), so there's nothing left to drift
+    /// out of sync with what a batched write actually sends.
+    /// </summary>
+    private static (HttpMethod Method, string RelativeUrl, JsonObject Body, string? HeaderName, string? HeaderValue) ToHttpRequest(DataverseWrite write) => write switch
+    {
+        DataverseWrite.UpdateEntity w => (HttpMethod.Put, $"EntityDefinitions(LogicalName='{Uri.EscapeDataString(w.EntityLogicalName)}')", w.Metadata, "MSCRM.MergeLabels", "true"),
+        DataverseWrite.CreateAttribute w => (HttpMethod.Post, $"EntityDefinitions(LogicalName='{Uri.EscapeDataString(w.EntityLogicalName)}')/Attributes", w.Metadata, null, null),
+        DataverseWrite.UpdateAttribute w => (HttpMethod.Put, $"EntityDefinitions(LogicalName='{Uri.EscapeDataString(w.EntityLogicalName)}')/Attributes(LogicalName='{Uri.EscapeDataString(w.AttributeLogicalName)}')", w.Metadata, "MSCRM.MergeLabels", "true"),
+        DataverseWrite.CreateOneToManyRelationship w => (HttpMethod.Post, "RelationshipDefinitions", w.Metadata, null, null),
+        DataverseWrite.CreateCustomerRelationships w => (HttpMethod.Post, "CreateCustomerRelationships", w.Body, null, null),
+        DataverseWrite.InsertOptionValue w => (HttpMethod.Post, "InsertOptionValue", w.Body, null, null),
+        DataverseWrite.UpdateOptionValue w => (HttpMethod.Post, "UpdateOptionValue", w.Body, null, null),
+        DataverseWrite.OrderOptions w => (HttpMethod.Post, "OrderOption", w.Body, null, null),
+        DataverseWrite.InsertStatusValue w => (HttpMethod.Post, "InsertStatusValue", w.Body, null, null),
+        DataverseWrite.UpdateStateValue w => (HttpMethod.Post, "UpdateStateValue", w.Body, null, null),
+        _ => throw new NotSupportedException($"Unhandled {nameof(DataverseWrite)} case: {write.GetType().Name}"),
+    };
+
+    /// <summary>
+    /// Builds the raw <c>multipart/mixed</c> request text for
+    /// <see cref="ExecuteTransactionAsync"/> — one outer <c>batch_*</c> part
+    /// wrapping a single <c>changeset_*</c> part, itself wrapping one raw
+    /// HTTP request per write, in order. Hand-built rather than composed via
+    /// <c>System.Net.Http.MultipartContent</c>: the OData batch spec
+    /// requires exact CRLF line endings throughout (Microsoft's own docs
+    /// call this out explicitly — anything else risks a deserialization
+    /// error), which is far easier to guarantee by writing the text directly
+    /// than by trusting a general-purpose MIME multipart writer never
+    /// deviates from it.
+    /// </summary>
+    private static string BuildTransactionRequestBody(string batchBoundary, string changesetBoundary, IReadOnlyList<DataverseWrite> writes)
+    {
+        var sb = new StringBuilder();
+
+        void Line(string text = "") => sb.Append(text).Append("\r\n");
+
+        Line($"--{batchBoundary}");
+        Line($"Content-Type: multipart/mixed; boundary=\"{changesetBoundary}\"");
+        Line();
+
+        for (var i = 0; i < writes.Count; i++)
+        {
+            var (method, relativeUrl, body, headerName, headerValue) = ToHttpRequest(writes[i]);
+
+            Line($"--{changesetBoundary}");
+            Line("Content-Type: application/http");
+            Line("Content-Transfer-Encoding: binary");
+            Line($"Content-ID: {i + 1}");
+            Line();
+            Line($"{method.Method} /api/data/v9.2/{relativeUrl} HTTP/1.1");
+            Line("Content-Type: application/json");
+            if (headerName is not null)
+            {
+                Line($"{headerName}: {headerValue}");
+            }
+
+            Line();
+            Line(body.ToJsonString());
+        }
+
+        Line($"--{changesetBoundary}--");
+        Line();
+        Line($"--{batchBoundary}--");
+
+        return sb.ToString();
     }
 
     public async Task<string?> TryGetGlobalOptionSetJsonAsync(Uri environmentUrl, string accessToken, string name, CancellationToken cancellationToken)

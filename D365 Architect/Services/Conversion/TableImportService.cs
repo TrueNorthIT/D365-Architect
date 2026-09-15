@@ -21,8 +21,22 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
         return new TableImportPreview(entity.LogicalName, existingYaml, newYaml, tableUpdateBody, attributePlans);
     }
 
-    public async Task ApplyAsync(Uri environmentUrl, string accessToken, TableImportPreview preview, CancellationToken cancellationToken)
+    public Task ApplyAsync(Uri environmentUrl, string accessToken, TableImportPreview preview, CancellationToken cancellationToken) =>
+        ApplyAsync(environmentUrl, accessToken, preview, useTransaction: true, cancellationToken);
+
+    public async Task ApplyAsync(Uri environmentUrl, string accessToken, TableImportPreview preview, bool useTransaction, CancellationToken cancellationToken)
     {
+        if (useTransaction)
+        {
+            var writes = BuildWrites(preview);
+            if (writes.Count > 0)
+            {
+                await dataverseClient.ExecuteTransactionAsync(environmentUrl, accessToken, writes, cancellationToken);
+            }
+
+            return;
+        }
+
         if (preview.TableUpdateBody is not null)
         {
             await dataverseClient.UpdateEntityAsync(environmentUrl, accessToken, preview.EntityLogicalName, preview.TableUpdateBody, cancellationToken);
@@ -59,6 +73,56 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// The same writes the <c>useTransaction: false</c> loop above makes one
+    /// at a time, in the same order, but as declarative <see cref="DataverseWrite"/>
+    /// values for <see cref="IDataverseClient.ExecuteTransactionAsync"/> to
+    /// send as one changeset instead.
+    /// </summary>
+    private static List<DataverseWrite> BuildWrites(TableImportPreview preview)
+    {
+        var writes = new List<DataverseWrite>();
+
+        if (preview.TableUpdateBody is not null)
+        {
+            writes.Add(new DataverseWrite.UpdateEntity(preview.EntityLogicalName, preview.TableUpdateBody));
+        }
+
+        foreach (var plan in preview.AttributePlans)
+        {
+            switch (plan.Action)
+            {
+                case AttributeImportAction.Create:
+                    writes.Add(new DataverseWrite.CreateAttribute(preview.EntityLogicalName, plan.RequestBody!));
+                    break;
+
+                case AttributeImportAction.Update:
+                    writes.Add(new DataverseWrite.UpdateAttribute(preview.EntityLogicalName, plan.LogicalName, plan.RequestBody!));
+                    break;
+
+                case AttributeImportAction.CreateLookupRelationship:
+                    writes.Add(new DataverseWrite.CreateOneToManyRelationship(plan.RequestBody!));
+                    break;
+
+                case AttributeImportAction.CreateCustomerRelationship:
+                    writes.Add(new DataverseWrite.CreateCustomerRelationships(plan.RequestBody!));
+                    break;
+
+                // Unchanged/SkippedUnsupportedType/WouldRemove/Invalid: nothing to do, by design.
+            }
+
+            if (plan.OptionChanges is not null)
+            {
+                foreach (var change in plan.OptionChanges)
+                {
+                    writes.Add(OptionChangeApplier.ToWrite(change));
+                }
+            }
+        }
+
+        return writes;
     }
 
     /// <summary>
