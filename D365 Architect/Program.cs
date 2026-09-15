@@ -4,6 +4,7 @@ using D365Architect.Commands.Choice;
 using D365Architect.Commands.Environments;
 using D365Architect.Commands.Form;
 using D365Architect.Commands.Schema;
+using D365Architect.Commands.Solution;
 using D365Architect.Commands.Table;
 using D365Architect.Commands.View;
 using D365Architect.Infrastructure;
@@ -60,6 +61,12 @@ services.AddSingleton<IFormExportService, FormExportService>();
 services.AddSingleton<IGlobalChoiceExportService, GlobalChoiceExportService>();
 services.AddSingleton<IGlobalChoiceImportService, GlobalChoiceImportService>();
 
+// `solution export` composes the four export services above (discovering
+// which tables a solution touches is the only piece none of them already
+// do) rather than reading from Dataverse itself — see
+// ISolutionExportService's own doc comment.
+services.AddSingleton<ISolutionExportService, SolutionExportService>();
+
 // `form build-xml` reads the form's current live FormXML (when it already
 // exists) so it can patch onto it instead of building one from scratch —
 // see FormXmlWriter's own doc comment.
@@ -103,6 +110,7 @@ app.Configure(config =>
     ViewCommands.Configure(config);
     FormCommands.Configure(config);
     ChoiceCommands.Configure(config);
+    SolutionCommands.Configure(config);
     SchemaCommands.Configure(config);
 });
 

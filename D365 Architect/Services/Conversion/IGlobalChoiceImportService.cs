@@ -30,7 +30,21 @@ namespace D365Architect.Services.Conversion;
 /// doesn't happen to mention would be noise, not a useful signal. This
 /// service only ever acts on the choices actually named in the input.
 /// </summary>
-public interface IGlobalChoiceImportService : IImportService<IReadOnlyList<GlobalChoiceDefinition>, GlobalChoicesImportPreview>;
+public interface IGlobalChoiceImportService : IImportService<IReadOnlyList<GlobalChoiceDefinition>, GlobalChoicesImportPreview>
+{
+    /// <summary>
+    /// As the four-argument <see cref="IImportService{TInput,TPreview}.ApplyAsync"/>,
+    /// but every brand-new choice this apply creates is also added as a
+    /// component of <paramref name="solutionUniqueName"/> when given (via
+    /// <see cref="Dataverse.IDataverseClient.CreateGlobalOptionSetAsync"/>'s
+    /// own <c>solutionUniqueName</c> parameter — see its doc comment for the
+    /// gap this closes). Never affects an update to a choice that already
+    /// exists. Null (what the four-argument overload passes) preserves the
+    /// old behavior: a new choice lands wherever Dataverse's own default
+    /// solution context puts it.
+    /// </summary>
+    Task ApplyAsync(Uri environmentUrl, string accessToken, GlobalChoicesImportPreview preview, string? solutionUniqueName, CancellationToken cancellationToken);
+}
 
 /// <summary>What (if anything) <see cref="IImportService{TInput,TPreview}.ApplyAsync"/> will do for one global choice.</summary>
 public enum GlobalChoiceImportAction
