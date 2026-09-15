@@ -1,5 +1,6 @@
 using D365Architect.Services.Conversion;
 using D365Architect.Services.Conversion.Models;
+using D365Architect.Services.Dataverse;
 using D365Architect.Tests.TestSupport;
 using Xunit;
 
@@ -287,5 +288,60 @@ public sealed class TableImportServiceTests
         await service.ApplyAsync(new Uri("https://test.crm.dynamics.com"), "token", preview, CancellationToken.None);
 
         Assert.Single(client.UpdateOptionValueCalls);
+    }
+
+    // ---- useTransaction wiring ----
+
+    [Fact]
+    public async Task ApplyAsync_DefaultFourArgOverload_UsesTransaction_NotIndividualCalls()
+    {
+        var (service, client) = CreateService(Entity(""));
+        var local = Local(Attr("tn_new", "String", schemaName: "tn_New"));
+        var preview = await service.PreviewAsync(new Uri("https://test.crm.dynamics.com"), "token", local, CancellationToken.None);
+
+        await service.ApplyAsync(new Uri("https://test.crm.dynamics.com"), "token", preview, CancellationToken.None);
+
+        Assert.Single(client.ExecuteTransactionCalls);
+        var writes = Assert.Single(client.ExecuteTransactionCalls);
+        Assert.IsType<DataverseWrite.CreateAttribute>(Assert.Single(writes));
+        // The fake dispatches ExecuteTransactionAsync writes into the same
+        // lists individual calls use, so this also confirms nothing here
+        // called CreateAttributeAsync directly.
+        Assert.Single(client.CreateAttributeCalls);
+    }
+
+    [Fact]
+    public async Task ApplyAsync_UseTransactionFalse_CallsIndividualMethods_NeverExecuteTransaction()
+    {
+        var (service, client) = CreateService(Entity(""));
+        var local = Local(Attr("tn_new", "String", schemaName: "tn_New"));
+        var preview = await service.PreviewAsync(new Uri("https://test.crm.dynamics.com"), "token", local, CancellationToken.None);
+
+        await service.ApplyAsync(new Uri("https://test.crm.dynamics.com"), "token", preview, useTransaction: false, CancellationToken.None);
+
+        Assert.Empty(client.ExecuteTransactionCalls);
+        Assert.Single(client.CreateAttributeCalls);
+    }
+
+    [Fact]
+    public async Task ApplyAsync_UseTransactionTrue_BatchesTableUpdateAndColumnPlansIntoOneCall_InOrder()
+    {
+        var existing = Entity("""{ "LogicalName": "tn_existing", "SchemaName": "tn_Existing", "AttributeType": "String" }""");
+        var (service, client) = CreateService(existing);
+        client.EntityMetadataJson = """{ "LogicalName": "tn_test", "SchemaName": "tn_Test" }""";
+        var local = new EntityDefinition
+        {
+            LogicalName = "tn_test",
+            DisplayName = "New Display Name",
+            Attributes = [Attr("tn_existing", "String", schemaName: "tn_Existing"), Attr("tn_new", "String", schemaName: "tn_New")],
+        };
+        var preview = await service.PreviewAsync(new Uri("https://test.crm.dynamics.com"), "token", local, CancellationToken.None);
+
+        await service.ApplyAsync(new Uri("https://test.crm.dynamics.com"), "token", preview, CancellationToken.None);
+
+        var writes = Assert.Single(client.ExecuteTransactionCalls);
+        Assert.Equal(2, writes.Count);
+        Assert.IsType<DataverseWrite.UpdateEntity>(writes[0]);
+        Assert.IsType<DataverseWrite.CreateAttribute>(writes[1]);
     }
 }

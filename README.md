@@ -181,11 +181,12 @@ sign-in.
 d365architect table import --input account.table.yml
 ```
 
-| Option        | Description                                              | Required |
-|---------------|--------------------------------------------------------------|----------|
-| `-i, --input` | Path to the `*.table.yml` file to import                       | Yes      |
-| `-y, --yes`   | Skip the confirmation prompt and import immediately            | No       |
-| `--whatif`    | Only show the diff/plan — never prompt and never write anything | No      |
+| Option              | Description                                              | Required |
+|---------------------|--------------------------------------------------------------|----------|
+| `-i, --input`       | Path to the `*.table.yml` file to import                       | Yes      |
+| `-y, --yes`         | Skip the confirmation prompt and import immediately            | No       |
+| `--whatif`          | Only show the diff/plan — never prompt and never write anything | No      |
+| `--no-transaction`  | Send every column create/update one request at a time instead of as a single atomic Dataverse changeset | No |
 
 Before writing anything, this prints the full diff between the local file
 and re-exporting the table right now, plus a separate **column plan**
@@ -220,6 +221,14 @@ against Microsoft's own documented bounds versus a reasonable, same-shape
 extension. A few things Dataverse allows but warns against (lowering
 `MaxLength`/`Precision` below what existing data might exceed) still plan
 as a normal update, just with a warning printed alongside.
+
+By default, every write in the column plan (plus the table-level update, if
+any) is sent as a single atomic Dataverse changeset — either all of it
+takes, or none of it does, rather than leaving the table with only some of
+the plan applied. Pass `--no-transaction` to send them one request at a
+time instead, same as this tool always did before batching existed — useful
+if an environment turns out to reject batched metadata writes, or if
+partial progress on failure is actually what you want.
 
 **What this doesn't do yet**: publish the change — Dataverse's own docs
 confirm this is required for a table/column change to take effect in
