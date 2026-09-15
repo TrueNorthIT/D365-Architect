@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using D365Architect.Services.Conversion;
 using D365Architect.Services.Conversion.Models;
 using Spectre.Console;
@@ -6,12 +7,19 @@ using Spectre.Console.Cli;
 namespace D365Architect.Commands.Choice;
 
 /// <summary>
-/// `d365architect choice import --input choices.yml [--yes] [--whatif]`
+/// `d365architect choice import --input choices.yml [--yes] [--whatif] [--solution examplesolution]`
 /// Writes a `*.choice.yml` file's global choices back into Dataverse —
 /// creating any choice that doesn't exist live yet, unlike `table import`
 /// (which never creates the table itself; see
 /// <see cref="IGlobalChoiceImportService"/>'s own doc comment for why a
 /// global choice is different).
+///
+/// Pass <c>--solution</c> to add any brand-new choice this import creates
+/// to that solution as part of the same write — confirmed live as a real
+/// gap otherwise: without it, a new choice lands wherever Dataverse's own
+/// default solution context puts it, not the solution this file came from,
+/// so a later solution-scoped export silently wouldn't show it. Never
+/// affects an update to a choice that already exists.
 ///
 /// Before writing anything: prints the full YAML diff between the local
 /// file and re-exporting just the named choices right now (informational —
@@ -29,9 +37,23 @@ namespace D365Architect.Commands.Choice;
 public sealed class ImportChoiceCommand(IGlobalChoiceImportService globalChoiceImportService, ImportRunner importRunner)
     : AsyncCommand<ImportChoiceCommand.Settings>
 {
-    public sealed class Settings : ImportSettingsBase;
+    public sealed class Settings : ImportSettingsBase
+    {
+        [CommandOption("-s|--solution <UNIQUE_NAME>")]
+        [Description("Unique name of a solution to add any brand-new global choice to as it's created. Never affects updates to an existing choice. Omit to leave a new choice wherever Dataverse's own default solution context puts it, same as before this option existed.")]
+        public string? Solution { get; init; }
+    }
 
-    protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
+    protected override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken) =>
+        RunAsync(settings, cancellationToken);
+
+    /// <summary>
+    /// The command's own logic, independent of Spectre's <see cref="CommandContext"/> —
+    /// pulled out of <see cref="ExecuteAsync"/> so <c>solution import</c> can
+    /// run this exact same preview → diff → confirm → apply flow for a
+    /// solution's <c>choices.yml</c>, without duplicating any of it.
+    /// </summary>
+    public async Task<int> RunAsync(Settings settings, CancellationToken cancellationToken)
     {
         var spec = new ImportFlowSpec<Settings, IReadOnlyList<GlobalChoiceDefinition>, GlobalChoicesImportPreview>
         {
@@ -69,7 +91,7 @@ public sealed class ImportChoiceCommand(IGlobalChoiceImportService globalChoiceI
 
             ApplyStatusMessage = "Importing...",
 
-            ApplyAsync = (auth, preview, ct) => globalChoiceImportService.ApplyAsync(auth.EnvironmentUrl, auth.AccessToken, preview, ct),
+            ApplyAsync = (auth, preview, ct) => globalChoiceImportService.ApplyAsync(auth.EnvironmentUrl, auth.AccessToken, preview, settings.Solution, ct),
 
             PrintSuccess = (choices, preview) =>
             {

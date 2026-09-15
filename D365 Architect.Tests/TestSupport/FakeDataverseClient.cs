@@ -27,19 +27,21 @@ public sealed class FakeDataverseClient : IDataverseClient
     public string? GlobalOptionSetsJson { get; set; }
     public Func<string, IReadOnlySet<Guid>?>? SolutionAttributeMetadataIds { get; set; }
     public Func<string, IReadOnlySet<Guid>?>? SolutionOptionSetMetadataIds { get; set; }
+    public Func<string, IReadOnlyList<string>?>? SolutionEntityLogicalNames { get; set; }
+    public Func<string, string, bool>? SolutionEntityIncludesSubcomponents { get; set; } // (solutionUniqueName, entityLogicalName) -> bool
 
     // ---- Writes (inspect after the call) ----
-    public List<(string EntityLogicalName, JsonObject Body)> CreateAttributeCalls { get; } = [];
+    public List<(string EntityLogicalName, JsonObject Body, string? SolutionUniqueName)> CreateAttributeCalls { get; } = [];
     public List<(string EntityLogicalName, string AttributeLogicalName, JsonObject Body)> UpdateAttributeCalls { get; } = [];
-    public List<JsonObject> CreateOneToManyRelationshipCalls { get; } = [];
-    public List<JsonObject> CreateCustomerRelationshipsCalls { get; } = [];
+    public List<(JsonObject Metadata, string? SolutionUniqueName)> CreateOneToManyRelationshipCalls { get; } = [];
+    public List<(JsonObject Body, string? SolutionUniqueName)> CreateCustomerRelationshipsCalls { get; } = [];
     public List<(string EntityLogicalName, JsonObject Body)> UpdateEntityCalls { get; } = [];
     public List<JsonObject> InsertOptionValueCalls { get; } = [];
     public List<JsonObject> UpdateOptionValueCalls { get; } = [];
     public List<JsonObject> OrderOptionsCalls { get; } = [];
     public List<JsonObject> InsertStatusValueCalls { get; } = [];
     public List<JsonObject> UpdateStateValueCalls { get; } = [];
-    public List<JsonObject> CreateGlobalOptionSetCalls { get; } = [];
+    public List<(JsonObject Body, string? SolutionUniqueName)> CreateGlobalOptionSetCalls { get; } = [];
     public List<(Guid MetadataId, JsonObject Body)> UpdateGlobalOptionSetCalls { get; } = [];
     public List<(Guid FormId, string FormXml)> UpdateSystemFormXmlCalls { get; } = [];
     public List<string> PublishEntityCalls { get; } = [];
@@ -52,6 +54,12 @@ public sealed class FakeDataverseClient : IDataverseClient
 
     public Task<IReadOnlySet<Guid>?> TryGetSolutionAttributeMetadataIdsAsync(Uri environmentUrl, string accessToken, string solutionUniqueName, CancellationToken cancellationToken) =>
         Task.FromResult(SolutionAttributeMetadataIds is not null ? SolutionAttributeMetadataIds(solutionUniqueName) : throw new NotImplementedException());
+
+    public Task<IReadOnlyList<string>?> TryGetSolutionEntityLogicalNamesAsync(Uri environmentUrl, string accessToken, string solutionUniqueName, CancellationToken cancellationToken) =>
+        Task.FromResult(SolutionEntityLogicalNames is not null ? SolutionEntityLogicalNames(solutionUniqueName) : throw new NotImplementedException());
+
+    public Task<bool> IsSolutionEntityIncludingSubcomponentsAsync(Uri environmentUrl, string accessToken, string solutionUniqueName, string entityLogicalName, CancellationToken cancellationToken) =>
+        Task.FromResult(SolutionEntityIncludesSubcomponents is not null ? SolutionEntityIncludesSubcomponents(solutionUniqueName, entityLogicalName) : throw new NotImplementedException());
 
     public Task<string> GetViewDefinitionsJsonAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken) => throw new NotImplementedException();
     public Task<IReadOnlySet<Guid>?> TryGetSolutionSavedQueryIdsAsync(Uri environmentUrl, string accessToken, string solutionUniqueName, CancellationToken cancellationToken) => throw new NotImplementedException();
@@ -104,24 +112,24 @@ public sealed class FakeDataverseClient : IDataverseClient
         return Task.CompletedTask;
     }
 
-    public Task CreateAttributeAsync(Uri environmentUrl, string accessToken, string entityLogicalName, JsonObject attributeMetadata, CancellationToken cancellationToken)
+    public Task CreateAttributeAsync(Uri environmentUrl, string accessToken, string entityLogicalName, JsonObject attributeMetadata, string? solutionUniqueName, CancellationToken cancellationToken)
     {
-        CreateAttributeCalls.Add((entityLogicalName, attributeMetadata));
+        CreateAttributeCalls.Add((entityLogicalName, attributeMetadata, solutionUniqueName));
         return Task.CompletedTask;
     }
 
     public Task<string> GetAttributeOptionSetJsonAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string attributeLogicalName, string attributeType, CancellationToken cancellationToken) =>
         Task.FromResult(AttributeOptionSetJson is not null ? AttributeOptionSetJson(attributeLogicalName, attributeType) : throw new NotImplementedException());
 
-    public Task CreateOneToManyRelationshipAsync(Uri environmentUrl, string accessToken, JsonObject relationshipMetadata, CancellationToken cancellationToken)
+    public Task CreateOneToManyRelationshipAsync(Uri environmentUrl, string accessToken, JsonObject relationshipMetadata, string? solutionUniqueName, CancellationToken cancellationToken)
     {
-        CreateOneToManyRelationshipCalls.Add(relationshipMetadata);
+        CreateOneToManyRelationshipCalls.Add((relationshipMetadata, solutionUniqueName));
         return Task.CompletedTask;
     }
 
-    public Task CreateCustomerRelationshipsAsync(Uri environmentUrl, string accessToken, JsonObject body, CancellationToken cancellationToken)
+    public Task CreateCustomerRelationshipsAsync(Uri environmentUrl, string accessToken, JsonObject body, string? solutionUniqueName, CancellationToken cancellationToken)
     {
-        CreateCustomerRelationshipsCalls.Add(body);
+        CreateCustomerRelationshipsCalls.Add((body, solutionUniqueName));
         return Task.CompletedTask;
     }
 
@@ -166,9 +174,9 @@ public sealed class FakeDataverseClient : IDataverseClient
     public Task<IReadOnlySet<Guid>?> TryGetSolutionOptionSetMetadataIdsAsync(Uri environmentUrl, string accessToken, string solutionUniqueName, CancellationToken cancellationToken) =>
         Task.FromResult(SolutionOptionSetMetadataIds is not null ? SolutionOptionSetMetadataIds(solutionUniqueName) : throw new NotImplementedException());
 
-    public Task CreateGlobalOptionSetAsync(Uri environmentUrl, string accessToken, JsonObject body, CancellationToken cancellationToken)
+    public Task CreateGlobalOptionSetAsync(Uri environmentUrl, string accessToken, JsonObject body, string? solutionUniqueName, CancellationToken cancellationToken)
     {
-        CreateGlobalOptionSetCalls.Add(body);
+        CreateGlobalOptionSetCalls.Add((body, solutionUniqueName));
         return Task.CompletedTask;
     }
 
@@ -201,7 +209,7 @@ public sealed class FakeDataverseClient : IDataverseClient
                     break;
 
                 case DataverseWrite.CreateAttribute w:
-                    CreateAttributeCalls.Add((w.EntityLogicalName, w.Metadata));
+                    CreateAttributeCalls.Add((w.EntityLogicalName, w.Metadata, w.SolutionUniqueName));
                     break;
 
                 case DataverseWrite.UpdateAttribute w:
@@ -209,11 +217,11 @@ public sealed class FakeDataverseClient : IDataverseClient
                     break;
 
                 case DataverseWrite.CreateOneToManyRelationship w:
-                    CreateOneToManyRelationshipCalls.Add(w.Metadata);
+                    CreateOneToManyRelationshipCalls.Add((w.Metadata, w.SolutionUniqueName));
                     break;
 
                 case DataverseWrite.CreateCustomerRelationships w:
-                    CreateCustomerRelationshipsCalls.Add(w.Body);
+                    CreateCustomerRelationshipsCalls.Add((w.Body, w.SolutionUniqueName));
                     break;
 
                 case DataverseWrite.InsertOptionValue w:

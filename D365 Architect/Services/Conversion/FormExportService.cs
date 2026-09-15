@@ -7,7 +7,7 @@ public sealed class FormExportService(IDataverseClient dataverseClient, FormJson
 {
     public async Task<IReadOnlyList<ExportedForm>> ExportFormsAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string? solutionUniqueName, Guid? formId, CancellationToken cancellationToken)
     {
-        var allowedFormIds = await ResolveAllowedFormIdsAsync(environmentUrl, accessToken, solutionUniqueName, formId, cancellationToken);
+        var allowedFormIds = await ResolveAllowedFormIdsAsync(environmentUrl, accessToken, entityLogicalName, solutionUniqueName, formId, cancellationToken);
 
         var json = await dataverseClient.GetFormDefinitionsJsonAsync(environmentUrl, accessToken, entityLogicalName, cancellationToken);
         var forms = reader.Read(json, allowedFormIds);
@@ -20,12 +20,7 @@ public sealed class FormExportService(IDataverseClient dataverseClient, FormJson
 
     public async Task<IReadOnlyList<FormSummary>> ListFormsAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string? solutionUniqueName, CancellationToken cancellationToken)
     {
-        IReadOnlySet<Guid>? allowedFormIds = null;
-        if (solutionUniqueName is not null)
-        {
-            allowedFormIds = await dataverseClient.TryGetSolutionSystemFormIdsAsync(environmentUrl, accessToken, solutionUniqueName, cancellationToken)
-                ?? throw new SolutionNotFoundException(solutionUniqueName);
-        }
+        var allowedFormIds = await ResolveAllowedFormIdsAsync(environmentUrl, accessToken, entityLogicalName, solutionUniqueName, formId: null, cancellationToken);
 
         var json = await dataverseClient.GetFormSummariesJsonAsync(environmentUrl, accessToken, entityLogicalName, cancellationToken);
         return reader.ReadSummaries(json, allowedFormIds);
@@ -59,13 +54,23 @@ public sealed class FormExportService(IDataverseClient dataverseClient, FormJson
             ? AssetFileNaming.Slugify(form.Name)
             : $"{AssetFileNaming.Slugify(form.Name)}.{AssetFileNaming.Slugify(form.Type)}";
 
-    private async Task<IReadOnlySet<Guid>?> ResolveAllowedFormIdsAsync(Uri environmentUrl, string accessToken, string? solutionUniqueName, Guid? formId, CancellationToken cancellationToken)
+    private async Task<IReadOnlySet<Guid>?> ResolveAllowedFormIdsAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string? solutionUniqueName, Guid? formId, CancellationToken cancellationToken)
     {
         IReadOnlySet<Guid>? allowedFormIds = null;
         if (solutionUniqueName is not null)
         {
             allowedFormIds = await dataverseClient.TryGetSolutionSystemFormIdsAsync(environmentUrl, accessToken, solutionUniqueName, cancellationToken)
                 ?? throw new SolutionNotFoundException(solutionUniqueName);
+
+            // Same "the table's own Include-Subcomponents membership means
+            // no separate SystemForm solutioncomponents exist at all" gap
+            // as TableExportService/ViewExportService — see
+            // IDataverseClient.IsSolutionEntityIncludingSubcomponentsAsync's
+            // own doc comment.
+            if (await dataverseClient.IsSolutionEntityIncludingSubcomponentsAsync(environmentUrl, accessToken, solutionUniqueName, entityLogicalName, cancellationToken))
+            {
+                allowedFormIds = null;
+            }
         }
 
         if (formId is null)

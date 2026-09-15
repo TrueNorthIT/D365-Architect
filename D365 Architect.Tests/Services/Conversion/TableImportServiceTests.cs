@@ -270,6 +270,65 @@ public sealed class TableImportServiceTests
         Assert.Single(client.CreateCustomerRelationshipsCalls);
     }
 
+    // ---- solutionUniqueName threading (the "new components silently don't
+    // join the solution" gap found and fixed this session) ----
+
+    [Fact]
+    public async Task ApplyAsync_UseTransactionTrue_WithSolutionUniqueName_AttachesItToTheCreateWrite()
+    {
+        var (service, client) = CreateService(Entity(""));
+        var local = Local(Attr("tn_new", "String", schemaName: "tn_New"));
+        var preview = await service.PreviewAsync(new Uri("https://test.crm.dynamics.com"), "token", local, CancellationToken.None);
+
+        await service.ApplyAsync(new Uri("https://test.crm.dynamics.com"), "token", preview, useTransaction: true, solutionUniqueName: "JCTest", CancellationToken.None);
+
+        var write = Assert.IsType<DataverseWrite.CreateAttribute>(Assert.Single(Assert.Single(client.ExecuteTransactionCalls)));
+        Assert.Equal("JCTest", write.SolutionUniqueName);
+    }
+
+    [Fact]
+    public async Task ApplyAsync_UseTransactionFalse_WithSolutionUniqueName_PassesItToCreateAttributeAsync()
+    {
+        var (service, client) = CreateService(Entity(""));
+        var local = Local(Attr("tn_new", "String", schemaName: "tn_New"));
+        var preview = await service.PreviewAsync(new Uri("https://test.crm.dynamics.com"), "token", local, CancellationToken.None);
+
+        await service.ApplyAsync(new Uri("https://test.crm.dynamics.com"), "token", preview, useTransaction: false, solutionUniqueName: "JCTest", CancellationToken.None);
+
+        var call = Assert.Single(client.CreateAttributeCalls);
+        Assert.Equal("JCTest", call.SolutionUniqueName);
+    }
+
+    [Fact]
+    public async Task ApplyAsync_LookupCreatePlan_WithSolutionUniqueName_PassesItToCreateOneToManyRelationshipAsync()
+    {
+        var (service, client) = CreateService(Entity(""));
+        var local = Local(Attr("tn_lookup", "Lookup", schemaName: "tn_Lookup", configure: b => { b.RelationshipSchemaName = "tn_test_contact"; b.Targets = ["contact"]; }));
+        var preview = await service.PreviewAsync(new Uri("https://test.crm.dynamics.com"), "token", local, CancellationToken.None);
+
+        await service.ApplyAsync(new Uri("https://test.crm.dynamics.com"), "token", preview, useTransaction: false, solutionUniqueName: "JCTest", CancellationToken.None);
+
+        var call = Assert.Single(client.CreateOneToManyRelationshipCalls);
+        Assert.Equal("JCTest", call.SolutionUniqueName);
+    }
+
+    [Fact]
+    public async Task ApplyAsync_DefaultFourArgOverload_NeverAttachesASolutionUniqueName()
+    {
+        // The plain four-argument IImportService.ApplyAsync (what every
+        // caller not scoping to a solution still uses) must keep the old
+        // "wherever Dataverse's own default context puts it" behavior —
+        // this is the regression guard for that default.
+        var (service, client) = CreateService(Entity(""));
+        var local = Local(Attr("tn_new", "String", schemaName: "tn_New"));
+        var preview = await service.PreviewAsync(new Uri("https://test.crm.dynamics.com"), "token", local, CancellationToken.None);
+
+        await service.ApplyAsync(new Uri("https://test.crm.dynamics.com"), "token", preview, CancellationToken.None);
+
+        var write = Assert.IsType<DataverseWrite.CreateAttribute>(Assert.Single(Assert.Single(client.ExecuteTransactionCalls)));
+        Assert.Null(write.SolutionUniqueName);
+    }
+
     [Fact]
     public async Task ApplyAsync_OptionRenamePlan_CallsUpdateOptionValue()
     {
@@ -317,7 +376,7 @@ public sealed class TableImportServiceTests
         var local = Local(Attr("tn_new", "String", schemaName: "tn_New"));
         var preview = await service.PreviewAsync(new Uri("https://test.crm.dynamics.com"), "token", local, CancellationToken.None);
 
-        await service.ApplyAsync(new Uri("https://test.crm.dynamics.com"), "token", preview, useTransaction: false, CancellationToken.None);
+        await service.ApplyAsync(new Uri("https://test.crm.dynamics.com"), "token", preview, useTransaction: false, solutionUniqueName: null, CancellationToken.None);
 
         Assert.Empty(client.ExecuteTransactionCalls);
         Assert.Single(client.CreateAttributeCalls);
