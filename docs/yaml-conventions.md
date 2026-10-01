@@ -1025,6 +1025,39 @@ doesn't call it yet — the change is real and stored the moment `apply`
 succeeds, but won't be visible in model-driven apps until published
 separately.
 
+### Applying the plan: one changeset, or one request at a time
+
+By default, `apply` sends the entire column plan — the table-level update
+(if any), every column create/update, every Lookup/Customer relationship
+create, and every option-value action — as a single Web API `$batch`
+changeset (see `IDataverseClient.ExecuteTransactionAsync`/
+`DataverseClient.BuildTransactionRequestBody`) rather than one request per
+write. A changeset is atomic: Dataverse either keeps every write in it or
+rolls all of them back on the first failure, so a table import either fully
+applies or leaves nothing behind, instead of stopping partway through with
+some columns created and others not.
+
+Microsoft's own documented `$batch`/changeset examples are all
+ordinary-record CRUD (`tasks`, `accounts`, `contacts`) — nothing in the
+docs says one way or the other whether metadata endpoints
+(`EntityDefinitions(...)/Attributes`, `RelationshipDefinitions`,
+`CreateCustomerRelationships`, the option-value actions) are supported
+inside a changeset the same way. **Confirmed live** against a real tenant
+(`truenorth-dev`, table `tn_jctesttable`), not just assumed: every one of
+this tool's own write kinds — a table-level update, a plain column create,
+a Lookup relationship create, a Customer relationship create, and each
+option-value action (insert/rename/reorder an option, insert a Status
+reason, rename a State label) — works inside a changeset, mixed together
+in the same one where tested. Rollback was verified too: a changeset
+containing two otherwise-valid new columns plus one Dataverse rejected
+(a 300+ character `SchemaName`) left neither of the two valid columns
+created — confirmed via a follow-up export, not just inferred from
+Dataverse's error response. If an environment nonetheless turns out to
+reject a batched metadata write, `table import` will surface Dataverse's
+own error naming the rejection; pass `--no-transaction` to fall back to
+the same one-request-at-a-time behavior this tool always used before
+batching existed.
+
 ## Global choices (`choice export`/`choice import`)
 
 A global choice (`GlobalOptionSetDefinitions`) is its own top-level

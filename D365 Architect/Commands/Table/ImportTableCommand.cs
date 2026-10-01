@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using D365Architect.Commands;
 using D365Architect.Services.Conversion;
 using D365Architect.Services.Conversion.Models;
@@ -7,10 +8,18 @@ using Spectre.Console.Cli;
 namespace D365Architect.Commands.Table;
 
 /// <summary>
-/// `d365architect table import --input account.table.yml [--yes] [--whatif]`
+/// `d365architect table import --input account.table.yml [--yes] [--whatif] [--no-transaction] [--solution examplesolution]`
 /// Writes a `*.table.yml` file's table-level properties
 /// (<c>DisplayName</c>/<c>PluralDisplayName</c>/<c>Description</c>) and
 /// columns back into Dataverse. Needs sign-in.
+///
+/// Pass <c>--solution</c> to add any brand-new column (or lookup
+/// relationship) this import creates to that solution as part of the same
+/// write — confirmed live as a real gap otherwise: without it, a new column
+/// lands wherever Dataverse's own default solution context puts it (in
+/// practice, the Default Solution), not the solution this file came from,
+/// so a later solution-scoped export silently wouldn't show it. Never
+/// affects an update to a column that already exists.
 ///
 /// Before writing anything: prints the full YAML diff between the local
 /// file and re-exporting the table right now (informational — everything
@@ -28,6 +37,15 @@ namespace D365Architect.Commands.Table;
 ///
 /// Never creates the table itself if it doesn't exist yet.
 ///
+/// Every write in the column plan (plus the table-level update, if any) is
+/// sent as one atomic Dataverse changeset by default — either all of it
+/// takes, or (on any single failure) none of it does, rather than leaving
+/// the table with only some of the plan applied. Pass
+/// <c>--no-transaction</c> to send them one request at a time instead, same
+/// as this tool always did before that existed — useful if an environment
+/// turns out to reject batched metadata writes, or if partial progress on
+/// failure is actually what you want.
+///
 /// What this doesn't do yet: publish the change — Dataverse customizations
 /// still need publishing separately before end users see it (confirmed
 /// required for table/column changes specifically, unlike form/view
@@ -42,9 +60,27 @@ namespace D365Architect.Commands.Table;
 public sealed class ImportTableCommand(ITableImportService tableImportService, ImportRunner importRunner)
     : AsyncCommand<ImportTableCommand.Settings>
 {
-    public sealed class Settings : ImportSettingsBase;
+    public sealed class Settings : ImportSettingsBase
+    {
+        [CommandOption("--no-transaction")]
+        [Description("Send every column create/update one request at a time instead of as a single atomic Dataverse changeset. Use this if the environment rejects batched metadata writes, or to keep whatever succeeded before a later one fails rather than having the whole import rolled back.")]
+        public bool NoTransaction { get; init; }
 
-    protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
+        [CommandOption("-s|--solution <UNIQUE_NAME>")]
+        [Description("Unique name of a solution to add any brand-new column (or lookup relationship) to as it's created. Never affects updates to an existing column. Omit to leave a new column wherever Dataverse's own default solution context puts it, same as before this option existed.")]
+        public string? Solution { get; init; }
+    }
+
+    protected override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken) =>
+        RunAsync(settings, cancellationToken);
+
+    /// <summary>
+    /// The command's own logic, independent of Spectre's <see cref="CommandContext"/> —
+    /// pulled out of <see cref="ExecuteAsync"/> so <c>solution import</c> can
+    /// run this exact same preview → diff → confirm → apply flow for every
+    /// <c>*.table.yml</c> it finds, without duplicating any of it.
+    /// </summary>
+    public async Task<int> RunAsync(Settings settings, CancellationToken cancellationToken)
     {
         var spec = new ImportFlowSpec<Settings, EntityDefinition, TableImportPreview>
         {
@@ -82,7 +118,7 @@ public sealed class ImportTableCommand(ITableImportService tableImportService, I
 
             ApplyStatusMessage = "Importing...",
 
-            ApplyAsync = (auth, preview, ct) => tableImportService.ApplyAsync(auth.EnvironmentUrl, auth.AccessToken, preview, ct),
+            ApplyAsync = (auth, preview, ct) => tableImportService.ApplyAsync(auth.EnvironmentUrl, auth.AccessToken, preview, useTransaction: !settings.NoTransaction, settings.Solution, ct),
 
             PrintSuccess = (entity, preview) =>
             {

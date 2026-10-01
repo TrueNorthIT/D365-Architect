@@ -65,7 +65,16 @@ public sealed class ImportFormCommand(IFormImportService formImportService, Impo
         public bool AllowSchemaViolations { get; init; }
     }
 
-    protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
+    protected override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken) =>
+        RunAsync(settings, cancellationToken);
+
+    /// <summary>
+    /// The command's own logic, independent of Spectre's <see cref="CommandContext"/> —
+    /// pulled out of <see cref="ExecuteAsync"/> so <c>solution import</c> can
+    /// run this exact same preview → diff → confirm → apply flow for every
+    /// <c>*.form.yml</c> it finds, without duplicating any of it.
+    /// </summary>
+    public async Task<int> RunAsync(Settings settings, CancellationToken cancellationToken)
     {
         var spec = new ImportFlowSpec<Settings, FormDefinition, FormImportPreview>
         {

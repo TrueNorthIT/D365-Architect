@@ -77,14 +77,17 @@ public sealed class GlobalChoiceImportService(IDataverseClient dataverseClient) 
         return new GlobalChoicesImportPreview(existingYaml, newYaml, plans);
     }
 
-    public async Task ApplyAsync(Uri environmentUrl, string accessToken, GlobalChoicesImportPreview preview, CancellationToken cancellationToken)
+    public Task ApplyAsync(Uri environmentUrl, string accessToken, GlobalChoicesImportPreview preview, CancellationToken cancellationToken) =>
+        ApplyAsync(environmentUrl, accessToken, preview, solutionUniqueName: null, cancellationToken);
+
+    public async Task ApplyAsync(Uri environmentUrl, string accessToken, GlobalChoicesImportPreview preview, string? solutionUniqueName, CancellationToken cancellationToken)
     {
         foreach (var plan in preview.ChoicePlans)
         {
             switch (plan.Action)
             {
                 case GlobalChoiceImportAction.Create:
-                    await dataverseClient.CreateGlobalOptionSetAsync(environmentUrl, accessToken, plan.RequestBody!, cancellationToken);
+                    await dataverseClient.CreateGlobalOptionSetAsync(environmentUrl, accessToken, plan.RequestBody!, solutionUniqueName, cancellationToken);
                     break;
 
                 case GlobalChoiceImportAction.Update when plan.RequestBody is not null:

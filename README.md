@@ -81,6 +81,8 @@ own options.
 | `table`       | Work with D365 table definitions.                              |
 | `view`        | Work with D365 view (saved query) definitions.                 |
 | `form`        | Work with D365 form definitions.                               |
+| `choice`      | Work with D365 global choice (option set) definitions.         |
+| `solution`    | Work with a whole D365 solution — every table, view, form, and global choice it customizes. |
 | `schema`      | Work with this tool's YAML schema.                             |
 
 ### `auth`
@@ -181,11 +183,19 @@ sign-in.
 d365architect table import --input account.table.yml
 ```
 
-| Option        | Description                                              | Required |
-|---------------|--------------------------------------------------------------|----------|
-| `-i, --input` | Path to the `*.table.yml` file to import                       | Yes      |
-| `-y, --yes`   | Skip the confirmation prompt and import immediately            | No       |
-| `--whatif`    | Only show the diff/plan — never prompt and never write anything | No      |
+| Option              | Description                                              | Required |
+|---------------------|--------------------------------------------------------------|----------|
+| `-i, --input`       | Path to the `*.table.yml` file to import                       | Yes      |
+| `-y, --yes`         | Skip the confirmation prompt and import immediately            | No       |
+| `--whatif`          | Only show the diff/plan — never prompt and never write anything | No      |
+| `--no-transaction`  | Send every column create/update one request at a time instead of as a single atomic Dataverse changeset | No |
+| `-s, --solution`    | Unique name of a solution to add any brand-new column (or lookup relationship) to as it's created | No |
+
+Pass `--solution` when a column in the file doesn't exist live yet, so the
+new column joins that solution as part of the same write — without it, a
+new column lands wherever Dataverse's own default solution context puts it
+(in practice, the Default Solution), not necessarily the solution you're
+actually working in. Never affects updating a column that already exists.
 
 Before writing anything, this prints the full diff between the local file
 and re-exporting the table right now, plus a separate **column plan**
@@ -220,6 +230,14 @@ against Microsoft's own documented bounds versus a reasonable, same-shape
 extension. A few things Dataverse allows but warns against (lowering
 `MaxLength`/`Precision` below what existing data might exceed) still plan
 as a normal update, just with a warning printed alongside.
+
+By default, every write in the column plan (plus the table-level update, if
+any) is sent as a single atomic Dataverse changeset — either all of it
+takes, or none of it does, rather than leaving the table with only some of
+the plan applied. Pass `--no-transaction` to send them one request at a
+time instead, same as this tool always did before batching existed — useful
+if an environment turns out to reject batched metadata writes, or if
+partial progress on failure is actually what you want.
 
 **What this doesn't do yet**: publish the change — Dataverse's own docs
 confirm this is required for a table/column change to take effect in
@@ -523,6 +541,92 @@ document against what's about to be written, not against what it looked
 like at export time). See
 [`docs/yaml-conventions.md`](docs/yaml-conventions.md#importing-formxml-form-import)
 for the full detail.
+
+### `solution`
+
+Work with a whole D365 solution — every table, view, form, and global
+choice it customizes — rather than one asset at a time.
+
+#### `solution export`
+
+Fetches every asset type this tool supports for one solution from the
+currently signed-in environment, and writes it all as YAML under one
+folder. Requires `auth login` first.
+
+```
+d365architect solution export --solution examplesolution
+```
+
+Which tables to export is discovered from the solution itself — unlike
+`table export`/`view export`/`form export`, there's no `--table` option
+here, since a solution's own Entity components already say which tables it
+touches. Everything is written under `<output>/<solution>/`:
+
+```
+examplesolution/
+  choices.yml                       (only written if the solution customizes any)
+  account/
+    account.table.yml
+    active-accounts.view.yml
+    account-main-form.form.yml
+  contact/
+    contact.table.yml
+    ...
+```
+
+Each table gets its own sub-folder, named after its logical name, holding
+that table's `*.table.yml` plus every `*.view.yml`/`*.form.yml` the solution
+customizes on it — the same file-naming convention `table export`/`view
+export`/`form export` already use, just organized per table instead of
+dumped flat. Global choices aren't scoped to any one table, so they're
+written once, at the solution's own root, as `choices.yml` — the same shape
+`choice export` produces — and only when the solution customizes at least
+one; a solution with none gets no `choices.yml` file at all rather than an
+empty one.
+
+| Option            | Description                                                                | Required |
+|-------------------|------------------------------------------------------------------------------|----------|
+| `-s, --solution`  | Unique name of the solution to export                                        | Yes      |
+| `-o, --output`    | Directory to create the solution's own folder under. Defaults to the current directory | No |
+
+#### `solution import`
+
+Walks a folder previously written by `solution export` and imports every
+file found — `choices.yml` first, then, for each table sub-folder, its
+`*.table.yml`, then its `*.view.yml` file(s), then its `*.form.yml` file(s).
+
+```
+d365architect solution import --input ./examplesolution --solution examplesolution
+```
+
+| Option                       | Description                                                             | Required |
+|------------------------------|--------------------------------------------------------------------------|----------|
+| `-i, --input`                | Path to a solution folder previously written by `solution export`        | Yes      |
+| `-s, --solution`             | Unique name of the solution these files came from                        | Yes      |
+| `-y, --yes`                  | Skip the confirmation prompt for every asset and import immediately      | No       |
+| `--whatif`                   | Only show each asset's diff/plan — never prompt and never write anything | No       |
+| `--no-transaction`           | For every table import: send column create/update one request at a time instead of as a single atomic Dataverse changeset | No |
+| `--allow-schema-violations`  | For every form import: proceed even if the rebuilt FormXML has a schema violation Dataverse might reject outright | No |
+
+This doesn't invent a new bulk-import behavior: every file found goes
+through the exact same preview → diff → confirm → apply flow as running
+`table import`/`view import`/`form import`/`choice import` on it directly —
+its own diff, its own column/choice plan, its own schema-violation gate.
+`--yes`/`--whatif`/`--no-transaction`/`--allow-schema-violations` are simply
+forwarded to every file they apply to, so `--yes` runs the whole solution
+unattended the same way it already does for a single asset. `--solution` is
+likewise forwarded to every table/choice import as their own `--solution`,
+so any brand-new column/lookup relationship/global choice this run creates
+actually joins the solution it came from, rather than landing wherever
+Dataverse's own default solution context puts it and silently not showing
+up in a later `solution export` of the same solution. One file
+failing (a validation error, a live rejection, a missing counterpart)
+doesn't stop the rest — every remaining file is still attempted, with a
+final summary of how many succeeded/failed and a non-zero exit code if
+anything did. There's no cross-file rollback: each asset's own write is
+already atomic on its own terms (`table import`'s changeset, in
+particular), but nothing ties multiple files' writes together into one
+larger transaction.
 
 ### `schema`
 
