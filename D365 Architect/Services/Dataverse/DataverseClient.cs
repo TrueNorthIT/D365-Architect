@@ -623,6 +623,13 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
     public async Task UpdateGlobalOptionSetAsync(Uri environmentUrl, string accessToken, Guid metadataId, JsonObject body, CancellationToken cancellationToken)
     {
         using var request = CreateRequest(environmentUrl, $"GlobalOptionSetDefinitions({metadataId})", accessToken, HttpMethod.Put);
+        // Confirmed live as a real gap: this full-object PUT is structurally
+        // identical to UpdateEntityAsync/UpdateAttributeAsync (same
+        // single-language DataverseLabelJson.Build body for DisplayName/
+        // Description), which both send this header for exactly this
+        // reason — without it, editing one language's label silently wipes
+        // every other language already set on this choice.
+        request.Headers.Add("MSCRM.MergeLabels", "true");
         request.Content = JsonContent.Create(body);
 
         using var response = await httpClient.SendAsync(request, cancellationToken);

@@ -81,6 +81,22 @@ public sealed class AttributeMetadataJsonBuilderTests
     {
         var body = AttributeMetadataJsonBuilder.BuildCreateBody(Attr("Money"));
         Assert.Equal(1, (int)body["PrecisionSource"]!);
+        Assert.False(body.ContainsKey("Precision"));
+    }
+
+    [Fact]
+    public void BuildCreateBody_Money_WithExplicitPrecision_CarriesItOntoTheCreateBody()
+    {
+        // Regression: this case used to set PrecisionSource only, silently
+        // dropping a requested precisionSource:2 column's own Precision.
+        var body = AttributeMetadataJsonBuilder.BuildCreateBody(Attr("Money", configure: b =>
+        {
+            b.PrecisionSource = 2;
+            b.Precision = 4;
+        }));
+
+        Assert.Equal(2, (int)body["PrecisionSource"]!);
+        Assert.Equal(4, (int)body["Precision"]!);
     }
 
     [Fact]
@@ -218,6 +234,21 @@ public sealed class AttributeMetadataJsonBuilderTests
         Assert.Equal("New Name", (string)existing["DisplayName"]!["LocalizedLabels"]![0]!["Label"]!);
         Assert.Equal("New Description", (string)existing["Description"]!["LocalizedLabels"]![0]!["Label"]!);
         Assert.Equal("SystemRequired", (string)existing["RequiredLevel"]!["Value"]!);
+    }
+
+    [Fact]
+    public void ApplyUpdateFields_Integer_SetsFormat()
+    {
+        // Regression: this case set MinValue/MaxValue only, silently
+        // dropping a changed Format even though AttributesMatch already
+        // compares it for every type (including Integer) and reports the
+        // update as applied either way.
+        var existing = new System.Text.Json.Nodes.JsonObject();
+        var attribute = Attr("Integer", configure: b => b.Format = "Duration");
+
+        AttributeMetadataJsonBuilder.ApplyUpdateFields(existing, attribute);
+
+        Assert.Equal("Duration", (string)existing["Format"]!);
     }
 
     [Fact]

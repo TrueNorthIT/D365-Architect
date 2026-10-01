@@ -32,12 +32,14 @@ internal static class OptionSetDiffer
     {
         var plans = new List<OptionChangePlan>();
         var existingByValue = (existingOptions ?? []).ToDictionary(o => o.Value);
+        var insertedValues = new List<int>();
 
         foreach (var option in localOptions)
         {
             if (!existingByValue.TryGetValue(option.Value, out var existingOption))
             {
                 plans.Add(buildInsert(option));
+                insertedValues.Add(option.Value);
             }
             else if (existingOption.Label != option.Label)
             {
@@ -45,11 +47,28 @@ internal static class OptionSetDiffer
             }
         }
 
-        if (plans.Count == 0)
+        var localValues = localOptions.Select(o => o.Value).ToList();
+        var existingValues = (existingOptions ?? []).Select(o => o.Value).ToList();
+
+        // Confirmed live as a real bug: this used to only run when nothing
+        // else changed (`plans.Count == 0`), so a reorder requested in the
+        // same import as an insert or a rename was silently dropped. Still
+        // only attempted when every existing value is also named locally —
+        // same safety boundary as before, just independent of whether an
+        // insert/rename happened too: a value live but absent from local
+        // YAML (a "would remove" — never touched) means this tool can't
+        // safely build a complete Values array for Dataverse's OrderOption
+        // action without guessing what omitting it does, so it's skipped
+        // there exactly as it always was.
+        if (existingValues.All(localValues.Contains))
         {
-            var localValues = localOptions.Select(o => o.Value).ToList();
-            var existingValues = (existingOptions ?? []).Select(o => o.Value).ToList();
-            if (localValues.Count == existingValues.Count && !localValues.SequenceEqual(existingValues) && localValues.ToHashSet().SetEquals(existingValues))
+            // Where Dataverse's own InsertOptionValue action (no Position
+            // parameter this tool ever sets) leaves things right after the
+            // insert plans above run: existing values in their current
+            // order, each newly-inserted one appended at the end in the
+            // order it was queued.
+            var predictedOrder = existingValues.Concat(insertedValues).ToList();
+            if (!predictedOrder.SequenceEqual(localValues))
             {
                 plans.Add(buildOrder(localValues));
             }
