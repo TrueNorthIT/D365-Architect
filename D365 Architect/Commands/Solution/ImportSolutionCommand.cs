@@ -94,9 +94,16 @@ public sealed class ImportSolutionCommand(
         var choicesPath = Path.Combine(settings.Input, "choices.yml");
         if (File.Exists(choicesPath))
         {
-            var result = await new ImportChoiceCommand(globalChoiceImportService, importRunner).RunAsync(
-                new ImportChoiceCommand.Settings { Input = choicesPath, Yes = settings.Yes, WhatIf = settings.WhatIf, Solution = settings.Solution }, cancellationToken);
-            if (result == 0) succeeded++; else failed++;
+            if (await TryRunAsync(choicesPath, () => new ImportChoiceCommand(globalChoiceImportService, importRunner).RunAsync(
+                new ImportChoiceCommand.Settings { Input = choicesPath, Yes = settings.Yes, WhatIf = settings.WhatIf, Solution = settings.Solution }, cancellationToken)))
+            {
+                succeeded++;
+            }
+            else
+            {
+                failed++;
+            }
+
             AnsiConsole.WriteLine();
         }
 
@@ -104,25 +111,46 @@ public sealed class ImportSolutionCommand(
         {
             foreach (var tablePath in Directory.GetFiles(entityDirectory, "*.table.yml").OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
             {
-                var result = await new ImportTableCommand(tableImportService, importRunner).RunAsync(
-                    new ImportTableCommand.Settings { Input = tablePath, Yes = settings.Yes, WhatIf = settings.WhatIf, NoTransaction = settings.NoTransaction, Solution = settings.Solution }, cancellationToken);
-                if (result == 0) succeeded++; else failed++;
+                if (await TryRunAsync(tablePath, () => new ImportTableCommand(tableImportService, importRunner).RunAsync(
+                    new ImportTableCommand.Settings { Input = tablePath, Yes = settings.Yes, WhatIf = settings.WhatIf, NoTransaction = settings.NoTransaction, Solution = settings.Solution }, cancellationToken)))
+                {
+                    succeeded++;
+                }
+                else
+                {
+                    failed++;
+                }
+
                 AnsiConsole.WriteLine();
             }
 
             foreach (var viewPath in Directory.GetFiles(entityDirectory, "*.view.yml").OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
             {
-                var result = await new ImportViewCommand(viewImportService, importRunner).RunAsync(
-                    new ImportViewCommand.Settings { Input = viewPath, Yes = settings.Yes, WhatIf = settings.WhatIf }, cancellationToken);
-                if (result == 0) succeeded++; else failed++;
+                if (await TryRunAsync(viewPath, () => new ImportViewCommand(viewImportService, importRunner).RunAsync(
+                    new ImportViewCommand.Settings { Input = viewPath, Yes = settings.Yes, WhatIf = settings.WhatIf }, cancellationToken)))
+                {
+                    succeeded++;
+                }
+                else
+                {
+                    failed++;
+                }
+
                 AnsiConsole.WriteLine();
             }
 
             foreach (var formPath in Directory.GetFiles(entityDirectory, "*.form.yml").OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
             {
-                var result = await new ImportFormCommand(formImportService, importRunner).RunAsync(
-                    new ImportFormCommand.Settings { Input = formPath, Yes = settings.Yes, WhatIf = settings.WhatIf, AllowSchemaViolations = settings.AllowSchemaViolations }, cancellationToken);
-                if (result == 0) succeeded++; else failed++;
+                if (await TryRunAsync(formPath, () => new ImportFormCommand(formImportService, importRunner).RunAsync(
+                    new ImportFormCommand.Settings { Input = formPath, Yes = settings.Yes, WhatIf = settings.WhatIf, AllowSchemaViolations = settings.AllowSchemaViolations }, cancellationToken)))
+                {
+                    succeeded++;
+                }
+                else
+                {
+                    failed++;
+                }
+
                 AnsiConsole.WriteLine();
             }
         }
@@ -138,5 +166,28 @@ public sealed class ImportSolutionCommand(
             : $"[yellow]Done with errors.[/] {succeeded} succeeded, {failed} failed — see above.");
 
         return failed == 0 ? 0 : 1;
+    }
+
+    /// <summary>
+    /// Runs one file's import, catching anything it throws so one bad file
+    /// genuinely can't stop the rest — the resilience this class's own doc
+    /// comment already claimed, but that nothing here actually enforced
+    /// until now: <see cref="ImportRunner.RunAsync{TSettings,TInput,TPreview}"/>
+    /// only ever translates a small, per-command allowlist of exception
+    /// types into a clean exit code (e.g. table/choice import only recognize
+    /// <see cref="InvalidDataException"/>) — anything else used to propagate
+    /// straight out of this whole command, aborting every remaining file.
+    /// </summary>
+    private static async Task<bool> TryRunAsync(string assetPath, Func<Task<int>> run)
+    {
+        try
+        {
+            return await run() == 0;
+        }
+        catch (Exception ex)
+        {
+            ErrorConsole.Print($"'{assetPath}' failed: {ex.Message}");
+            return false;
+        }
     }
 }
