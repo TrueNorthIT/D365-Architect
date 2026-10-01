@@ -14,6 +14,7 @@ internal static class FormYamlDeserializer
     private static readonly IDeserializer Deserializer = new DeserializerBuilder()
         .WithNamingConvention(CamelCaseNamingConvention.Instance)
         .WithTypeConverter(new ReadOnlyListYamlTypeConverter())
+        .WithTypeConverter(new ReadOnlyDictionaryYamlTypeConverter())
         .Build();
 
     /// <exception cref="YamlDotNet.Core.YamlException">The YAML doesn't match this tool's curated form shape.</exception>
