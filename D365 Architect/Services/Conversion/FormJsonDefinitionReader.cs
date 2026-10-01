@@ -283,12 +283,13 @@ public sealed class FormJsonDefinitionReader
 
     private static FormTab ParseTab(XElement tab, IReadOnlyDictionary<string, IReadOnlyList<FormAdditionalControl>> additionalControls)
     {
-        var (label, translations) = ParseLabels(tab.Element("labels"));
+        var (label, labelLanguageCode, translations) = ParseLabels(tab.Element("labels"));
 
         return new FormTab
         {
             Name = (string?)tab.Attribute("name"),
             Label = label,
+            LabelLanguageCode = labelLanguageCode,
             Translations = translations,
             Columns = tab.Element("columns")?.Elements("column").Select(column => ParseColumn(column, additionalControls)).ToList() ?? [],
             Visible = DefaultValueConventions.FalseOrNull((bool?)tab.Attribute("visible")),
@@ -305,12 +306,13 @@ public sealed class FormJsonDefinitionReader
 
     private static FormSection ParseSection(XElement section, IReadOnlyDictionary<string, IReadOnlyList<FormAdditionalControl>> additionalControls)
     {
-        var (label, translations) = ParseLabels(section.Element("labels"));
+        var (label, labelLanguageCode, translations) = ParseLabels(section.Element("labels"));
 
         return new FormSection
         {
             Name = (string?)section.Attribute("name"),
             Label = label,
+            LabelLanguageCode = labelLanguageCode,
             Translations = translations,
             // The section's own "columns" attribute is a string of one digit
             // per sub-column (e.g. "11" = 2 equal columns) rather than a number
@@ -355,13 +357,14 @@ public sealed class FormJsonDefinitionReader
         var uniqueId = (string?)control!.Attribute("uniqueid");
         var rawClassId = (string?)control.Attribute("classid");
         var friendlyControl = rawClassId is not null ? StandardFormControls.TryGetFriendlyName(rawClassId) : null;
-        var (label, translations) = ParseLabels(cell.Element("labels"));
+        var (label, labelLanguageCode, translations) = ParseLabels(cell.Element("labels"));
 
         return new FormControl
         {
             Id = id,
             Field = (string?)control.Attribute("datafieldname"),
             Label = label,
+            LabelLanguageCode = labelLanguageCode,
             Translations = translations,
             // A recognized standard control's classid becomes Control (the
             // friendly name); anything else keeps the raw classid under
@@ -554,11 +557,11 @@ public sealed class FormJsonDefinitionReader
     /// that's genuine maker-authored text, permanently lost on every
     /// round-trip until this was fixed.
     /// </remarks>
-    private static (string? Label, IReadOnlyDictionary<int, string>? Translations) ParseLabels(XElement? labels)
+    private static (string? Label, int? LabelLanguageCode, IReadOnlyDictionary<int, string>? Translations) ParseLabels(XElement? labels)
     {
         if (labels is null)
         {
-            return (null, null);
+            return (null, null, null);
         }
 
         var entries = labels.Elements("label").ToList();
@@ -566,13 +569,24 @@ public sealed class FormJsonDefinitionReader
         var primaryText = (string?)primary?.Attribute("description");
         var label = string.IsNullOrEmpty(primaryText) ? null : primaryText;
 
+        // Confirmed live as a real gap: on a tenant whose base language
+        // isn't English, the primary label (picked above, since there's no
+        // 1033 entry at all) is in that base language, not 1033 — but
+        // FormXmlWriter.WriteLabels used to hard-code "1033" when writing it
+        // back regardless, silently mislabeling the primary text's own
+        // language on every rebuild. Only set when it's not the common-case
+        // 1033, same "absent means the default" convention as everywhere
+        // else in this model.
+        var primaryLanguageCode = (int?)primary?.Attribute("languagecode");
+        var labelLanguageCode = label is not null && primaryLanguageCode is not null and not 1033 ? primaryLanguageCode : null;
+
         var translations = entries
             .Where(e => e != primary)
             .Select(e => (LanguageCode: (int?)e.Attribute("languagecode"), Text: (string?)e.Attribute("description")))
             .Where(e => e.LanguageCode is not null && !string.IsNullOrEmpty(e.Text))
             .ToDictionary(e => e.LanguageCode!.Value, e => e.Text!);
 
-        return (label, translations.Count > 0 ? translations : null);
+        return (label, labelLanguageCode, translations.Count > 0 ? translations : null);
     }
 
     private static IReadOnlyList<T>? NullIfEmpty<T>(IReadOnlyList<T>? items) => items is { Count: > 0 } ? items : null;

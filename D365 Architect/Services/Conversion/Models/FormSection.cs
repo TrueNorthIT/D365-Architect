@@ -17,6 +17,15 @@ public sealed class FormSection
     public string? Label { get; init; }
 
     /// <summary>
+    /// <see cref="Label"/>'s own Dataverse languagecode, e.g. 1036 for
+    /// French. Only present when it isn't 1033 (English) — see
+    /// <see cref="FormTab.LabelLanguageCode"/>'s own doc comment for why.
+    /// Absent (the common case) means 1033.
+    /// </summary>
+    [YamlMember(Order = 2)]
+    public int? LabelLanguageCode { get; init; }
+
+    /// <summary>
     /// This label's text in every language besides the one shown as
     /// <see cref="Label"/>, keyed by Dataverse's own languagecode (e.g.
     /// 1036 for French). Absent on a single-language tenant (the
@@ -28,7 +37,7 @@ public sealed class FormSection
     /// default: this is genuine maker-authored text on a multi-language
     /// tenant, lost permanently on every round-trip until this was added.
     /// </remarks>
-    [YamlMember(Order = 2)]
+    [YamlMember(Order = 3)]
     public IReadOnlyDictionary<int, string>? Translations { get; init; }
 
     /// <summary>
@@ -39,14 +48,19 @@ public sealed class FormSection
     /// </summary>
     /// <remarks>
     /// <see cref="Controls"/> stays a flat, row-major list either way (row
-    /// 1's cells left-to-right, then row 2's, ...); this is what says how
-    /// to regroup them back into a grid.
+    /// 1's cells left-to-right, then row 2's, ...), regrouped back into a
+    /// grid by accumulating each control's own <see cref="FormControl.ColumnSpan"/>
+    /// against this column count — not by a fixed cell count per row, since
+    /// a row using <c>colspan</c> has fewer cells than a full row of
+    /// singly-spanned ones. See <see cref="FormXmlWriter"/>'s own
+    /// <c>RegroupIntoRows</c> for the one narrower case this still can't
+    /// fully reconstruct.
     /// </remarks>
-    [YamlMember(Order = 3)]
+    [YamlMember(Order = 4)]
     public int? Columns { get; init; }
 
     /// <summary>The section's fields, in reading order (left to right, top to bottom).</summary>
-    [YamlMember(Order = 4)]
+    [YamlMember(Order = 5)]
     public IReadOnlyList<FormControl> Controls { get; init; } = [];
 
     /// <summary>
@@ -54,7 +68,7 @@ public sealed class FormSection
     /// from one simply not on the form at all. Omit to leave this section
     /// visible; applying this file back won't hide it.
     /// </summary>
-    [YamlMember(Order = 5)]
+    [YamlMember(Order = 6)]
     public bool? Visible { get; init; }
 
     /// <summary>
@@ -62,7 +76,7 @@ public sealed class FormSection
     /// deliberately hidden. Omit to leave this section's label shown;
     /// applying this file back won't hide it.
     /// </summary>
-    [YamlMember(Order = 6)]
+    [YamlMember(Order = 7)]
     public bool? ShowLabel { get; init; }
 
     /// <summary>
@@ -73,6 +87,6 @@ public sealed class FormSection
     /// assumed either way. Absent when this section's FormXML doesn't set
     /// it at all.
     /// </summary>
-    [YamlMember(Order = 7)]
+    [YamlMember(Order = 8)]
     public bool? AvailableOnPhone { get; init; }
 }
