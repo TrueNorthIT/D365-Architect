@@ -170,8 +170,21 @@ public static class AttributeMetadataJsonBuilder
 
             case "Money":
                 // PrecisionSource 1 = organization setting — the ordinary
-                // case when nothing more specific was captured.
+                // case when nothing more specific was captured. Precision is
+                // only meaningful when PrecisionSource is 2 (this column's
+                // own — see AttributeDefinition.Precision's own doc
+                // comment), so only sent when actually given. Confirmed live
+                // as a real gap otherwise: a new column requesting
+                // precisionSource: 2 with an explicit precision silently
+                // never got it, since this case forgot to carry Precision
+                // onto the create body the way Decimal's own case (and this
+                // same type's own update case, below) already does.
                 body["PrecisionSource"] = attribute.PrecisionSource ?? 1;
+                if (attribute.Precision is not null)
+                {
+                    body["Precision"] = attribute.Precision.Value;
+                }
+
                 break;
 
             case "DateTime":
@@ -313,6 +326,17 @@ public static class AttributeMetadataJsonBuilder
                 if (attribute.MaxValue is not null)
                 {
                     existing["MaxValue"] = (int)attribute.MaxValue.Value;
+                }
+
+                // Confirmed live as a real gap: AttributesMatch compares
+                // Format for every type uniformly, so a changed Integer
+                // Format was already reported as an update — this case just
+                // never actually carried it onto the PUT body the way every
+                // other Format-bearing type's own case does (String,
+                // DateTime below), so the write silently did nothing.
+                if (attribute.Format is not null)
+                {
+                    existing["Format"] = attribute.Format;
                 }
 
                 break;

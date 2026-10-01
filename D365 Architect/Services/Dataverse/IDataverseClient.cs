@@ -384,4 +384,25 @@ public interface IDataverseClient
     /// works here.
     /// </summary>
     Task UpdateGlobalOptionSetAsync(Uri environmentUrl, string accessToken, Guid metadataId, JsonObject body, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Executes every write in <paramref name="writes"/>, in order, as one
+    /// atomic Web API <c>$batch</c> changeset — either all of them take, or
+    /// (Dataverse's own documented changeset rollback) none of them do.
+    /// Used by <c>table import</c> as its default way to apply a column
+    /// plan, instead of the same writes one at a time via this interface's
+    /// own individual methods (<see cref="CreateAttributeAsync"/>,
+    /// <see cref="UpdateAttributeAsync"/>, and so on) — see
+    /// <c>--no-transaction</c> on <c>table import</c> for when a caller
+    /// wants that sequential, non-atomic behaviour instead. Metadata writes
+    /// inside a changeset aren't something Microsoft's own docs confirm one
+    /// way or the other (their own <c>$batch</c>/changeset examples are all
+    /// ordinary-record CRUD) — but every <see cref="DataverseWrite"/> case
+    /// has since been confirmed live, mixed together in the same changeset,
+    /// against a real tenant (see `docs/yaml-conventions.md`'s "Applying the
+    /// plan" section), rollback included. Throws if any write fails, naming
+    /// which one and Dataverse's own error for it — nothing in
+    /// <paramref name="writes"/> is left applied when that happens.
+    /// </summary>
+    Task ExecuteTransactionAsync(Uri environmentUrl, string accessToken, IReadOnlyList<DataverseWrite> writes, CancellationToken cancellationToken);
 }
