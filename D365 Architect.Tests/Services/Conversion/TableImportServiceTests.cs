@@ -205,6 +205,69 @@ public sealed class TableImportServiceTests
         Assert.Equal(AttributeImportAction.SkippedUnsupportedType, plan.Action);
     }
 
+    // ---- Diff display order (reordered-but-identical columns shouldn't show as noise) ----
+
+    [Fact]
+    public async Task PreviewAsync_ColumnsInDifferentOrderButOtherwiseIdentical_ExistingYamlLinesUpWithLocal_NoDiffNoise()
+    {
+        // Live/re-exported order (tn_b, tn_a) deliberately doesn't match the
+        // order the local file lists them in (tn_a, tn_b) — exactly what
+        // happens for real, every time, since Dataverse returns columns in
+        // its own order regardless of how a human wrote the YAML. Without
+        // EntityDefinition.WithAttributes/OrderForDiff re-sorting the
+        // existing side to match, a plain positional line diff of the two
+        // YAML blobs would show both columns as wholesale removed-and-re-added
+        // even though nothing about either one actually changed.
+        var existing = Entity("""
+            { "LogicalName": "tn_b", "SchemaName": "tn_B", "AttributeType": "String" },
+            { "LogicalName": "tn_a", "SchemaName": "tn_A", "AttributeType": "String" }
+            """);
+        var (service, _) = CreateService(existing);
+        // SchemaName/OwnershipType set to match Entity()'s own values —
+        // otherwise the diff also shows those as "removed" simply because
+        // the local YAML never restates them, which is real (if separately
+        // noisy) and not what this test is isolating.
+        var local = new EntityDefinition
+        {
+            LogicalName = "tn_test",
+            SchemaName = "tn_Test",
+            OwnershipType = "UserOwned",
+            Attributes = [Attr("tn_a", "String", schemaName: "tn_A"), Attr("tn_b", "String", schemaName: "tn_B")],
+        };
+
+        var preview = await service.PreviewAsync(new Uri("https://test.crm.dynamics.com"), "token", local, CancellationToken.None);
+
+        Assert.All(preview.AttributePlans, plan => Assert.Equal(AttributeImportAction.Unchanged, plan.Action));
+
+        var diff = TextDiff.Compute(preview.ExistingYaml, preview.NewYaml);
+        Assert.DoesNotContain(diff, line => line.Kind != TextDiffLineKind.Unchanged);
+    }
+
+    [Fact]
+    public async Task PreviewAsync_ColumnsInDifferentOrderWithOneLiveOnlyColumn_LiveOnlyColumnKeepsItsOwnPosition()
+    {
+        // tn_extra is live-only (WouldRemove) — OrderForDiff has no local
+        // position to sort it by, so it should fall in after every matched
+        // column rather than disappearing or reordering unpredictably.
+        var existing = Entity("""
+            { "LogicalName": "tn_b", "SchemaName": "tn_B", "AttributeType": "String" },
+            { "LogicalName": "tn_extra", "SchemaName": "tn_Extra", "AttributeType": "String" },
+            { "LogicalName": "tn_a", "SchemaName": "tn_A", "AttributeType": "String" }
+            """);
+        var (service, _) = CreateService(existing);
+        var local = Local(
+            Attr("tn_a", "String", schemaName: "tn_A"),
+            Attr("tn_b", "String", schemaName: "tn_B"));
+
+        var preview = await service.PreviewAsync(new Uri("https://test.crm.dynamics.com"), "token", local, CancellationToken.None);
+
+        var aIndex = preview.ExistingYaml.IndexOf("tn_a", StringComparison.Ordinal);
+        var bIndex = preview.ExistingYaml.IndexOf("tn_b", StringComparison.Ordinal);
+        var extraIndex = preview.ExistingYaml.IndexOf("tn_extra", StringComparison.Ordinal);
+        Assert.True(aIndex < bIndex, "tn_a (local position 0) should come before tn_b (local position 1).");
+        Assert.True(bIndex < extraIndex, "the live-only column should come after every matched column.");
+    }
+
     // ---- HasChanges ----
 
     [Fact]

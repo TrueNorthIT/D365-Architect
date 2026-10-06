@@ -158,6 +158,15 @@
           "relationshipSchemaName": {
             "description": "Lookup only, required to create a brand-new Lookup column: the schema name of the one-to-many relationship that owns this lookup — a separate name from the column's own SchemaName, never inferred. Not used for Customer (its two relationship names are derived from SchemaName instead — see `docs/yaml-conventions.md`) or for any other type.",
             "type": "string"
+          },
+          "relationshipBehavior": {
+            "description": "Lookup only: the new relationship's Behavior — \"Referential\", \"ReferentialRestrictDelete\", or \"Parental\" (see RelationshipBehaviors). Only present when set to something other than \"Referential\" — the Maker UI's own default for a brand-new lookup, and the only one of the three that never collides with another Parental relationship the referencing table might already have (see `docs/yaml-conventions.md`).",
+            "type": "string",
+            "enum": [
+              "Referential",
+              "ReferentialRestrictDelete",
+              "Parental"
+            ]
           }
         },
         "additionalProperties": false,
