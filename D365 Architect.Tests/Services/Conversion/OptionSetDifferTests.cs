@@ -78,16 +78,67 @@ public sealed class OptionSetDifferTests
     }
 
     [Fact]
-    public void Diff_InsertAndReorderTogether_OnlyReportsTheInsert()
+    public void Diff_InsertAndReorderTogether_ReportsBoth()
     {
-        // Reorder is only ever detected when the value SET is otherwise
-        // identical (plans.Count == 0 after the insert/rename pass) - an
-        // insert alongside a reorder never also emits a reorder plan.
+        // Regression (round 3): reorder used to only ever be detected when
+        // the value set was otherwise identical (plans.Count == 0 after the
+        // insert/rename pass), so a genuine reorder requested alongside an
+        // insert was silently dropped. Dataverse's own InsertOptionValue has
+        // no position parameter this tool sets (a new option always lands
+        // at the end), so the predicted post-insert order here is [1,2,3] -
+        // still not [3,2,1], so a reorder plan naming the full local order
+        // is still expected on top of the insert.
         var existing = new[] { Option(1, "Red"), Option(2, "Blue") };
         var local = new[] { Option(3, "Green"), Option(2, "Blue"), Option(1, "Red") };
 
+        var plans = Diff(local, existing);
+
+        Assert.Equal(2, plans.Count);
+        var insert = Assert.Single(plans, p => p.Action == OptionChangeAction.InsertOption);
+        Assert.Equal(3, (int)insert.RequestBody["Value"]!);
+        var order = Assert.Single(plans, p => p.Action == OptionChangeAction.OrderOptions);
+        var values = order.RequestBody["Values"]!.AsArray().Select(v => (int)v!).ToList();
+        Assert.Equal([3, 2, 1], values);
+    }
+
+    [Fact]
+    public void Diff_InsertAppendedAtTheEndAlreadyMatchesDesiredOrder_NoReorderPlan()
+    {
+        // The insert alone already produces the desired final order (new
+        // value wanted last, and it lands last by default), so no separate
+        // OrderOptions call is needed on top of the insert.
+        var existing = new[] { Option(1, "Red"), Option(2, "Blue") };
+        var local = new[] { Option(1, "Red"), Option(2, "Blue"), Option(3, "Green") };
+
         var plan = Assert.Single(Diff(local, existing));
         Assert.Equal(OptionChangeAction.InsertOption, plan.Action);
+    }
+
+    [Fact]
+    public void Diff_RenameAndReorderTogether_ReportsBoth()
+    {
+        var existing = new[] { Option(1, "Red"), Option(2, "Blue") };
+        var local = new[] { Option(2, "Blue"), Option(1, "Crimson") };
+
+        var plans = Diff(local, existing);
+
+        Assert.Equal(2, plans.Count);
+        Assert.Contains(plans, p => p.Action == OptionChangeAction.UpdateOption);
+        Assert.Contains(plans, p => p.Action == OptionChangeAction.OrderOptions);
+    }
+
+    [Fact]
+    public void Diff_ReorderRequestedButAnExistingValueIsMissingFromLocal_SkipsReorder()
+    {
+        // Never attempted when an existing value is unmanaged (absent from
+        // local, i.e. a "would remove" this tool never touches) - building a
+        // complete Values array for Dataverse's OrderOption action would
+        // mean guessing what omitting that value does, which this tool
+        // never does.
+        var existing = new[] { Option(1, "Red"), Option(2, "Blue"), Option(3, "Green") };
+        var local = new[] { Option(2, "Blue"), Option(1, "Red") };
+
+        Assert.Empty(Diff(local, existing));
     }
 
     [Fact]

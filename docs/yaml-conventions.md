@@ -825,11 +825,38 @@ schema names are derived from the column's `schemaName` plus the fixed
 `["account", "contact"]` — Dataverse's own fixed shape for the type, not
 something a maker chooses. The target's primary key
 (`ReferencedAttribute`) is always derived as `"{target}id"`, Dataverse's own
-universal naming convention, rather than asked for. `AssociatedMenuConfiguration`/
-`CascadeConfiguration` on a new Lookup relationship use Microsoft's own
-documented example values (`Cascade` throughout) — flagged here as *not*
-independently confirmed to be the Maker UI's own default, unlike every
-numeric bound this tool relies on elsewhere.
+universal naming convention, rather than asked for.
+
+A new Lookup relationship's `CascadeConfiguration` is driven by an optional
+`relationshipBehavior` on the column: `"Referential"` (the default when
+omitted — also the Maker UI's own default for a brand-new lookup),
+`"ReferentialRestrictDelete"`, or `"Parental"` — see
+`RelationshipBehaviors.CascadeConfigurationOrNull` for the exact
+`Assign`/`Delete`/`Merge`/`Reparent`/`Share`/`Unshare` values each expands
+to, and `AssociatedMenuConfiguration`'s own fixed, non-configurable values.
+Dataverse only allows an entity to be the child in *one* Parental
+relationship at a time — creating a second lookup to a different parent
+once one Parental relationship already existed fails outright with
+`0x80047007`, "is parented to Entity ... Cannot create another parental
+relation". Two versions of this tool got caught by that before the current
+values were confirmed against Microsoft's own documented rule for what
+actually counts as "parental" for this restriction
+(`entity-relationship-behavior#BKMK_ParentalEntityRelationships`, not the
+request-shape example most of this tool's other citations come from): a
+relationship is Parental if `Delete` is `Cascade`, **or** any of
+`Assign`/`Share`/`Unshare`/`Reparent` is `Cascade`/`UserOwned`/`Active` —
+`Merge` isn't a determinant at all. The first version defaulted every new
+lookup to all-`Cascade` (obviously Parental by that rule). The second
+version's "Referential" default fixed `Delete`/`Assign`/`Share`/`Unshare`
+but still set `Reparent: Cascade` — which on its own is just as much
+"parental" by Microsoft's rule, so it hit the identical error despite being
+named Referential. `RelationshipBehaviors.CascadeConfigurationOrNull` now
+keeps every one of those four fields at `NoCascade` for both Referential
+presets. `relationshipBehavior` exists so a maker who deliberately wants
+Parental for a *specific* lookup can still ask for it — it isn't itself
+validated against what other relationships the table already has, so
+choosing Parental for a second lookup will still surface as this same
+Dataverse error rather than being caught locally first.
 
 **`targets` is immutable after creation** for all three types, checked
 before `AttributesMatch` alongside the existing `Type`/`SchemaName` checks —
@@ -954,8 +981,10 @@ real table, not just reasoned about:
 - **Creating a Picklist/MultiSelectPicklist with no `options` and no
   `globalOptionSetName`, both at once, or duplicate option `value`s** — see
   "Boolean and Choice" above.
-- **Creating a `Lookup` with no `relationshipSchemaName`, an invalid one, or
-  more than one `targets` entry** — see "Lookup, Customer, and Owner" above.
+- **Creating a `Lookup` with no `relationshipSchemaName`, an invalid one,
+  more than one `targets` entry, or a `relationshipBehavior` that isn't
+  `Referential`/`ReferentialRestrictDelete`/`Parental`** — see "Lookup,
+  Customer, and Owner" above.
 - **Creating a `Customer` whose `targets` aren't exactly `["account",
   "contact"]`** — fixed by Dataverse for the type, not a maker choice.
 - **Attempting to create an `Owner`/`State`/`Status` column** — all three
