@@ -8,7 +8,7 @@ using Spectre.Console.Cli;
 namespace D365Architect.Commands.Table;
 
 /// <summary>
-/// `d365architect table import --input account.table.yml [--yes] [--whatif]`
+/// `d365architect table import --input account.table.yml [--yes] [--whatif] [--no-transaction]`
 /// Writes a `*.table.yml` file's table-level properties
 /// (<c>DisplayName</c>/<c>PluralDisplayName</c>/<c>Description</c>) and
 /// columns back into Dataverse. Needs sign-in.
@@ -33,6 +33,15 @@ namespace D365Architect.Commands.Table;
 ///
 /// Never creates the table itself if it doesn't exist yet.
 ///
+/// Every write in the column plan (plus the table-level update, if any) is
+/// sent as one atomic Dataverse changeset by default — either all of it
+/// takes, or (on any single failure) none of it does, rather than leaving
+/// the table with only some of the plan applied. Pass
+/// <c>--no-transaction</c> to send them one request at a time instead, same
+/// as this tool always did before that existed — useful if an environment
+/// turns out to reject batched metadata writes, or if partial progress on
+/// failure is actually what you want.
+///
 /// What this doesn't do yet: publish the change — Dataverse customizations
 /// still need publishing separately before end users see it (confirmed
 /// required for table/column changes specifically, unlike form/view
@@ -49,6 +58,9 @@ public sealed class ImportTableCommand(ITableImportService tableImportService, I
 {
     public sealed class Settings : ImportSettingsBase
     {
+        [CommandOption("--no-transaction")]
+        [Description("Send every column create/update one request at a time instead of as a single atomic Dataverse changeset. Use this if the environment rejects batched metadata writes, or to keep whatever succeeded before a later one fails rather than having the whole import rolled back.")]
+        public bool NoTransaction { get; init; }
         [CommandOption("--show-unmanaged")]
         [Description("Also list every live column absent from the local YAML (companion columns like ...name/...yominame included) instead of just a count. These are never deleted by this tool either way.")]
         public bool ShowUnmanaged { get; init; }
@@ -110,7 +122,7 @@ public sealed class ImportTableCommand(ITableImportService tableImportService, I
 
             ApplyStatusMessage = "Importing...",
 
-            ApplyAsync = (auth, preview, ct) => tableImportService.ApplyAsync(auth.EnvironmentUrl, auth.AccessToken, preview, ct),
+            ApplyAsync = (auth, preview, ct) => tableImportService.ApplyAsync(auth.EnvironmentUrl, auth.AccessToken, preview, useTransaction: !settings.NoTransaction, ct),
 
             PrintSuccess = (entity, preview) =>
             {

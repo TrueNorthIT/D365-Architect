@@ -33,9 +33,27 @@ namespace D365Architect.Services.Conversion;
 /// plan in the preview, plus the table-level update if
 /// <see cref="TableImportPreview.TableUpdateBody"/> is set. It doesn't
 /// publish the change — Dataverse customizations still need publishing
-/// separately (see `docs/yaml-conventions.md`).
+/// separately (see `docs/yaml-conventions.md`). Defaults to sending every
+/// one of those writes as a single atomic <see cref="Dataverse.IDataverseClient.ExecuteTransactionAsync"/>
+/// changeset — see the <see cref="ApplyAsync(Uri, string, TableImportPreview, bool, CancellationToken)"/>
+/// overload to opt out (<c>table import --no-transaction</c>) and send them
+/// one at a time instead, same as before that existed.
 /// </summary>
-public interface ITableImportService : IImportService<EntityDefinition, TableImportPreview>;
+public interface ITableImportService : IImportService<EntityDefinition, TableImportPreview>
+{
+    /// <param name="environmentUrl">See <see cref="IImportService{TInput,TPreview}.ApplyAsync"/>.</param>
+    /// <param name="accessToken">See <see cref="IImportService{TInput,TPreview}.ApplyAsync"/>.</param>
+    /// <param name="preview">See <see cref="IImportService{TInput,TPreview}.ApplyAsync"/>.</param>
+    /// <param name="useTransaction">
+    /// True (the default the four-argument <see cref="IImportService{TInput,TPreview}.ApplyAsync"/>
+    /// uses) to send every write in <paramref name="preview"/> as one
+    /// atomic Dataverse changeset; false to send them one at a time, same as
+    /// this tool always did before batching existed — see
+    /// <c>table import --no-transaction</c>.
+    /// </param>
+    /// <param name="cancellationToken">See <see cref="IImportService{TInput,TPreview}.ApplyAsync"/>.</param>
+    Task ApplyAsync(Uri environmentUrl, string accessToken, TableImportPreview preview, bool useTransaction, CancellationToken cancellationToken);
+}
 
 /// <summary>What (if anything) <see cref="IImportService{TInput,TPreview}.ApplyAsync"/> will do for one column.</summary>
 public enum AttributeImportAction

@@ -60,3 +60,38 @@ public sealed class DataverseClientTests
         Assert.Contains("\"formxml\":", handler.RequestBody);
     }
 }
+
+/// <summary>
+/// Covers a separate, later-found regression: <see cref="DataverseClient.UpdateGlobalOptionSetAsync"/>
+/// is a full-object PUT structurally identical to <see cref="DataverseClient.UpdateEntityAsync"/>/
+/// <see cref="DataverseClient.UpdateAttributeAsync"/> (same single-language
+/// <c>DataverseLabelJson.Build</c> body), but never sent the
+/// <c>MSCRM.MergeLabels</c> header those two send for exactly this reason —
+/// confirmed live as a real gap: editing one language's label on a global
+/// choice silently wiped every other language already set on it.
+/// </summary>
+public sealed class DataverseClientGlobalChoiceHeaderTests
+{
+    private sealed class HeaderCapturingHandler : HttpMessageHandler
+    {
+        public HttpRequestMessage? Request { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Request = request;
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK));
+        }
+    }
+
+    [Fact]
+    public async Task UpdateGlobalOptionSetAsync_SendsMergeLabelsHeader()
+    {
+        var handler = new HeaderCapturingHandler();
+        var client = new DataverseClient(new HttpClient(handler));
+
+        await client.UpdateGlobalOptionSetAsync(new Uri("https://example.crm.dynamics.com"), "token", Guid.NewGuid(), new System.Text.Json.Nodes.JsonObject(), CancellationToken.None);
+
+        Assert.True(handler.Request!.Headers.TryGetValues("MSCRM.MergeLabels", out var values));
+        Assert.Equal("true", Assert.Single(values!));
+    }
+}

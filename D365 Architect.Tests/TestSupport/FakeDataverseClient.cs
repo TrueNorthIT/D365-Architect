@@ -177,4 +177,67 @@ public sealed class FakeDataverseClient : IDataverseClient
         UpdateGlobalOptionSetCalls.Add((metadataId, body));
         return Task.CompletedTask;
     }
+
+    // ---- ExecuteTransactionAsync: dispatches into the exact same *Calls
+    // lists as the individual write methods above, so a test written
+    // against the sequential (useTransaction: false) path keeps working
+    // unchanged when it instead exercises the batched/transactional one —
+    // see TableImportServiceTests' "ApplyAsync wiring" section, which calls
+    // the plain four-argument ApplyAsync (transaction-by-default) but only
+    // ever asserts against these lists. No real batching/rollback semantics
+    // here; this fake only needs to record what was asked for. ----
+    public List<IReadOnlyList<DataverseWrite>> ExecuteTransactionCalls { get; } = [];
+
+    public Task ExecuteTransactionAsync(Uri environmentUrl, string accessToken, IReadOnlyList<DataverseWrite> writes, CancellationToken cancellationToken)
+    {
+        ExecuteTransactionCalls.Add(writes);
+
+        foreach (var write in writes)
+        {
+            switch (write)
+            {
+                case DataverseWrite.UpdateEntity w:
+                    UpdateEntityCalls.Add((w.EntityLogicalName, w.Metadata));
+                    break;
+
+                case DataverseWrite.CreateAttribute w:
+                    CreateAttributeCalls.Add((w.EntityLogicalName, w.Metadata));
+                    break;
+
+                case DataverseWrite.UpdateAttribute w:
+                    UpdateAttributeCalls.Add((w.EntityLogicalName, w.AttributeLogicalName, w.Metadata));
+                    break;
+
+                case DataverseWrite.CreateOneToManyRelationship w:
+                    CreateOneToManyRelationshipCalls.Add(w.Metadata);
+                    break;
+
+                case DataverseWrite.CreateCustomerRelationships w:
+                    CreateCustomerRelationshipsCalls.Add(w.Body);
+                    break;
+
+                case DataverseWrite.InsertOptionValue w:
+                    InsertOptionValueCalls.Add(w.Body);
+                    break;
+
+                case DataverseWrite.UpdateOptionValue w:
+                    UpdateOptionValueCalls.Add(w.Body);
+                    break;
+
+                case DataverseWrite.OrderOptions w:
+                    OrderOptionsCalls.Add(w.Body);
+                    break;
+
+                case DataverseWrite.InsertStatusValue w:
+                    InsertStatusValueCalls.Add(w.Body);
+                    break;
+
+                case DataverseWrite.UpdateStateValue w:
+                    UpdateStateValueCalls.Add(w.Body);
+                    break;
+            }
+        }
+
+        return Task.CompletedTask;
+    }
 }
