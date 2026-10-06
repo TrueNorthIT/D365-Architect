@@ -11,6 +11,16 @@ public sealed class ViewExportService(IDataverseClient dataverseClient, ViewJson
         {
             allowedSavedQueryIds = await dataverseClient.TryGetSolutionSavedQueryIdsAsync(environmentUrl, accessToken, solutionUniqueName, cancellationToken)
                 ?? throw new SolutionNotFoundException(solutionUniqueName);
+
+            // Same "the table's own Include-Subcomponents membership means
+            // no separate View solutioncomponents exist at all" gap as
+            // TableExportService — see
+            // IDataverseClient.IsSolutionEntityIncludingSubcomponentsAsync's
+            // own doc comment.
+            if (await dataverseClient.IsSolutionEntityIncludingSubcomponentsAsync(environmentUrl, accessToken, solutionUniqueName, entityLogicalName, cancellationToken))
+            {
+                allowedSavedQueryIds = null;
+            }
         }
 
         var json = await dataverseClient.GetViewDefinitionsJsonAsync(environmentUrl, accessToken, entityLogicalName, cancellationToken);

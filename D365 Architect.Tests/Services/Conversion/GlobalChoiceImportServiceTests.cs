@@ -140,6 +140,37 @@ public sealed class GlobalChoiceImportServiceTests
     }
 
     [Fact]
+    public async Task ApplyAsync_FiveArgOverload_WithSolutionUniqueName_PassesItToCreateGlobalOptionSetAsync()
+    {
+        var client = new FakeDataverseClient { GlobalOptionSetJsonByName = _ => null };
+        var service = new GlobalChoiceImportService(client);
+        var locals = new List<GlobalChoiceDefinition> { Choice("tn_new", options: [new AttributeOptionDefinition { Value = 1, Label = "A" }]) };
+        var preview = await service.PreviewAsync(new Uri("https://test.crm.dynamics.com"), "token", locals, CancellationToken.None);
+
+        await service.ApplyAsync(new Uri("https://test.crm.dynamics.com"), "token", preview, solutionUniqueName: "JCTest", CancellationToken.None);
+
+        var call = Assert.Single(client.CreateGlobalOptionSetCalls);
+        Assert.Equal("JCTest", call.SolutionUniqueName);
+    }
+
+    [Fact]
+    public async Task ApplyAsync_DefaultFourArgOverload_NeverAttachesASolutionUniqueName()
+    {
+        // Regression guard for the old default: a plain `choice import`
+        // (no --solution) must still leave a new choice wherever
+        // Dataverse's own default context puts it.
+        var client = new FakeDataverseClient { GlobalOptionSetJsonByName = _ => null };
+        var service = new GlobalChoiceImportService(client);
+        var locals = new List<GlobalChoiceDefinition> { Choice("tn_new", options: [new AttributeOptionDefinition { Value = 1, Label = "A" }]) };
+        var preview = await service.PreviewAsync(new Uri("https://test.crm.dynamics.com"), "token", locals, CancellationToken.None);
+
+        await service.ApplyAsync(new Uri("https://test.crm.dynamics.com"), "token", preview, CancellationToken.None);
+
+        var call = Assert.Single(client.CreateGlobalOptionSetCalls);
+        Assert.Null(call.SolutionUniqueName);
+    }
+
+    [Fact]
     public async Task ApplyAsync_UpdatePlanWithBaseFieldChange_CallsUpdateGlobalOptionSetWithMetadataId()
     {
         var metadataId = Guid.NewGuid();
