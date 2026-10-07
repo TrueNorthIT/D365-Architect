@@ -6,6 +6,12 @@
     <File Path="docs/DEVELOPING.md" />
     <File Path="docs/yaml-conventions.md" />
   </Folder>
+  <Folder Name="/.claude/skills/modify-exports-imports/">
+    <File Path=".claude/skills/modify-exports-imports/SKILL.md" />
+  </Folder>
+  <Folder Name="/.claude/skills/design-principles/">
+    <File Path=".claude/skills/design-principles/SKILL.md" />
+  </Folder>
   <Folder Name="/.github/workflows/">
     <File Path=".github/workflows/build-and-test.yml" />
     <File Path=".github/workflows/publish-release.yml" />
