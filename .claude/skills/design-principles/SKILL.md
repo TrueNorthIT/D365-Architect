@@ -31,6 +31,8 @@ General practices that apply to any codebase. Project-specific skills add the lo
 
 ## Testing
 
+- **Write tests first when possible.** Write the test for new behaviour before the code that provides it: watch it fail for the right reason, then make it pass. It pins down the intended behaviour up front and keeps the design testable. When a test-first approach is impractical (exploratory work, hard-to-isolate code), add the tests in the same change, not later.
+- **Run the tests after every batch of changes**, before handing work back. A quick run catches regressions while the cause is still fresh; report the result honestly, including failures.
 - **Test behaviour, not implementation.** Assert on observable results so refactors don't break tests that should still pass.
 - **Reproduce bugs first.** Write a test that fails for the reported reason, then make it pass. Confirm it fails without the fix.
 - **Use realistic inputs.** Prefer real samples over invented ones; they carry the details that break things.
