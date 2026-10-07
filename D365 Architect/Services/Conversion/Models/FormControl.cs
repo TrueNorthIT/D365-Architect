@@ -43,6 +43,15 @@ public sealed class FormControl
     public string? Label { get; init; }
 
     /// <summary>
+    /// <see cref="Label"/>'s own Dataverse languagecode, e.g. 1036 for
+    /// French. Only present when it isn't 1033 (English) — see
+    /// <see cref="Models.FormTab.LabelLanguageCode"/>'s own doc comment for
+    /// why. Absent (the common case) means 1033.
+    /// </summary>
+    [YamlMember(Order = 3)]
+    public int? LabelLanguageCode { get; init; }
+
+    /// <summary>
     /// This label's text in every language besides the one shown as
     /// <see cref="Label"/>, keyed by Dataverse's own languagecode (e.g.
     /// 1036 for French). Absent on a single-language tenant (the
@@ -54,7 +63,7 @@ public sealed class FormControl
     /// default: this is genuine maker-authored text on a multi-language
     /// tenant, lost permanently on every round-trip until this was added.
     /// </remarks>
-    [YamlMember(Order = 3)]
+    [YamlMember(Order = 4)]
     public IReadOnlyDictionary<int, string>? Translations { get; init; }
 
     /// <summary>
@@ -68,7 +77,7 @@ public sealed class FormControl
     /// each entry was confirmed against real, live Dataverse output rather
     /// than guessed. Mutually exclusive with <see cref="CustomControlId"/>.
     /// </remarks>
-    [YamlMember(Order = 4)]
+    [YamlMember(Order = 5)]
     [SchemaEnum(typeof(StandardFormControls), nameof(StandardFormControls.FriendlyNames))]
     public string? Control { get; init; }
 
@@ -84,7 +93,7 @@ public sealed class FormControl
     /// every control ever registered on a real tenant, and a wrong guess
     /// would misrepresent real data rather than just under-describe it.
     /// </remarks>
-    [YamlMember(Order = 5)]
+    [YamlMember(Order = 6)]
     public string? CustomControlId { get; init; }
 
     /// <summary>
@@ -102,7 +111,7 @@ public sealed class FormControl
     /// for an ordinary bound control; applying this file back won't unbind
     /// it.
     /// </summary>
-    [YamlMember(Order = 6)]
+    [YamlMember(Order = 7)]
     public bool? IsUnbound { get; init; }
 
     /// <summary>
@@ -110,7 +119,7 @@ public sealed class FormControl
     /// Omit to leave this control enabled; applying this file back won't
     /// disable it.
     /// </summary>
-    [YamlMember(Order = 7)]
+    [YamlMember(Order = 8)]
     public bool? Disabled { get; init; }
 
     /// <summary>
@@ -119,7 +128,7 @@ public sealed class FormControl
     /// metadata-level requirement level. Omit for the common case (no
     /// form-level override); applying this file back won't add one.
     /// </summary>
-    [YamlMember(Order = 8)]
+    [YamlMember(Order = 9)]
     public bool? IsRequired { get; init; }
 
     /// <summary>
@@ -127,7 +136,7 @@ public sealed class FormControl
     /// one simply not on the form at all. Omit to leave this control
     /// visible; applying this file back won't hide it.
     /// </summary>
-    [YamlMember(Order = 9)]
+    [YamlMember(Order = 10)]
     public bool? Visible { get; init; }
 
     /// <summary>
@@ -137,7 +146,7 @@ public sealed class FormControl
     /// leave this control's label shown; applying this file back won't hide
     /// it.
     /// </summary>
-    [YamlMember(Order = 10)]
+    [YamlMember(Order = 11)]
     public bool? ShowLabel { get; init; }
 
     /// <summary>
@@ -149,7 +158,7 @@ public sealed class FormControl
     /// samples, so nothing is assumed either way. Absent when this
     /// control's FormXML doesn't set it at all.
     /// </summary>
-    [YamlMember(Order = 11)]
+    [YamlMember(Order = 12)]
     public bool? AvailableOnPhone { get; init; }
 
     /// <summary>
@@ -157,7 +166,7 @@ public sealed class FormControl
     /// Only present when greater than 1 — a single column is the common
     /// case; applying this file back won't change a cell's own span.
     /// </summary>
-    [YamlMember(Order = 12)]
+    [YamlMember(Order = 13)]
     public int? ColumnSpan { get; init; }
 
     /// <summary>
@@ -167,7 +176,7 @@ public sealed class FormControl
     /// present when greater than 1 — a single row is the common case;
     /// applying this file back won't change a cell's own span.
     /// </summary>
-    [YamlMember(Order = 13)]
+    [YamlMember(Order = 14)]
     public int? RowSpan { get; init; }
 
     /// <summary>
@@ -187,7 +196,7 @@ public sealed class FormControl
     /// an explicit `false` mean the same thing to Dataverse; omitting it
     /// changes nothing when applied back), `true` is always kept.
     /// </remarks>
-    [YamlMember(Order = 14)]
+    [YamlMember(Order = 15)]
     public object? Parameters { get; init; }
 
     /// <summary>
@@ -196,7 +205,7 @@ public sealed class FormControl
     /// subgrid, or per-client (Web/Phone/Tablet) replacements. Absent when
     /// this control has none.
     /// </summary>
-    [YamlMember(Order = 15)]
+    [YamlMember(Order = 16)]
     public IReadOnlyList<FormAdditionalControl>? AdditionalControls { get; init; }
 
     /// <summary>
@@ -205,6 +214,6 @@ public sealed class FormControl
     /// form-wide event bindings at the top level. Absent when this control
     /// has none.
     /// </summary>
-    [YamlMember(Order = 16)]
+    [YamlMember(Order = 17)]
     public IReadOnlyList<FormEvent>? Events { get; init; }
 }

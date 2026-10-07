@@ -174,7 +174,7 @@ public static class FormXmlWriter
 
         if (tab.Label is not null)
         {
-            element.Add(WriteLabels(tab.Label, tab.Translations));
+            element.Add(WriteLabels(tab.Label, tab.LabelLanguageCode, tab.Translations));
         }
 
         if (tab.Visible == false)
@@ -223,7 +223,7 @@ public static class FormXmlWriter
 
         if (section.Label is not null)
         {
-            element.Add(WriteLabels(section.Label, section.Translations));
+            element.Add(WriteLabels(section.Label, section.LabelLanguageCode, section.Translations));
         }
 
         if (section.Visible == false)
@@ -241,16 +241,70 @@ public static class FormXmlWriter
             element.SetAttributeValue("availableforphone", section.AvailableOnPhone.Value ? "true" : "false");
         }
 
-        // Controls are a flat, row-major list (see FormSection.Columns'
-        // doc comment) — regrouping into rows of `columns` cells each is
-        // exactly how they were flattened in the first place, reversed.
-        var rows = section.Controls
-            .Select((control, index) => (control, row: index / columns))
-            .GroupBy(x => x.row, x => x.control)
-            .Select(row => new XElement("row", row.Select(control => WriteCell(scopeKey, control, controlDescriptions))));
-
-        element.Add(new XElement("rows", rows));
+        element.Add(new XElement("rows", RegroupIntoRows(section.Controls, columns)
+            .Select(row => new XElement("row", row.Select(control => WriteCell(scopeKey, control, controlDescriptions))))));
         return element;
+    }
+
+    /// <summary>
+    /// Regroups <see cref="FormSection.Controls"/>' flat, row-major list back
+    /// into rows of up to <paramref name="columns"/> grid-columns wide each,
+    /// accumulating by each control's own <see cref="FormControl.ColumnSpan"/>
+    /// (default 1, capped at <paramref name="columns"/>) rather than by a
+    /// fixed count of cells per row. Confirmed live as a real bug otherwise:
+    /// a section using <c>colspan</c> (real forms are confirmed to use
+    /// non-default spans — see `docs/yaml-conventions.md`) has fewer cells in
+    /// that row than <paramref name="columns"/>, so naive fixed-chunking
+    /// (<c>index / columns</c>) silently pulled a cell from the *next* row
+    /// into the wider one and pushed every following row's grouping out of
+    /// alignment — schema-valid XML, so nothing caught it, just a form whose
+    /// real field placement was corrupted on every rebuild.
+    ///
+    /// Still an approximation, not a full reconstruction: a row shorter than
+    /// <paramref name="columns"/> purely because it originally had a blank
+    /// layout-spacer cell (no <c>&lt;control&gt;</c> at all) is
+    /// indistinguishable from this list alone, since <see cref="FormJsonDefinitionReader"/>
+    /// deliberately drops those spacers rather than modeling them — that
+    /// specific case can still misgroup. Fixing it fully would mean
+    /// preserving spacer cells as their own (currently nonexistent) concept
+    /// in the curated model; not attempted here since it changes this tool's
+    /// documented YAML shape, unlike this fix, which is purely internal to
+    /// how the writer regroups an already-correct flat list.
+    /// </summary>
+    private static List<List<FormControl>> RegroupIntoRows(IReadOnlyList<FormControl> controls, int columns)
+    {
+        var rows = new List<List<FormControl>>();
+        var currentRow = new List<FormControl>();
+        var currentWidth = 0;
+
+        foreach (var control in controls)
+        {
+            var span = Math.Min(control.ColumnSpan ?? 1, columns);
+
+            if (currentRow.Count > 0 && currentWidth + span > columns)
+            {
+                rows.Add(currentRow);
+                currentRow = [];
+                currentWidth = 0;
+            }
+
+            currentRow.Add(control);
+            currentWidth += span;
+
+            if (currentWidth >= columns)
+            {
+                rows.Add(currentRow);
+                currentRow = [];
+                currentWidth = 0;
+            }
+        }
+
+        if (currentRow.Count > 0)
+        {
+            rows.Add(currentRow);
+        }
+
+        return rows;
     }
 
     private static XElement WriteHeaderOrFooter(string elementName, IReadOnlyList<FormControl> controls, List<XElement> controlDescriptions) => new(
@@ -289,7 +343,7 @@ public static class FormXmlWriter
 
         if (control.Label is not null)
         {
-            cell.Add(WriteLabels(control.Label, control.Translations));
+            cell.Add(WriteLabels(control.Label, control.LabelLanguageCode, control.Translations));
         }
 
         var controlElement = new XElement("control", new XAttribute("id", control.Id));
@@ -576,15 +630,16 @@ public static class FormXmlWriter
         return element;
     }
 
-    // Note: the primary label is always written back as languagecode 1033
-    // (English) regardless of which languagecode it actually came from on a
-    // tenant whose own base language isn't English — a pre-existing
-    // limitation, not introduced here; Translations below is what actually
-    // fixes the real reported gap (every *other* language's text being
-    // silently discarded).
-    private static XElement WriteLabels(string label, IReadOnlyDictionary<int, string>? translations)
+    // labelLanguageCode defaults to 1033 (English) — the common case, and
+    // what every *.form.yml predating this field means by its absence.
+    // Confirmed live as a real gap before this parameter existed: on a
+    // tenant whose base language isn't English, the primary label read back
+    // is genuinely in that other language (see FormJsonDefinitionReader.ParseLabels),
+    // but writing it back always tagged as 1033 regardless silently
+    // mislabeled it on every rebuild.
+    private static XElement WriteLabels(string label, int? labelLanguageCode, IReadOnlyDictionary<int, string>? translations)
     {
-        var element = new XElement("labels", new XElement("label", new XAttribute("description", label), new XAttribute("languagecode", "1033")));
+        var element = new XElement("labels", new XElement("label", new XAttribute("description", label), new XAttribute("languagecode", labelLanguageCode ?? 1033)));
 
         if (translations is not null)
         {
