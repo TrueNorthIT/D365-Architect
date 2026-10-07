@@ -158,6 +158,33 @@ for the XSD-governed controls this rule was validated against.
 `ConvertToObject` tracks an `insideDataSet` flag through the recursion and
 never strips `false` once inside a `data-set` node, for exactly this reason.
 
+**Also exempt: an additional (PCF) control's `parameters`.** The same
+manifest-validation argument applies to everything under a
+`controlDescription`'s `customControl`, and there empty elements matter too,
+not just `false`: they are kept verbatim (`ConvertToObject`'s
+`preserveDefaults`; `false` stays, empty elements become `""`). Dropping them
+was issue #36: Enum parameters (`type="Enum" static="true"`) with no value
+were rejected on import (`0x80160028`), and a `value` block missing its empty
+and `false` children imported successfully but made `GetClientMetadata`
+return 502 for that form.
+
+**`ModelFormControl` is the one control with confirmed defaults**
+(`Models/ControlDefaults/`, see the `modify-exports-imports` skill), so it follows Rule 1 instead: its defaults are
+omitted from the YAML and restored, in Dataverse's own order, on
+`build-xml`/import. Microsoft documents none of this for `ModelFormControl`
+(the nine-element `value` block is the classic Lookup control's parameter
+set in the CRM 2016-era FormXml reference; the six Enum parameters are
+undocumented), so the defaults are empirical: all 93 instances across 23
+forms from three environments had the identical `value` block
+(`FilterRelationshipName`, `DependentAttributeName`, `DependentAttributeType`,
+`AvailableViewIds` empty; `AllowFilterOff`, `DisableQuickFind`,
+`DisableViewPicker` `false`), `SaveMode` 0, and — on the 69 modern ones — the
+six Enum parameters `false`. The other 24 (Microsoft's managed `msdyn_budget`
+quick-create lookups) predate the six Enum parameters, so importing such a
+form adds them, as the current form designer would. Any non-default value is
+kept in the YAML. Re-run the survey before adding another control to that
+list.
+
 ## Rule 4: capture verbatim, unstripped, when a default isn't confirmed yet
 
 `TrueOrNull`/`FalseOrNull` (Rule 1) both require the stripped direction to
