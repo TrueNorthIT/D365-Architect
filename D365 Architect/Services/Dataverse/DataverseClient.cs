@@ -88,6 +88,102 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         return await GetSolutionComponentObjectIdsAsync(environmentUrl, accessToken, solutionId.Value, attributeComponentType, cancellationToken);
     }
 
+    public async Task<IReadOnlyList<string>?> TryGetSolutionEntityLogicalNamesAsync(Uri environmentUrl, string accessToken, string solutionUniqueName, CancellationToken cancellationToken)
+    {
+        var solutionId = await TryGetSolutionIdAsync(environmentUrl, accessToken, solutionUniqueName, cancellationToken);
+        if (solutionId is null)
+        {
+            return null;
+        }
+
+        // componenttype 1 = Entity. Per Microsoft's documented
+        // solutioncomponent componenttype option set (same source already
+        // cited for View (26)/System Form (60)/Option Set (9) above):
+        // https://learn.microsoft.com/power-apps/developer/data-platform/reference/entities/solutioncomponent
+        const int entityComponentType = 1;
+        var metadataIds = await GetSolutionComponentObjectIdsAsync(environmentUrl, accessToken, solutionId.Value, entityComponentType, cancellationToken);
+        if (metadataIds.Count == 0)
+        {
+            return [];
+        }
+
+        // An Entity solutioncomponent's objectid is the table's own
+        // MetadataId, not something EntityDefinitions can be filtered by
+        // directly at arbitrary scale the way Attribute/View/SystemForm
+        // queries already are once narrowed to one known table — so this
+        // fetches every table's id+logical name instead (cheap: no
+        // $expand) and filters client-side, the same "broad fetch, filter
+        // locally" shape those single-table queries already apply.
+        using var request = CreateRequest(environmentUrl, "EntityDefinitions?$select=LogicalName,MetadataId", accessToken);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        using var doc = JsonDocument.Parse(json);
+        return doc.RootElement.GetProperty("value").EnumerateArray()
+            .Where(e => metadataIds.Contains(e.GetProperty("MetadataId").GetGuid()))
+            .Select(e => e.GetProperty("LogicalName").GetString()!)
+            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    public async Task<bool> IsSolutionEntityIncludingSubcomponentsAsync(Uri environmentUrl, string accessToken, string solutionUniqueName, string entityLogicalName, CancellationToken cancellationToken)
+    {
+        var solutionId = await TryGetSolutionIdAsync(environmentUrl, accessToken, solutionUniqueName, cancellationToken);
+        if (solutionId is null)
+        {
+            return false;
+        }
+
+        var entityMetadataId = await TryGetEntityMetadataIdAsync(environmentUrl, accessToken, entityLogicalName, cancellationToken);
+        if (entityMetadataId is null)
+        {
+            return false;
+        }
+
+        // componenttype 1 = Entity — same source as every other
+        // solutioncomponent componenttype cited in this file.
+        const int entityComponentType = 1;
+        var relativePath = $"solutioncomponents?$filter=_solutionid_value eq {solutionId} and componenttype eq {entityComponentType} and objectid eq {entityMetadataId}&$select=rootcomponentbehavior";
+
+        using var request = CreateRequest(environmentUrl, relativePath, accessToken);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        using var doc = JsonDocument.Parse(json);
+        var results = doc.RootElement.GetProperty("value").EnumerateArray().ToList();
+        if (results.Count == 0)
+        {
+            // The table itself isn't a component of this solution at all —
+            // only some of its columns/views/forms individually are (the
+            // "added a column to a solution that doesn't own the table"
+            // case), so the caller's own explicit per-type component set is
+            // the accurate answer, not an override.
+            return false;
+        }
+
+        var behavior = results[0].GetProperty("rootcomponentbehavior");
+        return behavior.ValueKind == JsonValueKind.Null || behavior.GetInt32() == 0;
+    }
+
+    /// <summary>Direct key lookup by LogicalName — 404s (returned as null) rather than coming back empty when nothing matches, the same as <see cref="TryGetSystemFormByIdAsync"/>.</summary>
+    private async Task<Guid?> TryGetEntityMetadataIdAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken)
+    {
+        var relativePath = $"EntityDefinitions(LogicalName='{Uri.EscapeDataString(entityLogicalName)}')?$select=MetadataId";
+
+        using var request = CreateRequest(environmentUrl, relativePath, accessToken);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        using var doc = JsonDocument.Parse(json);
+        return doc.RootElement.GetProperty("MetadataId").GetGuid();
+    }
+
     public async Task<string> GetViewDefinitionsJsonAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken)
     {
         var relativePath = "savedqueries?$select=savedqueryid,name,description,fetchxml,layoutxml," +
@@ -360,8 +456,8 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
     public async Task UpdateAttributeAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string attributeLogicalName, JsonObject attributeMetadata, CancellationToken cancellationToken) =>
         await SendWriteAsync(environmentUrl, accessToken, new DataverseWrite.UpdateAttribute(entityLogicalName, attributeLogicalName, attributeMetadata), cancellationToken);
 
-    public async Task CreateAttributeAsync(Uri environmentUrl, string accessToken, string entityLogicalName, JsonObject attributeMetadata, CancellationToken cancellationToken) =>
-        await SendWriteAsync(environmentUrl, accessToken, new DataverseWrite.CreateAttribute(entityLogicalName, attributeMetadata), cancellationToken);
+    public async Task CreateAttributeAsync(Uri environmentUrl, string accessToken, string entityLogicalName, JsonObject attributeMetadata, string? solutionUniqueName, CancellationToken cancellationToken) =>
+        await SendWriteAsync(environmentUrl, accessToken, new DataverseWrite.CreateAttribute(entityLogicalName, attributeMetadata, solutionUniqueName), cancellationToken);
 
     public async Task<string> GetAttributeOptionSetJsonAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string attributeLogicalName, string attributeType, CancellationToken cancellationToken)
     {
@@ -377,11 +473,11 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         return await response.Content.ReadAsStringAsync(cancellationToken);
     }
 
-    public async Task CreateOneToManyRelationshipAsync(Uri environmentUrl, string accessToken, JsonObject relationshipMetadata, CancellationToken cancellationToken) =>
-        await SendWriteAsync(environmentUrl, accessToken, new DataverseWrite.CreateOneToManyRelationship(relationshipMetadata), cancellationToken);
+    public async Task CreateOneToManyRelationshipAsync(Uri environmentUrl, string accessToken, JsonObject relationshipMetadata, string? solutionUniqueName, CancellationToken cancellationToken) =>
+        await SendWriteAsync(environmentUrl, accessToken, new DataverseWrite.CreateOneToManyRelationship(relationshipMetadata, solutionUniqueName), cancellationToken);
 
-    public async Task CreateCustomerRelationshipsAsync(Uri environmentUrl, string accessToken, JsonObject body, CancellationToken cancellationToken) =>
-        await SendWriteAsync(environmentUrl, accessToken, new DataverseWrite.CreateCustomerRelationships(body), cancellationToken);
+    public async Task CreateCustomerRelationshipsAsync(Uri environmentUrl, string accessToken, JsonObject body, string? solutionUniqueName, CancellationToken cancellationToken) =>
+        await SendWriteAsync(environmentUrl, accessToken, new DataverseWrite.CreateCustomerRelationships(body, solutionUniqueName), cancellationToken);
 
     public async Task InsertOptionValueAsync(Uri environmentUrl, string accessToken, JsonObject body, CancellationToken cancellationToken) =>
         await SendWriteAsync(environmentUrl, accessToken, new DataverseWrite.InsertOptionValue(body), cancellationToken);
@@ -423,12 +519,12 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
     /// <summary>Sends one <see cref="DataverseWrite"/> as its own ordinary HTTP request — what every individual write method above now delegates to, sharing <see cref="ToHttpRequest"/> with <see cref="ExecuteTransactionAsync"/> so the two paths can never drift apart on URL/header shape.</summary>
     private async Task SendWriteAsync(Uri environmentUrl, string accessToken, DataverseWrite write, CancellationToken cancellationToken)
     {
-        var (method, relativeUrl, body, headerName, headerValue) = ToHttpRequest(write);
+        var (method, relativeUrl, body, headers) = ToHttpRequest(write);
 
         using var request = CreateRequest(environmentUrl, relativeUrl, accessToken, method);
-        if (headerName is not null)
+        foreach (var (name, value) in headers)
         {
-            request.Headers.Add(headerName, headerValue);
+            request.Headers.Add(name, value);
         }
 
         request.Content = JsonContent.Create(body);
@@ -485,29 +581,37 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
     /// Maps one <see cref="DataverseWrite"/> to the request
     /// <see cref="SendWriteAsync"/>/<see cref="ExecuteTransactionAsync"/>
     /// both need to build it — the method, the path relative to
-    /// <c>api/data/v9.2/</c>, the JSON body, and (for an update, so a
-    /// changed <c>DisplayName</c> doesn't wipe out other languages' labels)
-    /// the <c>MSCRM.MergeLabels</c> header <see cref="UpdateEntityAsync"/>/
-    /// <see cref="UpdateAttributeAsync"/> already sent before this existed.
-    /// The one and only place these URLs are built for every case here —
-    /// every individual write method above is now a one-line call into this
-    /// (via <see cref="SendWriteAsync"/>), so there's nothing left to drift
-    /// out of sync with what a batched write actually sends.
+    /// <c>api/data/v9.2/</c>, the JSON body, and whatever extra headers this
+    /// particular write needs: <c>MSCRM.MergeLabels</c> for an update (so a
+    /// changed <c>DisplayName</c> doesn't wipe out other languages' labels —
+    /// <see cref="UpdateEntityAsync"/>/<see cref="UpdateAttributeAsync"/>
+    /// already sent this before this method existed), and
+    /// <c>MSCRM.SolutionUniqueName</c> for a create that named one (see
+    /// <see cref="CreateAttributeAsync"/>'s own doc comment). The one and
+    /// only place these URLs are built for every case here — every
+    /// individual write method above is now a one-line call into this (via
+    /// <see cref="SendWriteAsync"/>), so there's nothing left to drift out
+    /// of sync with what a batched write actually sends.
     /// </summary>
-    private static (HttpMethod Method, string RelativeUrl, JsonObject Body, string? HeaderName, string? HeaderValue) ToHttpRequest(DataverseWrite write) => write switch
+    private static (HttpMethod Method, string RelativeUrl, JsonObject Body, IReadOnlyList<(string Name, string Value)> Headers) ToHttpRequest(DataverseWrite write) => write switch
     {
-        DataverseWrite.UpdateEntity w => (HttpMethod.Put, $"EntityDefinitions(LogicalName='{Uri.EscapeDataString(w.EntityLogicalName)}')", w.Metadata, "MSCRM.MergeLabels", "true"),
-        DataverseWrite.CreateAttribute w => (HttpMethod.Post, $"EntityDefinitions(LogicalName='{Uri.EscapeDataString(w.EntityLogicalName)}')/Attributes", w.Metadata, null, null),
-        DataverseWrite.UpdateAttribute w => (HttpMethod.Put, $"EntityDefinitions(LogicalName='{Uri.EscapeDataString(w.EntityLogicalName)}')/Attributes(LogicalName='{Uri.EscapeDataString(w.AttributeLogicalName)}')", w.Metadata, "MSCRM.MergeLabels", "true"),
-        DataverseWrite.CreateOneToManyRelationship w => (HttpMethod.Post, "RelationshipDefinitions", w.Metadata, null, null),
-        DataverseWrite.CreateCustomerRelationships w => (HttpMethod.Post, "CreateCustomerRelationships", w.Body, null, null),
-        DataverseWrite.InsertOptionValue w => (HttpMethod.Post, "InsertOptionValue", w.Body, null, null),
-        DataverseWrite.UpdateOptionValue w => (HttpMethod.Post, "UpdateOptionValue", w.Body, null, null),
-        DataverseWrite.OrderOptions w => (HttpMethod.Post, "OrderOption", w.Body, null, null),
-        DataverseWrite.InsertStatusValue w => (HttpMethod.Post, "InsertStatusValue", w.Body, null, null),
-        DataverseWrite.UpdateStateValue w => (HttpMethod.Post, "UpdateStateValue", w.Body, null, null),
+        DataverseWrite.UpdateEntity w => (HttpMethod.Put, $"EntityDefinitions(LogicalName='{Uri.EscapeDataString(w.EntityLogicalName)}')", w.Metadata, MergeLabelsHeader),
+        DataverseWrite.CreateAttribute w => (HttpMethod.Post, $"EntityDefinitions(LogicalName='{Uri.EscapeDataString(w.EntityLogicalName)}')/Attributes", w.Metadata, SolutionHeader(w.SolutionUniqueName)),
+        DataverseWrite.UpdateAttribute w => (HttpMethod.Put, $"EntityDefinitions(LogicalName='{Uri.EscapeDataString(w.EntityLogicalName)}')/Attributes(LogicalName='{Uri.EscapeDataString(w.AttributeLogicalName)}')", w.Metadata, MergeLabelsHeader),
+        DataverseWrite.CreateOneToManyRelationship w => (HttpMethod.Post, "RelationshipDefinitions", w.Metadata, SolutionHeader(w.SolutionUniqueName)),
+        DataverseWrite.CreateCustomerRelationships w => (HttpMethod.Post, "CreateCustomerRelationships", w.Body, SolutionHeader(w.SolutionUniqueName)),
+        DataverseWrite.InsertOptionValue w => (HttpMethod.Post, "InsertOptionValue", w.Body, []),
+        DataverseWrite.UpdateOptionValue w => (HttpMethod.Post, "UpdateOptionValue", w.Body, []),
+        DataverseWrite.OrderOptions w => (HttpMethod.Post, "OrderOption", w.Body, []),
+        DataverseWrite.InsertStatusValue w => (HttpMethod.Post, "InsertStatusValue", w.Body, []),
+        DataverseWrite.UpdateStateValue w => (HttpMethod.Post, "UpdateStateValue", w.Body, []),
         _ => throw new NotSupportedException($"Unhandled {nameof(DataverseWrite)} case: {write.GetType().Name}"),
     };
+
+    private static readonly IReadOnlyList<(string Name, string Value)> MergeLabelsHeader = [("MSCRM.MergeLabels", "true")];
+
+    private static IReadOnlyList<(string Name, string Value)> SolutionHeader(string? solutionUniqueName) =>
+        solutionUniqueName is null ? [] : [("MSCRM.SolutionUniqueName", solutionUniqueName)];
 
     /// <summary>
     /// Builds the raw <c>multipart/mixed</c> request text for
@@ -533,7 +637,7 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
 
         for (var i = 0; i < writes.Count; i++)
         {
-            var (method, relativeUrl, body, headerName, headerValue) = ToHttpRequest(writes[i]);
+            var (method, relativeUrl, body, headers) = ToHttpRequest(writes[i]);
 
             Line($"--{changesetBoundary}");
             Line("Content-Type: application/http");
@@ -542,9 +646,9 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
             Line();
             Line($"{method.Method} /api/data/v9.2/{relativeUrl} HTTP/1.1");
             Line("Content-Type: application/json");
-            if (headerName is not null)
+            foreach (var (name, value) in headers)
             {
-                Line($"{headerName}: {headerValue}");
+                Line($"{name}: {value}");
             }
 
             Line();
@@ -611,9 +715,14 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         return await GetSolutionComponentObjectIdsAsync(environmentUrl, accessToken, solutionId.Value, optionSetComponentType, cancellationToken);
     }
 
-    public async Task CreateGlobalOptionSetAsync(Uri environmentUrl, string accessToken, JsonObject body, CancellationToken cancellationToken)
+    public async Task CreateGlobalOptionSetAsync(Uri environmentUrl, string accessToken, JsonObject body, string? solutionUniqueName, CancellationToken cancellationToken)
     {
         using var request = CreateRequest(environmentUrl, "GlobalOptionSetDefinitions", accessToken, HttpMethod.Post);
+        if (solutionUniqueName is not null)
+        {
+            request.Headers.Add("MSCRM.SolutionUniqueName", solutionUniqueName);
+        }
+
         request.Content = JsonContent.Create(body);
 
         using var response = await httpClient.SendAsync(request, cancellationToken);

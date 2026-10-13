@@ -16,7 +16,7 @@ covers the code around that YAML, not the YAML's own design rules.
 | Folder | Purpose |
 |---|---|
 | `Program.cs` | Composition root — see below. |
-| `Commands/` | One subfolder per CLI branch (`Auth`, `Environments`, `Table`, `View`, `Form`, `Schema`), each a thin Spectre.Console.Cli layer over `Services/`. |
+| `Commands/` | One subfolder per CLI branch (`Auth`, `Environments`, `Table`, `View`, `Form`, `Choice`, `Solution`, `Schema`), each a thin Spectre.Console.Cli layer over `Services/`. |
 | `Services/Authentication/` | MSAL-based sign-in, token cache, current-session tracking. |
 | `Services/Dataverse/` | The Web API client and its supporting validators/exceptions/DTOs. |
 | `Services/Conversion/` (+ `Models/`) | Table/view/form ↔ YAML readers, writers, and the curated models themselves. The biggest folder by far. |
@@ -47,8 +47,9 @@ composition root, in three explicit steps:
 3. **Configure the command tree** — `app.Configure(config => { ... })` calls
    one `Configure(IConfigurator)` static method per feature area
    (`AuthCommands`, `EnvironmentCommands`, `TableCommands`, `ViewCommands`,
-   `FormCommands`, `SchemaCommands`); `WhoAmICommand` self-registers as a
-   standalone top-level command (no branch).
+   `FormCommands`, `ChoiceCommands`, `SolutionCommands`, `SchemaCommands`);
+   `WhoAmICommand` self-registers as a standalone top-level command (no
+   branch).
 
 The doc comments in `Program.cs` are explicit about the intent: commands never
 construct their own services or reach for a static/singleton instance, and
@@ -70,12 +71,30 @@ injection, and defines a nested `Settings : CommandSettings` with
 | `table` | `export`, `import` | `Commands/Table/ExportTableCommand.cs`, `ImportTableCommand.cs` |
 | `view` | `export`, `import` | `Commands/View/ExportViewCommand.cs`, `ImportViewCommand.cs` |
 | `form` | `export`, `build-xml`, `import` | `Commands/Form/ExportFormCommand.cs`, `BuildFormXmlCommand.cs`, `ImportFormCommand.cs` |
+| `choice` | `export`, `import` | `Commands/Choice/ExportChoiceCommand.cs`, `ImportChoiceCommand.cs` |
+| `solution` | `export`, `import` | `Commands/Solution/ExportSolutionCommand.cs`, `ImportSolutionCommand.cs` |
 | `schema` | `export`, `configure-vscode` | `Commands/Schema/ExportSchemaCommand.cs`, `ConfigureVsCodeCommand.cs` |
 
 A few shared helpers live alongside the commands that use them rather than in
 `Services/`, since they're rendering/parsing concerns specific to the CLI
 layer: `Commands/DiffConsole.cs` (the shared diff renderer), `Commands/Table/EntityYamlFileReader.cs`,
 `Commands/Form/FormYamlFileReader.cs` and `FormXmlValidationConsole.cs`.
+
+### `solution import` reuses each asset's own command, not a new bulk path
+
+`solution import` doesn't reimplement diffing/confirmation for a folder of
+files — each of `ImportTableCommand`/`ImportViewCommand`/`ImportFormCommand`/
+`ImportChoiceCommand` exposes a public `RunAsync(Settings, CancellationToken)`
+(pulled out of `ExecuteAsync`, which now just calls it) specifically so
+`ImportSolutionCommand` can construct one directly (`new
+ImportTableCommand(tableImportService, importRunner)`) and call it per file
+it finds, with its own `Settings` built from the folder's own file paths.
+Every asset still gets its full preview → diff → confirm → apply flow; one
+file failing doesn't stop the rest (see `ImportSolutionCommand`'s own doc
+comment for why, and how it reports the count at the end). If you add a
+fifth `Import*Command`, keep this same `RunAsync` shape so it can join
+`solution import`'s loop the same way, rather than solution import needing
+its own special case per asset type.
 
 ### The diff-before-confirm pattern
 
@@ -151,8 +170,57 @@ bearer token is passed in per call. Worth knowing before extending it:
   PUT so an edited display name doesn't wipe out other languages' labels this
   tool never touched.
 - **Solution-scoping** (the `--solution` option on export commands) goes
-  through `solutioncomponents`, filtered by `componenttype` (2=Attribute,
-  26=View/SavedQuery, 60=SystemForm) plus `_solutionid_value`.
+  through `solutioncomponents`, filtered by `componenttype` (1=Entity,
+  2=Attribute, 9=Option Set, 26=View/SavedQuery, 60=SystemForm) plus
+  `_solutionid_value`. Only `TryGetSolutionEntityLogicalNamesAsync`
+  (`componenttype` 1 — what `solution export` uses to discover which tables
+  a solution touches) needs a second request after that: an Entity
+  component's `objectid` is the table's own `MetadataId`, and unlike
+  Attribute/View/SystemForm (each already scoped to one known table's own
+  bulk query) there's no cheaper way to turn that into a logical name than a
+  bulk, unfiltered `EntityDefinitions?$select=LogicalName,MetadataId` fetch,
+  filtered client-side against the component id set.
+- **A solution-owned table's own columns/views/forms often have *no*
+  individual `Attribute`/`View`/`SystemForm` solutioncomponents at all** —
+  confirmed live against a real tenant, not assumed: when a table is created
+  inside a solution (or explicitly set to "include all objects"), Dataverse
+  gives the table's own Entity component `rootcomponentbehavior` 0 ("Include
+  Subcomponents") and never separately lists its columns/views/forms as
+  their own solutioncomponent rows, even though they genuinely belong to the
+  solution. Naively treating "no explicit component IDs found" as "filter
+  down to nothing" — which is what `TableExportService`/`ViewExportService`/
+  `FormExportService` did before this was caught — silently exports an empty
+  table for exactly the common case (a table created for/inside that
+  solution) `solution export` most needs to get right.
+  `IDataverseClient.IsSolutionEntityIncludingSubcomponentsAsync` is the fix:
+  each of those three services checks it before filtering, and treats `true`
+  as "no filter" (same as no `--solution` at all) rather than trusting the
+  (correctly) empty explicit set. See
+  `DataverseClientSolutionEntityLookupTests` for the covered cases,
+  including a null `rootcomponentbehavior` (components that predate the
+  field) being treated the same as 0.
+- **A brand-new column/relationship/global choice needs its own explicit
+  `MSCRM.SolutionUniqueName` header, or it never joins any solution at
+  all** — confirmed live, separately from the gap above: creating a column
+  or a global choice with no such header always lands the new component
+  wherever Dataverse's own default solution context puts it (in practice,
+  the Default Solution), regardless of which solution's YAML asked for it.
+  `CreateAttributeAsync`/`CreateOneToManyRelationshipAsync`/
+  `CreateCustomerRelationshipsAsync`/`CreateGlobalOptionSetAsync` all take an
+  optional `solutionUniqueName` now — for the three that go through
+  `DataverseWrite`/`ExecuteTransactionAsync` (the batched changeset path),
+  it travels on the write itself (`DataverseWrite.CreateAttribute.SolutionUniqueName`
+  and friends) and `ToHttpRequest` turns it into the header on that one
+  request; `CreateGlobalOptionSetAsync` isn't part of that batching system,
+  so it sets the header directly. `table import --solution`/`choice import
+  --solution` (both optional) and `solution import`'s own `--solution`
+  (required, and forwarded to every table/choice import it runs) are the
+  only callers that ever pass a non-null value — an update to a column/
+  choice that already exists never needs this, since it's already scoped
+  (or not) however it originally was. See `DataverseClientSolutionHeaderTests`
+  for the header itself on both the individual and batched paths, and
+  `TableImportServiceTests`/`GlobalChoiceImportServiceTests`' own
+  `solutionUniqueName` threading cases.
 - **Publishing** (`PublishEntityAsync`, `PublishXml`) always publishes a whole
   table (attributes/forms/views/ribbons together) — there's no documented way
   to publish a single `systemform` on its own; `<entities><entity>` only ever
@@ -420,6 +488,18 @@ these exists because a real, live Dataverse tenant behaved differently than
 the code assumed, confirmed and fixed in a since-merged session, and every one
 is called out by name in its test's own doc comment or `[Fact]` name:
 
+- `DataverseClientSolutionEntityLookupTests` — a solution-owned table (the
+  common case: created inside that solution, or set to "include all
+  objects") gets no individual Attribute/View/SystemForm solutioncomponents
+  at all — confirmed exporting a real seeded table via `solution export`
+  before the fix, which silently came back with `attributes: []`. See
+  `IsSolutionEntityIncludingSubcomponentsAsync`'s own doc comment.
+- `DataverseClientSolutionHeaderTests` — a brand-new column/relationship/
+  global choice never joins any solution unless the create request itself
+  carries `MSCRM.SolutionUniqueName` — confirmed live seeding a real global
+  choice via `solution import` and finding it missing from a follow-up
+  `solution export` of the same solution, despite having just been created
+  successfully.
 - `EntityJsonDefinitionReaderTests` — a live MultiSelectPicklist column's
   `AttributeType` reports as `"Virtual"`, not `"MultiSelectPicklist"`; a
   genuinely local option set can populate *both* `OptionSet` and

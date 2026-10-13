@@ -30,6 +30,42 @@ public interface IDataverseClient
     Task<IReadOnlySet<Guid>?> TryGetSolutionAttributeMetadataIdsAsync(Uri environmentUrl, string accessToken, string solutionUniqueName, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Resolves a solution's unique name to the logical names of the tables
+    /// (Entity) it contains — what <c>solution export</c> uses to discover
+    /// which tables to export, since (unlike Attribute/View/SystemForm/
+    /// Option Set, each already scoped to one already-known table or the
+    /// whole environment) there's no other way to ask "which tables does
+    /// this solution touch" first. Returns null if no solution with that
+    /// unique name exists; an empty list if the solution exists but claims
+    /// no table components at all (e.g. a solution that only carries global
+    /// choices).
+    /// </summary>
+    Task<IReadOnlyList<string>?> TryGetSolutionEntityLogicalNamesAsync(Uri environmentUrl, string accessToken, string solutionUniqueName, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// True when <paramref name="entityLogicalName"/> is itself an Entity
+    /// solution component of <paramref name="solutionUniqueName"/> with
+    /// <c>rootcomponentbehavior</c> 0 ("Include Subcomponents", including a
+    /// null value — every component predating that field, which behaved the
+    /// same way before it existed) — Dataverse's own default for a table
+    /// created inside that solution, or one explicitly set to "include all
+    /// objects" in the solution explorer. Confirmed live: in that mode,
+    /// Dataverse never creates separate Attribute/View/SystemForm
+    /// solutioncomponent rows for that table's own columns/views/forms at
+    /// all, even though they genuinely exist and belong to the solution —
+    /// so <see cref="TryGetSolutionAttributeMetadataIdsAsync"/>/
+    /// <see cref="TryGetSolutionSavedQueryIdsAsync"/>/
+    /// <see cref="TryGetSolutionSystemFormIdsAsync"/> come back as an empty
+    /// set for that table, not a partial one. Callers must treat true here
+    /// as "don't filter by that empty set — export everything on the
+    /// table", the same as no <c>--solution</c> at all; false (the table
+    /// isn't itself a solution component, or explicitly excludes
+    /// subcomponents) means the explicit per-type set is the real, accurate
+    /// answer and should still be used to filter.
+    /// </summary>
+    Task<bool> IsSolutionEntityIncludingSubcomponentsAsync(Uri environmentUrl, string accessToken, string solutionUniqueName, string entityLogicalName, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Fetches every view (<c>savedquery</c>) defined against a table from
     /// the Web API, as raw JSON — the shape
     /// <see cref="Conversion.ViewJsonDefinitionReader"/> reads. Reflects the
@@ -235,8 +271,19 @@ public interface IDataverseClient
     /// Creates a brand-new attribute — see <see cref="AttributeMetadataJsonBuilder.BuildCreateBody"/>
     /// for how <paramref name="attributeMetadata"/> gets built. Only ever
     /// called for a type in <see cref="AttributeMetadataJsonBuilder.SupportedTypes"/>.
+    /// <paramref name="solutionUniqueName"/>, when given, is sent as the
+    /// <c>MSCRM.SolutionUniqueName</c> request header, so the new column is
+    /// added as a component of that solution as part of the same create —
+    /// confirmed live as a real gap before this parameter existed: without
+    /// it, a brand-new column lands wherever Dataverse's own default
+    /// solution context puts it (in practice, the Default Solution), never
+    /// the solution whose YAML actually asked for it, so a subsequent
+    /// solution-scoped export silently wouldn't show it. Null preserves
+    /// that old (gap) behavior — only <c>table import</c>/<c>solution
+    /// import</c> callers that know which solution they're targeting pass
+    /// this.
     /// </summary>
-    Task CreateAttributeAsync(Uri environmentUrl, string accessToken, string entityLogicalName, JsonObject attributeMetadata, CancellationToken cancellationToken);
+    Task CreateAttributeAsync(Uri environmentUrl, string accessToken, string entityLogicalName, JsonObject attributeMetadata, string? solutionUniqueName, CancellationToken cancellationToken);
 
     /// <summary>
     /// Fetches one Boolean/Picklist/MultiSelectPicklist/Status attribute's
@@ -265,8 +312,9 @@ public interface IDataverseClient
     /// this way, never via <see cref="CreateAttributeAsync"/>. See
     /// <see cref="AttributeMetadataJsonBuilder.BuildRelationshipCreateBody"/>
     /// for how <paramref name="relationshipMetadata"/> gets built.
+    /// <paramref name="solutionUniqueName"/>: see <see cref="CreateAttributeAsync"/>'s own doc comment — same gap, same fix.
     /// </summary>
-    Task CreateOneToManyRelationshipAsync(Uri environmentUrl, string accessToken, JsonObject relationshipMetadata, CancellationToken cancellationToken);
+    Task CreateOneToManyRelationshipAsync(Uri environmentUrl, string accessToken, JsonObject relationshipMetadata, string? solutionUniqueName, CancellationToken cancellationToken);
 
     /// <summary>
     /// Creates a brand-new Customer column via the dedicated
@@ -276,8 +324,9 @@ public interface IDataverseClient
     /// call, since it's really a pair of one-to-many relationships (to
     /// <c>account</c> and <c>contact</c>) sharing one attribute. See
     /// <see cref="AttributeMetadataJsonBuilder.BuildCustomerRelationshipCreateBody"/>.
+    /// <paramref name="solutionUniqueName"/>: see <see cref="CreateAttributeAsync"/>'s own doc comment — same gap, same fix.
     /// </summary>
-    Task CreateCustomerRelationshipsAsync(Uri environmentUrl, string accessToken, JsonObject body, CancellationToken cancellationToken);
+    Task CreateCustomerRelationshipsAsync(Uri environmentUrl, string accessToken, JsonObject body, string? solutionUniqueName, CancellationToken cancellationToken);
 
     /// <summary>
     /// Adds one option to an existing local (never global — see
@@ -368,8 +417,12 @@ public interface IDataverseClient
     /// <c>GlobalChoiceMetadataJsonBuilder.BuildCreateBody</c> for how
     /// <paramref name="body"/> gets built. Confirmed against Microsoft's own
     /// documented <c>CreateOptionSet</c> example.
+    /// <paramref name="solutionUniqueName"/>: see <see cref="CreateAttributeAsync"/>'s
+    /// own doc comment — same gap (confirmed live: a choice created without
+    /// this is never a member of the solution whose YAML asked for it),
+    /// same fix.
     /// </summary>
-    Task CreateGlobalOptionSetAsync(Uri environmentUrl, string accessToken, JsonObject body, CancellationToken cancellationToken);
+    Task CreateGlobalOptionSetAsync(Uri environmentUrl, string accessToken, JsonObject body, string? solutionUniqueName, CancellationToken cancellationToken);
 
     /// <summary>
     /// Replaces an existing global choice's own metadata (<c>DisplayName</c>/

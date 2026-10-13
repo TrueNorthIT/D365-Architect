@@ -11,6 +11,17 @@ public sealed class TableExportService(IDataverseClient dataverseClient, EntityJ
         {
             allowedAttributeMetadataIds = await dataverseClient.TryGetSolutionAttributeMetadataIdsAsync(environmentUrl, accessToken, solutionUniqueName, cancellationToken)
                 ?? throw new SolutionNotFoundException(solutionUniqueName);
+
+            // A solution that owns this table outright (the normal case for
+            // a table created inside it) never gets individual Attribute
+            // solutioncomponents at all — see
+            // IDataverseClient.IsSolutionEntityIncludingSubcomponentsAsync's
+            // own doc comment. Treat that as "no filter", not "the (empty)
+            // explicit set is the real answer".
+            if (await dataverseClient.IsSolutionEntityIncludingSubcomponentsAsync(environmentUrl, accessToken, solutionUniqueName, entityLogicalName, cancellationToken))
+            {
+                allowedAttributeMetadataIds = null;
+            }
         }
 
         var json = await dataverseClient.GetEntityDefinitionJsonAsync(environmentUrl, accessToken, entityLogicalName, cancellationToken);

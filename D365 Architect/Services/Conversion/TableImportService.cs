@@ -27,13 +27,13 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
     }
 
     public Task ApplyAsync(Uri environmentUrl, string accessToken, TableImportPreview preview, CancellationToken cancellationToken) =>
-        ApplyAsync(environmentUrl, accessToken, preview, useTransaction: true, cancellationToken);
+        ApplyAsync(environmentUrl, accessToken, preview, useTransaction: true, solutionUniqueName: null, cancellationToken);
 
-    public async Task ApplyAsync(Uri environmentUrl, string accessToken, TableImportPreview preview, bool useTransaction, CancellationToken cancellationToken)
+    public async Task ApplyAsync(Uri environmentUrl, string accessToken, TableImportPreview preview, bool useTransaction, string? solutionUniqueName, CancellationToken cancellationToken)
     {
         if (useTransaction)
         {
-            var writes = BuildWrites(preview);
+            var writes = BuildWrites(preview, solutionUniqueName);
             if (writes.Count > 0)
             {
                 await dataverseClient.ExecuteTransactionAsync(environmentUrl, accessToken, writes, cancellationToken);
@@ -52,7 +52,7 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
             switch (plan.Action)
             {
                 case AttributeImportAction.Create:
-                    await dataverseClient.CreateAttributeAsync(environmentUrl, accessToken, preview.EntityLogicalName, plan.RequestBody!, cancellationToken);
+                    await dataverseClient.CreateAttributeAsync(environmentUrl, accessToken, preview.EntityLogicalName, plan.RequestBody!, solutionUniqueName, cancellationToken);
                     break;
 
                 case AttributeImportAction.Update:
@@ -60,11 +60,11 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
                     break;
 
                 case AttributeImportAction.CreateLookupRelationship:
-                    await dataverseClient.CreateOneToManyRelationshipAsync(environmentUrl, accessToken, plan.RequestBody!, cancellationToken);
+                    await dataverseClient.CreateOneToManyRelationshipAsync(environmentUrl, accessToken, plan.RequestBody!, solutionUniqueName, cancellationToken);
                     break;
 
                 case AttributeImportAction.CreateCustomerRelationship:
-                    await dataverseClient.CreateCustomerRelationshipsAsync(environmentUrl, accessToken, plan.RequestBody!, cancellationToken);
+                    await dataverseClient.CreateCustomerRelationshipsAsync(environmentUrl, accessToken, plan.RequestBody!, solutionUniqueName, cancellationToken);
                     break;
 
                 // Unchanged/SkippedUnsupportedType/WouldRemove/Invalid: nothing to do, by design.
@@ -84,9 +84,12 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
     /// The same writes the <c>useTransaction: false</c> loop above makes one
     /// at a time, in the same order, but as declarative <see cref="DataverseWrite"/>
     /// values for <see cref="IDataverseClient.ExecuteTransactionAsync"/> to
-    /// send as one changeset instead.
+    /// send as one changeset instead. <paramref name="solutionUniqueName"/>
+    /// is only ever attached to a <em>create</em> case — see
+    /// <see cref="ApplyAsync(Uri, string, TableImportPreview, bool, string?, CancellationToken)"/>'s
+    /// own doc comment.
     /// </summary>
-    private static List<DataverseWrite> BuildWrites(TableImportPreview preview)
+    private static List<DataverseWrite> BuildWrites(TableImportPreview preview, string? solutionUniqueName)
     {
         var writes = new List<DataverseWrite>();
 
@@ -100,7 +103,7 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
             switch (plan.Action)
             {
                 case AttributeImportAction.Create:
-                    writes.Add(new DataverseWrite.CreateAttribute(preview.EntityLogicalName, plan.RequestBody!));
+                    writes.Add(new DataverseWrite.CreateAttribute(preview.EntityLogicalName, plan.RequestBody!, solutionUniqueName));
                     break;
 
                 case AttributeImportAction.Update:
@@ -108,11 +111,11 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
                     break;
 
                 case AttributeImportAction.CreateLookupRelationship:
-                    writes.Add(new DataverseWrite.CreateOneToManyRelationship(plan.RequestBody!));
+                    writes.Add(new DataverseWrite.CreateOneToManyRelationship(plan.RequestBody!, solutionUniqueName));
                     break;
 
                 case AttributeImportAction.CreateCustomerRelationship:
-                    writes.Add(new DataverseWrite.CreateCustomerRelationships(plan.RequestBody!));
+                    writes.Add(new DataverseWrite.CreateCustomerRelationships(plan.RequestBody!, solutionUniqueName));
                     break;
 
                 // Unchanged/SkippedUnsupportedType/WouldRemove/Invalid: nothing to do, by design.

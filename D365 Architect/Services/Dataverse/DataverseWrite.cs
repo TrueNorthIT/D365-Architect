@@ -23,17 +23,17 @@ public abstract record DataverseWrite
     /// <summary>See <see cref="IDataverseClient.UpdateEntityAsync"/>.</summary>
     public sealed record UpdateEntity(string EntityLogicalName, JsonObject Metadata) : DataverseWrite;
 
-    /// <summary>See <see cref="IDataverseClient.CreateAttributeAsync"/>.</summary>
-    public sealed record CreateAttribute(string EntityLogicalName, JsonObject Metadata) : DataverseWrite;
+    /// <summary>See <see cref="IDataverseClient.CreateAttributeAsync"/>. <paramref name="SolutionUniqueName"/> null means "wherever Dataverse's own default context puts it" — see that method's own doc comment.</summary>
+    public sealed record CreateAttribute(string EntityLogicalName, JsonObject Metadata, string? SolutionUniqueName = null) : DataverseWrite;
 
     /// <summary>See <see cref="IDataverseClient.UpdateAttributeAsync"/>.</summary>
     public sealed record UpdateAttribute(string EntityLogicalName, string AttributeLogicalName, JsonObject Metadata) : DataverseWrite;
 
-    /// <summary>See <see cref="IDataverseClient.CreateOneToManyRelationshipAsync"/>.</summary>
-    public sealed record CreateOneToManyRelationship(JsonObject Metadata) : DataverseWrite;
+    /// <summary>See <see cref="IDataverseClient.CreateOneToManyRelationshipAsync"/>. <paramref name="SolutionUniqueName"/> null means "wherever Dataverse's own default context puts it".</summary>
+    public sealed record CreateOneToManyRelationship(JsonObject Metadata, string? SolutionUniqueName = null) : DataverseWrite;
 
-    /// <summary>See <see cref="IDataverseClient.CreateCustomerRelationshipsAsync"/>.</summary>
-    public sealed record CreateCustomerRelationships(JsonObject Body) : DataverseWrite;
+    /// <summary>See <see cref="IDataverseClient.CreateCustomerRelationshipsAsync"/>. <paramref name="SolutionUniqueName"/> null means "wherever Dataverse's own default context puts it".</summary>
+    public sealed record CreateCustomerRelationships(JsonObject Body, string? SolutionUniqueName = null) : DataverseWrite;
 
     /// <summary>See <see cref="IDataverseClient.InsertOptionValueAsync"/>.</summary>
     public sealed record InsertOptionValue(JsonObject Body) : DataverseWrite;
