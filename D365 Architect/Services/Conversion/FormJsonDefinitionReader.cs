@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Xml;
 using System.Xml.Linq;
 using D365Architect.Services.Conversion.Models;
+using D365Architect.Services.Conversion.Models.ControlDefaults;
 
 namespace D365Architect.Services.Conversion;
 
@@ -236,13 +237,27 @@ public sealed class FormJsonDefinitionReader
         return result;
     }
 
+    private static object? ParseAdditionalControlParameters(string? controlName, XElement? parameters)
+    {
+        if (parameters is null)
+        {
+            return null;
+        }
+
+        var converted = ConvertToObject(parameters, preserveDefaults: true);
+        return ControlDefaultsRegistry.Find(controlName) is { } spec ? ControlDefaultsApplier.Strip(spec, converted) : converted;
+    }
+
     private static FormAdditionalControl ParseAdditionalControl(XElement customControl) => new()
     {
         Id = (string?)customControl.Attribute("id"),
         Name = (string?)customControl.Attribute("name"),
         FormFactor = (int?)customControl.Attribute("formFactor"),
         Version = (string?)customControl.Attribute("version"),
-        Parameters = customControl.Element("parameters") is { } parameters ? ConvertToObject(parameters) : null,
+        // Additional controls are PCF custom controls: Dataverse validates
+        // their parameters against the control's own manifest, so defaults
+        // (false, empty elements) must survive — see ConvertToObject.
+        Parameters = ParseAdditionalControlParameters((string?)customControl.Attribute("name"), customControl.Element("parameters")),
     };
 
     /// <summary>
@@ -461,15 +476,32 @@ public sealed class FormJsonDefinitionReader
     ///   dropping it is not the no-op it is for the XSD-governed controls
     ///   this rule was validated against. So `false` is preserved for every
     ///   element/attribute anywhere under a `data-set` node.
+    ///
+    ///   The same reasoning applies to everything under an additional
+    ///   (PCF) control's `parameters` (<paramref name="preserveDefaults"/>),
+    ///   and to empty elements too: `ModelFormControl`'s Enum parameters
+    ///   (`type="Enum" static="true"`) were exported with no value, which
+    ///   Dataverse's write path rejects (0x80160028), and its `value`
+    ///   block lost four empty and three `false` children, which imported
+    ///   cleanly but broke GetClientMetadata (502) for the form. So there,
+    ///   `false` and empty elements are kept (empty as `""`).
     /// See <see cref="FormControl.Parameters"/>.
     /// </summary>
     /// <param name="element">The FormXML element to convert.</param>
+    /// <param name="preserveDefaults">
+    /// True for an additional control's parameters: keep `false` values and
+    /// empty elements rather than treating them as omittable defaults.
+    /// </param>
+    /// <param name="isRoot">
+    /// True only for the `parameters` element itself, whose own emptiness
+    /// still means "nothing to say" rather than a preserved empty value.
+    /// </param>
     /// <param name="insideDataSet">
     /// True once recursion has entered a `data-set` node (and for all of its
     /// descendants) — see the "omitted ≡ false" note above for why `false`
     /// stripping is unsafe there and must not apply.
     /// </param>
-    private static object? ConvertToObject(XElement element, bool insideDataSet = false)
+    private static object? ConvertToObject(XElement element, bool insideDataSet = false, bool preserveDefaults = false, bool isRoot = true)
     {
         var children = element.Elements().ToList();
         var attributes = element.Attributes().ToList();
@@ -477,6 +509,16 @@ public sealed class FormJsonDefinitionReader
         if (children.Count == 0 && attributes.Count == 0)
         {
             var value = element.Value;
+            if (string.IsNullOrEmpty(value) && preserveDefaults && !isRoot)
+            {
+                // Present-but-empty is not the same as absent for a PCF
+                // control's parameter (e.g. ModelFormControl's
+                // FilterRelationshipName): dropping it produced FormXML that
+                // Dataverse accepted on write but then 502'd compiling
+                // GetClientMetadata. Kept as an empty string.
+                return "";
+            }
+
             if (string.IsNullOrEmpty(value))
             {
                 // A genuinely empty leaf, e.g. a self-closing <parameters />
@@ -497,16 +539,16 @@ public sealed class FormJsonDefinitionReader
                 // doc comment for why that distinction matters.
                 return new Dictionary<string, object>
                 {
-                    ["xml"] = new Dictionary<string, object> { [embedded.Name.LocalName] = ConvertToObject(embedded, insideDataSet) ?? "" },
+                    ["xml"] = new Dictionary<string, object> { [embedded.Name.LocalName] = ConvertToObject(embedded, insideDataSet, preserveDefaults, isRoot: false) ?? "" },
                 };
             }
 
-            return !insideDataSet && IsFalse(value) ? null : value;
+            return !(insideDataSet || preserveDefaults) && IsFalse(value) ? null : value;
         }
 
         var map = new Dictionary<string, object>();
 
-        var keptAttributes = attributes.Where(a => insideDataSet || !IsFalse(a.Value)).ToDictionary(a => a.Name.LocalName, object (a) => a.Value);
+        var keptAttributes = attributes.Where(a => insideDataSet || preserveDefaults || !IsFalse(a.Value)).ToDictionary(a => a.Name.LocalName, object (a) => a.Value);
         if (keptAttributes.Count > 0)
         {
             map["attributes"] = keptAttributes;
@@ -514,7 +556,7 @@ public sealed class FormJsonDefinitionReader
 
         if (children.Count == 0)
         {
-            if (!string.IsNullOrEmpty(element.Value) && (insideDataSet || !IsFalse(element.Value)))
+            if (!string.IsNullOrEmpty(element.Value) && (insideDataSet || preserveDefaults || !IsFalse(element.Value)))
             {
                 map["value"] = element.Value;
             }
@@ -525,7 +567,7 @@ public sealed class FormJsonDefinitionReader
         foreach (var group in children.GroupBy(child => child.Name.LocalName))
         {
             var childInsideDataSet = insideDataSet || group.Key == "data-set";
-            var values = group.Select(child => ConvertToObject(child, childInsideDataSet)).Where(value => value is not null).Select(value => value!).ToList();
+            var values = group.Select(child => ConvertToObject(child, childInsideDataSet, preserveDefaults, isRoot: false)).Where(value => value is not null).Select(value => value!).ToList();
             if (values.Count == 0)
             {
                 continue;

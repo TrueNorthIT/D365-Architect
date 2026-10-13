@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Xml.Linq;
 using D365Architect.Services.Conversion.Models;
+using D365Architect.Services.Conversion.Models.ControlDefaults;
 
 namespace D365Architect.Services.Conversion;
 
@@ -382,6 +383,11 @@ public static class FormXmlWriter
         {
             var parameters = new XElement("parameters");
             PopulateParameterElement(parameters, additional.Parameters);
+            if (ControlDefaultsRegistry.Find(additional.Name) is { } defaults)
+            {
+                ControlDefaultsApplier.Restore(defaults, parameters);
+            }
+
             element.Add(parameters);
         }
 

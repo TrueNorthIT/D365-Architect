@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Xml.Linq;
 using D365Architect.Services.Conversion;
 using D365Architect.Services.Conversion.Models;
+using D365Architect.Services.Conversion.Models.ControlDefaults;
 using Xunit;
 
 namespace D365Architect.Tests.Services.Conversion;
@@ -354,6 +355,96 @@ public sealed class FormXmlWriterTests
         });
 
         return new FormJsonDefinitionReader().Read(wrapped)[0];
+    }
+
+    // ---- Additional (PCF) control parameters (issue #36) ----
+
+    // Verbatim from a real tn_registration form (QAD environment); the same
+    // shape appeared on 69 of 93 ModelFormControl instances surveyed.
+    private const string RealModelFormControlParameters =
+        "<parameters><value><BindAttribute>tn_applicantid</BindAttribute><DefaultViewId>{77F69F27-A48D-49FE-9AF3-A4DBF57A36CD}</DefaultViewId><FilterRelationshipName></FilterRelationshipName><DependentAttributeName></DependentAttributeName><DependentAttributeType></DependentAttributeType><AvailableViewIds></AvailableViewIds><AllowFilterOff>false</AllowFilterOff><DisableQuickFind>false</DisableQuickFind><DisableViewPicker>false</DisableViewPicker></value>"
+        + "<QuickForms type=\"SingleLine.Text\" static=\"true\">&lt;QuickForms&gt;&lt;QuickFormIds&gt;&lt;QuickFormId entityname=\"tn_individualapplicant\"&gt;f552a369-0f67-4519-8453-69cffa88bcc5&lt;/QuickFormId&gt;&lt;/QuickFormIds&gt;&lt;/QuickForms&gt;</QuickForms>"
+        + "<SaveMode type=\"Enum\" static=\"true\">0</SaveMode><EnableHighDensityPageHeader type=\"Enum\" static=\"true\">false</EnableHighDensityPageHeader><DisplayFormSelector type=\"Enum\" static=\"true\">false</DisplayFormSelector><AddToRecentItems type=\"Enum\" static=\"true\">false</AddToRecentItems><DisplayPopoutCommand type=\"Enum\" static=\"true\">false</DisplayPopoutCommand><DisplayNavigateBackCommand type=\"Enum\" static=\"true\">false</DisplayNavigateBackCommand><OverrideXrmPageByFormContext type=\"Enum\" static=\"true\">false</OverrideXrmPageByFormContext></parameters>";
+
+    private static FormDefinition FormWithAdditionalControl(string name, string parametersXml)
+    {
+        // Real FormXML (as Dataverse returns it) with one control whose
+        // controlDescription carries the given parameters.
+        var formXml = FormXmlWriter.Write(SimpleForm());
+        var root = XElement.Parse(formXml);
+        var cell = root.Descendants("cell").First(c => c.Element("control") is not null);
+        cell.Element("control")!.SetAttributeValue("uniqueid", "{11111111-1111-1111-1111-111111111111}");
+        var descriptions = root.Element("controlDescriptions") ?? new XElement("controlDescriptions");
+        descriptions.Add(new XElement("controlDescription",
+            new XAttribute("forControl", "{11111111-1111-1111-1111-111111111111}"),
+            new XElement("customControl", new XAttribute("formFactor", "0"), new XAttribute("name", name), XElement.Parse(parametersXml))));
+        if (descriptions.Parent is null)
+        {
+            root.Add(descriptions);
+        }
+
+        var wrapped = JsonSerializer.Serialize(new
+        {
+            value = new[] { new { name = "Test Form", formid = Guid.Empty, objecttypecode = "tn_test", formxml = root.ToString(SaveOptions.DisableFormatting) } },
+        });
+
+        return new FormJsonDefinitionReader().Read(wrapped)[0];
+    }
+
+    private static IDictionary<string, object> AdditionalParameters(FormDefinition form) =>
+        (IDictionary<string, object>)form.Tabs[0].Columns[0].Sections[0].Controls[0].AdditionalControls![0].Parameters!;
+
+    [Fact]
+    public void ModelFormControl_ExportOmitsConfirmedDefaults()
+    {
+        var parameters = AdditionalParameters(FormWithAdditionalControl(ModelFormControlDefaults.Spec.ControlName, RealModelFormControlParameters));
+
+        Assert.Equal(["QuickForms", "value"], parameters.Keys.Order());
+        var value = (IDictionary<string, object>)parameters["value"];
+        Assert.Equal(["BindAttribute", "DefaultViewId"], value.Keys.Order());
+    }
+
+    [Fact]
+    public void ModelFormControl_BuildRestoresEveryDefault_ByteIdenticalToDataverse()
+    {
+        var form = FormWithAdditionalControl(ModelFormControlDefaults.Spec.ControlName, RealModelFormControlParameters);
+
+        var built = XElement.Parse(FormXmlWriter.Write(form));
+
+        Assert.Equal(RealModelFormControlParameters, built.Descendants("customControl").Single().Element("parameters")!.ToString(SaveOptions.DisableFormatting));
+    }
+
+    [Fact]
+    public void ModelFormControl_NonDefaultValuesSurviveRoundTrip()
+    {
+        var withTrue = RealModelFormControlParameters
+            .Replace("<AllowFilterOff>false", "<AllowFilterOff>true")
+            .Replace("<FilterRelationshipName></FilterRelationshipName>", "<FilterRelationshipName>tn_rel</FilterRelationshipName>")
+            .Replace("static=\"true\">false</DisplayFormSelector>", "static=\"true\">true</DisplayFormSelector>");
+        var form = FormWithAdditionalControl(ModelFormControlDefaults.Spec.ControlName, withTrue);
+
+        var parameters = AdditionalParameters(form);
+        Assert.Contains("DisplayFormSelector", parameters.Keys);
+        Assert.Equal("true", ((IDictionary<string, object>)parameters["value"])["AllowFilterOff"]);
+
+        var built = XElement.Parse(FormXmlWriter.Write(form));
+        Assert.Equal(withTrue, built.Descendants("customControl").Single().Element("parameters")!.ToString(SaveOptions.DisableFormatting));
+    }
+
+    [Fact]
+    public void OtherAdditionalControls_KeepFalseAndEmptyValuesVerbatim()
+    {
+        // No confirmed defaults for an arbitrary PCF control, so nothing is stripped.
+        var form = FormWithAdditionalControl("MscrmControls.Some.OtherControl",
+            "<parameters><Flag type=\"Enum\" static=\"true\">false</Flag><Blank></Blank></parameters>");
+
+        var parameters = AdditionalParameters(form);
+        Assert.Equal("false", ((IDictionary<string, object>)parameters["Flag"])["value"]);
+        Assert.Equal("", parameters["Blank"]);
+
+        var built = XElement.Parse(FormXmlWriter.Write(form));
+        Assert.Equal("<parameters><Flag type=\"Enum\" static=\"true\">false</Flag><Blank></Blank></parameters>",
+            built.Descendants("customControl").Single().Element("parameters")!.ToString(SaveOptions.DisableFormatting));
     }
 
     [Fact]
