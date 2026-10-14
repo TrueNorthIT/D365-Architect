@@ -603,30 +603,32 @@ d365architect solution import --input ./examplesolution --solution examplesoluti
 |------------------------------|--------------------------------------------------------------------------|----------|
 | `-i, --input`                | Path to a solution folder previously written by `solution export`        | Yes      |
 | `-s, --solution`             | Unique name of the solution these files came from                        | Yes      |
-| `-y, --yes`                  | Skip the confirmation prompt for every asset and import immediately      | No       |
-| `--whatif`                   | Only show each asset's diff/plan — never prompt and never write anything | No       |
+| `-y, --yes`                  | Skip the confirmation prompt and import every changed asset immediately  | No       |
+| `--verbose`                  | Also print "No changes" for every unchanged asset (silent by default)    | No       |
+| `--whatif`                   | Only show each changed asset's diff/plan — never prompt and never write anything | No       |
 | `--no-transaction`           | For every table import: send column create/update one request at a time instead of as a single atomic Dataverse changeset | No |
 | `--allow-schema-violations`  | For every form import: proceed even if the rebuilt FormXML has a schema violation Dataverse might reject outright | No |
 
-This doesn't invent a new bulk-import behavior: every file found goes
-through the exact same preview → diff → confirm → apply flow as running
-`table import`/`view import`/`form import`/`choice import` on it directly —
-its own diff, its own column/choice plan, its own schema-violation gate.
-`--yes`/`--whatif`/`--no-transaction`/`--allow-schema-violations` are simply
-forwarded to every file they apply to, so `--yes` runs the whole solution
-unattended the same way it already does for a single asset. `--solution` is
-likewise forwarded to every table/choice import as their own `--solution`,
-so any brand-new column/lookup relationship/global choice this run creates
-actually joins the solution it came from, rather than landing wherever
-Dataverse's own default solution context puts it and silently not showing
-up in a later `solution export` of the same solution. One file
-failing (a validation error, a live rejection, a missing counterpart)
-doesn't stop the rest — every remaining file is still attempted, with a
-final summary of how many succeeded/failed and a non-zero exit code if
-anything did. There's no cross-file rollback: each asset's own write is
-already atomic on its own terms (`table import`'s changeset, in
-particular), but nothing ties multiple files' writes together into one
-larger transaction.
+Every file is previewed first, through the same logic as `table import`/
+`view import`/`form import`/`choice import` — its own diff, its own
+column/choice plan, its own schema-violation gate. Only the diffs of the
+files that changed are printed (unchanged ones are silent unless
+`--verbose`), then you're asked once — "Import N changes?" — and yes applies
+them all. `--yes` skips that prompt; `--whatif` prints the diffs and never
+prompts or writes. The run ends with a summary, e.g. `5 changed, 55
+unchanged, 0 failed`. `--solution` is forwarded to every table/choice import
+as their own `--solution`, so any brand-new column/lookup relationship/global
+choice this run creates actually joins the solution it came from.
+`--no-transaction`/`--allow-schema-violations` are forwarded to the table/form
+imports.
+
+A file that fails to preview (a validation error, a live rejection, a missing
+counterpart, a refused schema violation) is reported and never applied, but
+doesn't stop the others being previewed; the prompt notes how many failed and
+will be skipped, the rest are still applied, and the exit code is non-zero.
+There's no cross-file rollback: each asset's own write is atomic on its own
+terms (`table import`'s changeset, in particular), but nothing ties multiple
+files' writes together.
 
 ### `schema`
 
