@@ -122,6 +122,23 @@ public sealed class SolutionImportFlowTests
         Assert.Equal(0, exit);
     }
 
+    [Fact]
+    public void TableFilter_MatchesCaseInsensitivelyAndKeepsAvailableSpelling()
+    {
+        var result = SolutionTableFilter.Select(["account", "contact", "tn_thing"], ["ACCOUNT", "Tn_Thing"], "here");
+
+        Assert.Equal(["account", "tn_thing"], result);
+    }
+
+    [Fact]
+    public void TableFilter_UnknownName_Throws()
+    {
+        var ex = Assert.Throws<UnknownTableException>(() => SolutionTableFilter.Select(["account"], ["account", "nope"], "in solution 'x'"));
+
+        Assert.Equal(["nope"], ex.Unmatched);
+        Assert.Contains("'nope'", ex.Message);
+    }
+
     private static Task<(int Exit, string Output)> RunCaptured(IEnumerable<Item> items, bool yes, bool whatIf, Func<string, bool>? confirm, bool verbose = false) =>
         ConsoleCapture.RunAsync(() => SolutionImportFlow.RunAsync(items.Select(i => i.Value).ToList(), yes, whatIf, verbose, confirm, CancellationToken.None));
 
