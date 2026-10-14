@@ -93,6 +93,7 @@ public sealed class ViewJsonDefinitionReader
         return new ViewDefinition
         {
             Name = name,
+            SavedQueryId = Guid.TryParse(GetString(view, "savedqueryid"), out var savedQueryId) ? savedQueryId : null,
             Entity = GetString(view, "returnedtypecode") ?? throw new InvalidDataException($"View '{name}' is missing its 'returnedtypecode' property."),
             Description = GetString(view, "description"),
             QueryType = QueryTypeOrNull(GetInt(view, "querytype")),

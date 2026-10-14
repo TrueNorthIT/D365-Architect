@@ -33,8 +33,19 @@ public sealed class ViewDefinition
     [YamlMember(Order = 1)]
     public required string Entity { get; init; }
 
-    /// <summary>The view's description.</summary>
+    /// <summary>
+    /// The view's <c>savedqueryid</c>. Import uses it, when present, to pick
+    /// the target view directly rather than by table + name - which can match
+    /// more than one live view (two views may share a name) and is then
+    /// refused as ambiguous. An id that no longer exists live is an error,
+    /// never a fallback to the name. Omit to match by table + name; export
+    /// always writes it.
+    /// </summary>
     [YamlMember(Order = 2)]
+    public Guid? SavedQueryId { get; init; }
+
+    /// <summary>The view's description.</summary>
+    [YamlMember(Order = 3)]
     public string? Description { get; init; }
 
     /// <summary>
@@ -45,7 +56,7 @@ public sealed class ViewDefinition
     /// most common case. Omit for an ordinary view; applying this file back
     /// won't change its type.
     /// </summary>
-    [YamlMember(Order = 3)]
+    [YamlMember(Order = 4)]
     public string? QueryType { get; init; }
 
     /// <summary>
@@ -54,7 +65,7 @@ public sealed class ViewDefinition
     /// to leave this as a non-default view; applying this file back won't
     /// make it the default.
     /// </summary>
-    [YamlMember(Order = 4)]
+    [YamlMember(Order = 5)]
     public bool? IsDefault { get; init; }
 
     /// <summary>
@@ -62,7 +73,7 @@ public sealed class ViewDefinition
     /// when true. Omit to leave Quick Find search off for this view;
     /// applying this file back won't turn it on.
     /// </summary>
-    [YamlMember(Order = 5)]
+    [YamlMember(Order = 6)]
     public bool? IsQuickFindQuery { get; init; }
 
     /// <summary>
@@ -70,7 +81,7 @@ public sealed class ViewDefinition
     /// a solution, not hand-created by a user. Purely informational:
     /// applying this file back never changes it either way.
     /// </summary>
-    [YamlMember(Order = 6)]
+    [YamlMember(Order = 7)]
     public bool? IsUserDefined { get; init; }
 
     /// <summary>
@@ -78,7 +89,7 @@ public sealed class ViewDefinition
     /// Omit to leave this view customizable; applying this file back won't
     /// lock it down.
     /// </summary>
-    [YamlMember(Order = 7)]
+    [YamlMember(Order = 8)]
     public bool? IsCustomizable { get; init; }
 
     /// <summary>
@@ -86,10 +97,10 @@ public sealed class ViewDefinition
     /// views (e.g. "{Entity} BulkOperation View") that Dataverse doesn't
     /// populate this on.
     /// </summary>
-    [YamlMember(Order = 8, ScalarStyle = ScalarStyle.Literal)]
+    [YamlMember(Order = 9, ScalarStyle = ScalarStyle.Literal)]
     public string? FetchXml { get; init; }
 
     /// <summary>The view's column layout, as LayoutXML. Null for views that don't render a grid (e.g. some Quick Find configurations).</summary>
-    [YamlMember(Order = 9, ScalarStyle = ScalarStyle.Literal)]
+    [YamlMember(Order = 10, ScalarStyle = ScalarStyle.Literal)]
     public string? LayoutXml { get; init; }
 }

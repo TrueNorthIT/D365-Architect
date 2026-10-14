@@ -61,14 +61,39 @@ public sealed class FakeDataverseClient : IDataverseClient
     public Task<bool> IsSolutionEntityIncludingSubcomponentsAsync(Uri environmentUrl, string accessToken, string solutionUniqueName, string entityLogicalName, CancellationToken cancellationToken) =>
         Task.FromResult(SolutionEntityIncludesSubcomponents is not null ? SolutionEntityIncludesSubcomponents(solutionUniqueName, entityLogicalName) : throw new NotImplementedException());
 
-    public Task<string> GetViewDefinitionsJsonAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken) => throw new NotImplementedException();
+    public string? ViewDefinitionsJson { get; set; }
+
+    public Task<string> GetViewDefinitionsJsonAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken) =>
+        Task.FromResult(ViewDefinitionsJson ?? throw new InvalidOperationException($"{nameof(ViewDefinitionsJson)} wasn't configured."));
+
     public Task<IReadOnlySet<Guid>?> TryGetSolutionSavedQueryIdsAsync(Uri environmentUrl, string accessToken, string solutionUniqueName, CancellationToken cancellationToken) => throw new NotImplementedException();
 
     public ExistingSavedQuery? SavedQuery { get; set; }
     public List<(Guid SavedQueryId, string? Description, string? FetchXml, string? LayoutXml)> UpdateSavedQueryCalls { get; } = [];
 
+    /// <summary>
+    /// Live views keyed by <c>savedqueryid</c> - what
+    /// <see cref="TryGetSavedQueryByIdAsync"/> resolves against. A missing key
+    /// is "not found" (null), the same as a real lookup of an id that
+    /// doesn't exist.
+    /// </summary>
+    public Dictionary<Guid, ExistingSavedQuery> SavedQueriesById { get; } = [];
+
+    /// <summary>
+    /// When true, the by-name lookup (<see cref="TryGetSavedQueryAsync"/>)
+    /// behaves as if two live views shared that table + name - it throws
+    /// <see cref="AmbiguousSavedQueryException"/>, exactly as the real client
+    /// does - regardless of <see cref="SavedQuery"/>.
+    /// </summary>
+    public bool SavedQueryNameIsAmbiguous { get; set; }
+
     public Task<ExistingSavedQuery?> TryGetSavedQueryAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string viewName, CancellationToken cancellationToken) =>
-        Task.FromResult(SavedQuery);
+        SavedQueryNameIsAmbiguous
+            ? throw new AmbiguousSavedQueryException(entityLogicalName, viewName, [Guid.NewGuid(), Guid.NewGuid()])
+            : Task.FromResult(SavedQuery);
+
+    public Task<ExistingSavedQuery?> TryGetSavedQueryByIdAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, CancellationToken cancellationToken) =>
+        Task.FromResult(SavedQueriesById.GetValueOrDefault(savedQueryId));
 
     public Task UpdateSavedQueryAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, string? description, string? fetchXml, string? layoutXml, CancellationToken cancellationToken)
     {

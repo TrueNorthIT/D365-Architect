@@ -380,7 +380,7 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
 
         if (results.Count > 1)
         {
-            throw new AmbiguousSavedQueryException(entityLogicalName, viewName, results.Count);
+            throw new AmbiguousSavedQueryException(entityLogicalName, viewName, results.Select(r => r.GetProperty("savedqueryid").GetGuid()).ToList());
         }
 
         var result = results[0];
@@ -389,6 +389,31 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         var fetchXml = result.TryGetProperty("fetchxml", out var f) && f.ValueKind == JsonValueKind.String ? f.GetString() : null;
         var layoutXml = result.TryGetProperty("layoutxml", out var l) && l.ValueKind == JsonValueKind.String ? l.GetString() : null;
         return new ExistingSavedQuery(savedQueryId, description, fetchXml, layoutXml);
+    }
+
+    public async Task<ExistingSavedQuery?> TryGetSavedQueryByIdAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, CancellationToken cancellationToken)
+    {
+        var relativePath = $"savedqueries({savedQueryId})?$select=savedqueryid,description,fetchxml,layoutxml,returnedtypecode,name";
+
+        using var request = CreateRequest(environmentUrl, relativePath, accessToken);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+
+        await EnsureSuccessAsync(response, cancellationToken);
+
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        var description = root.TryGetProperty("description", out var d) && d.ValueKind == JsonValueKind.String ? d.GetString() : null;
+        var fetchXml = root.TryGetProperty("fetchxml", out var f) && f.ValueKind == JsonValueKind.String ? f.GetString() : null;
+        var layoutXml = root.TryGetProperty("layoutxml", out var l) && l.ValueKind == JsonValueKind.String ? l.GetString() : null;
+        var entity = root.TryGetProperty("returnedtypecode", out var e) && e.ValueKind == JsonValueKind.String ? e.GetString() : null;
+        var name = root.TryGetProperty("name", out var n) && n.ValueKind == JsonValueKind.String ? n.GetString() : null;
+        return new ExistingSavedQuery(savedQueryId, description, fetchXml, layoutXml, entity, name);
     }
 
     public async Task UpdateSavedQueryAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, string? description, string? fetchXml, string? layoutXml, CancellationToken cancellationToken)
