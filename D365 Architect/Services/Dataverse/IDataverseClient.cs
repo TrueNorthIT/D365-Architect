@@ -196,6 +196,15 @@ public interface IDataverseClient
     Task<ExistingSavedQuery?> TryGetSavedQueryAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string viewName, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Looks a view up by its <c>savedqueryid</c> directly - the by-id
+    /// counterpart of <see cref="TryGetSavedQueryAsync"/>, as
+    /// <see cref="TryGetSystemFormByIdAsync"/> is for forms. Unlike the
+    /// by-name lookup it can't be ambiguous. Returns null when no view has
+    /// that id (a 404).
+    /// </summary>
+    Task<ExistingSavedQuery?> TryGetSavedQueryByIdAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Updates an existing <c>savedquery</c>'s <c>description</c>/
     /// <c>fetchxml</c>/<c>layoutxml</c> via a PATCH request — the actual
     /// write <c>view import</c> performs. Only the non-null arguments are

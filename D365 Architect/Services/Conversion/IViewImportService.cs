@@ -44,6 +44,15 @@ public sealed record ViewImportPreview(
     string? NewLayoutXml)
 {
     /// <summary>
+    /// Set when the YAML's <c>savedQueryId</c> resolved to a live view with a
+    /// different name (a legitimate rename is possible, so only a warning;
+    /// the id stays authoritative). A different table is refused instead —
+    /// see <see cref="Dataverse.ViewIdentityMismatchException"/>. Null for a
+    /// by-name lookup or when the names agree.
+    /// </summary>
+    public string? IdentityMismatchWarning { get; init; }
+
+    /// <summary>
     /// False when the local YAML's description/FetchXml/LayoutXml (whichever
     /// it actually has — a null one is never compared, since omitting a
     /// field means "don't touch this", not "clear it") all already match

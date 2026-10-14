@@ -650,6 +650,14 @@ against the local YAML's own values directly — pretty-printed purely for
 the display, same as form import's XML, but with no canonicalization step
 needed first.
 
+**`savedQueryId` picks the target view.** `view export` writes the view's
+`savedqueryid` as the top-level `savedQueryId` key (omitted when absent).
+Import resolves by that id when present (`TryGetSavedQueryByIdAsync`); an id
+that no longer exists throws `ViewNotFoundException`, as form import does,
+and never falls back to the name. Without it, an ambiguous table + name still
+throws `AmbiguousSavedQueryException`, whose message tells the user to add
+`savedQueryId` and lists the candidate ids.
+
 **Only three fields are ever written**: `Description`, `FetchXml`,
 `LayoutXml`. `QueryType`/`IsDefault`/`IsQuickFindQuery`/`IsUserDefined`/
 `IsCustomizable` are all documented on `ViewDefinition` itself as fields
