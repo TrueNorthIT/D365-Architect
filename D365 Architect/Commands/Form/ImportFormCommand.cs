@@ -101,9 +101,12 @@ public sealed class ImportFormCommand(IFormImportService formImportService, Impo
             // PrintChanges/BlockReason below even look at the violation
             // FormControlValidator already caught, leaving a genuinely
             // broken control definition unreported indefinitely as long as
-            // nothing else about the form changes in the same edit. A
-            // blocking violation (not one that's IsKnownHarmless) always
-            // keeps this from skipping, regardless of HasChanges.
+            // nothing else about the form changes in the same edit.
+            // FormImportService therefore always runs FormControlValidator
+            // (only the FormXML schema validator is skipped on a no-op), and a
+            // blocking violation (not one that's IsKnownHarmless) keeps this
+            // from skipping, regardless of
+            // HasChanges.
             SkipBeforePrinting = preview => preview.HasChanges || preview.Violations.Any(v => !v.IsKnownHarmless)
                 ? null
                 : "the rebuilt FormXML already matches what's live in Dataverse. Nothing to import.",

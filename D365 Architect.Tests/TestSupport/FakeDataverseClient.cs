@@ -79,8 +79,15 @@ public sealed class FakeDataverseClient : IDataverseClient
     public Task<string> GetFormSummariesJsonAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken) => throw new NotImplementedException();
     public Task<IReadOnlySet<Guid>?> TryGetSolutionSystemFormIdsAsync(Uri environmentUrl, string accessToken, string solutionUniqueName, CancellationToken cancellationToken) => throw new NotImplementedException();
     public Task<string?> TryGetSystemFormXmlAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string formName, CancellationToken cancellationToken) => throw new NotImplementedException();
-    public Task<ExistingSystemForm?> TryGetSystemFormAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string formName, CancellationToken cancellationToken) => throw new NotImplementedException();
-    public Task<ExistingSystemForm?> TryGetSystemFormByIdAsync(Uri environmentUrl, string accessToken, Guid formId, CancellationToken cancellationToken) => throw new NotImplementedException();
+
+    /// <summary>The live form both <see cref="TryGetSystemFormAsync"/> and <see cref="TryGetSystemFormByIdAsync"/> return (null = not found).</summary>
+    public ExistingSystemForm? SystemForm { get; set; }
+
+    public Task<ExistingSystemForm?> TryGetSystemFormAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string formName, CancellationToken cancellationToken) =>
+        Task.FromResult(SystemForm);
+
+    public Task<ExistingSystemForm?> TryGetSystemFormByIdAsync(Uri environmentUrl, string accessToken, Guid formId, CancellationToken cancellationToken) =>
+        Task.FromResult(SystemForm);
 
     public Task UpdateSystemFormXmlAsync(Uri environmentUrl, string accessToken, Guid formId, string formXml, CancellationToken cancellationToken)
     {
