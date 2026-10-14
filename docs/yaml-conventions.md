@@ -1071,7 +1071,12 @@ that informational diff, an explicit **column plan** lists exactly what
 will happen to each column (create/update/skipped/would-remove) — a column
 can appear "different" in the diff without anything being done about it
 (unsupported type, or a removal), and the plan is where that distinction
-actually shows up.
+actually shows up. Live-only system columns (non-custom, such as `createdby`
+or `statecode`) are left out of the YAML diff, since this import never
+creates or deletes them (issue #34). Table properties the file sets that
+can't be applied (`hasNotes`, `hasActivities`, `isActivity`, `ownershipType`)
+are listed as `not applied: <reason>` in the plan and never written; they
+don't count as a change on their own.
 
 **What this doesn't do yet**: publish the change. Unlike form/view
 import's still-open question about whether publishing turns out to be

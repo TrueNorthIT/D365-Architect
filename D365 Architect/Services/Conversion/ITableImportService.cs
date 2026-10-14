@@ -184,7 +184,23 @@ public sealed record OptionChangePlan(OptionChangeAction Action, JsonObject Requ
 /// <param name="AttributePlans">One plan per column seen on either side — see <see cref="AttributeImportAction"/>.</param>
 public sealed record TableImportPreview(string EntityLogicalName, string ExistingYaml, string NewYaml, JsonObject? TableUpdateBody, IReadOnlyList<AttributeImportPlan> AttributePlans)
 {
+    /// <summary>
+    /// Table-level properties the local YAML asks for that this import can't
+    /// apply (e.g. <c>hasNotes: true</c>), each with the reason, reported as
+    /// "not applied: reason" the same way skipped columns are. Not a write, so
+    /// they never affect <see cref="HasChanges"/>.
+    /// </summary>
+    public IReadOnlyList<TablePropertyNotApplied> NotAppliedTableProperties { get; init; } = [];
+
     /// <summary>True when there's at least one actual write to make — a table-level change, or a column plan that writes something (Create/Update/CreateLookupRelationship/CreateCustomerRelationship).</summary>
     public bool HasChanges => TableUpdateBody is not null || AttributePlans.Any(p =>
         p.Action is AttributeImportAction.Create or AttributeImportAction.Update or AttributeImportAction.CreateLookupRelationship or AttributeImportAction.CreateCustomerRelationship);
 }
+
+/// <summary>
+/// A table-level property the local YAML specifies that
+/// <see cref="TableImportService"/> can't apply, and why.
+/// </summary>
+/// <param name="Property">The YAML key, e.g. "hasNotes".</param>
+/// <param name="Reason">Why it isn't applied, in terms a human can act on.</param>
+public sealed record TablePropertyNotApplied(string Property, string Reason);
