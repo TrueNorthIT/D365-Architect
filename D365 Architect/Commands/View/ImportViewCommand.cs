@@ -48,12 +48,11 @@ public sealed class ImportViewCommand(IViewImportService viewImportService, Impo
         RunAsync(settings, cancellationToken);
 
     /// <summary>
-    /// The command's own logic, independent of Spectre's <see cref="CommandContext"/> —
-    /// pulled out of <see cref="ExecuteAsync"/> so <c>solution import</c> can
-    /// run this exact same preview → diff → confirm → apply flow for every
-    /// <c>*.view.yml</c> it finds, without duplicating any of it.
+    /// Builds this command's <see cref="ImportFlowSpec{TSettings,TInput,TPreview}"/>: the parts of the shared
+    /// preview → diff → confirm → apply flow that differ for this asset type. Shared by
+    /// <see cref="RunAsync"/> and <see cref="PreviewAsync(Settings, bool, CancellationToken)"/> (used by <c>solution import</c>).
     /// </summary>
-    public async Task<int> RunAsync(Settings settings, CancellationToken cancellationToken)
+    private ImportFlowSpec<Settings, ViewDefinition, ViewImportPreview> BuildSpec(Settings settings)
     {
         var spec = new ImportFlowSpec<Settings, ViewDefinition, ViewImportPreview>
         {
@@ -92,8 +91,19 @@ public sealed class ImportViewCommand(IViewImportService viewImportService, Impo
             },
         };
 
-        return await importRunner.RunAsync(settings, viewImportService, spec, cancellationToken);
+        return spec;
     }
+
+    public Task<int> RunAsync(Settings settings, CancellationToken cancellationToken) =>
+        importRunner.RunAsync(settings, viewImportService, BuildSpec(settings), cancellationToken);
+
+    /// <summary>
+    /// Previews without prompting or writing: the first half of
+    /// <see cref="RunAsync"/>, for callers (<c>solution import</c>) that
+    /// collect several previews and confirm once.
+    /// </summary>
+    public Task<PreparedImport> PreviewAsync(Settings settings, bool printUnchanged, CancellationToken cancellationToken) =>
+        importRunner.PreviewAsync(settings, viewImportService, BuildSpec(settings), printUnchanged, cancellationToken);
 
     /// <summary>
     /// Prints one field's diff (skipping it entirely when the local YAML
