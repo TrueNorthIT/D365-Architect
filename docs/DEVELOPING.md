@@ -82,19 +82,23 @@ layer: `Commands/DiffConsole.cs` (the shared diff renderer), `Commands/Table/Ent
 
 ### `solution import` reuses each asset's own command, not a new bulk path
 
-`solution import` doesn't reimplement diffing/confirmation for a folder of
-files — each of `ImportTableCommand`/`ImportViewCommand`/`ImportFormCommand`/
+`solution import` doesn't reimplement diffing for a folder of files — each of
+`ImportTableCommand`/`ImportViewCommand`/`ImportFormCommand`/
 `ImportChoiceCommand` exposes a public `RunAsync(Settings, CancellationToken)`
-(pulled out of `ExecuteAsync`, which now just calls it) specifically so
-`ImportSolutionCommand` can construct one directly (`new
-ImportTableCommand(tableImportService, importRunner)`) and call it per file
-it finds, with its own `Settings` built from the folder's own file paths.
-Every asset still gets its full preview → diff → confirm → apply flow; one
-file failing doesn't stop the rest (see `ImportSolutionCommand`'s own doc
-comment for why, and how it reports the count at the end). If you add a
-fifth `Import*Command`, keep this same `RunAsync` shape so it can join
-`solution import`'s loop the same way, rather than solution import needing
-its own special case per asset type.
+(preview + one prompt + apply, what `ExecuteAsync` calls) and a public
+`PreviewAsync(Settings, printUnchanged, CancellationToken)` (preview only).
+`ImportRunner` is split the same way: `PreviewAsync` reads, previews, prints
+the diff and applies the per-asset gates (SkipBefore/SkipAfter/BlockReason)
+without prompting or writing, returning a `PreparedImport` (`Unchanged`,
+`Changed` with a deferred `ApplyAsync`, or `Failed`); `RunAsync` is preview +
+prompt + apply. `ImportSolutionCommand` builds one `SolutionImportItem` per
+file and hands them to `SolutionImportFlow`, which previews everything, prints
+only the changed diffs (unchanged ones only with `--verbose`), asks once
+("Import N changes?"), applies the changed ones, and prints "N changed, M
+unchanged, K failed". A failed preview is reported and never applied but
+doesn't stop the rest, which are still offered and applied. If you add a
+fifth `Import*Command`, give it the same `RunAsync`/`PreviewAsync` pair so it
+can join the loop without a special case.
 
 ### The diff-before-confirm pattern
 

@@ -10,41 +10,36 @@ using Spectre.Console.Cli;
 namespace D365Architect.Commands.Solution;
 
 /// <summary>
-/// `d365architect solution import --input ./examplesolution --solution examplesolution [--yes] [--whatif] [--no-transaction] [--allow-schema-violations]`
+/// `d365architect solution import --input ./examplesolution --solution examplesolution [--yes] [--whatif] [--verbose] [--no-transaction] [--allow-schema-violations]`
 /// Walks a folder previously written by <c>solution export</c> — a
 /// <c>choices.yml</c> at its root, plus one sub-folder per table holding
 /// that table's own <c>*.table.yml</c>/<c>*.view.yml</c>/<c>*.form.yml</c>
-/// files — and imports every file found, in the same order `solution
-/// export` would have written them (choices first, then each table folder's
-/// own table, then its views, then its forms).
+/// files — in the same order `solution export` would have written them
+/// (choices first, then each table folder's own table, then its views, then
+/// its forms).
 ///
-/// Deliberately doesn't invent a new bulk-import mechanism: each file is run
-/// through the exact same <c>RunAsync</c> entry point `choice import`/`table
-/// import`/`view import`/`form import` already expose (pulled out of each
-/// command's own <c>ExecuteAsync</c> specifically for this), so every asset
-/// still gets its own preview → diff → confirm → apply flow, its own column/
-/// choice plan, and its own schema-violation gate — nothing here bypasses
-/// any of that per-asset safety. <c>--yes</c>/<c>--whatif</c>/
-/// <c>--no-transaction</c>/<c>--allow-schema-violations</c> are forwarded to
-/// every file they apply to, so `--yes` runs the whole solution unattended
-/// the same way it does for a single asset today. <c>--solution</c> is
+/// It previews every file first, prints the diffs of the ones that changed,
+/// then asks once ("Import N changes?") and applies them all; see
+/// <see cref="SolutionImportFlow"/>. Unchanged files print nothing unless
+/// <c>--verbose</c>. The run ends with "N changed, M unchanged, K failed".
+///
+/// Deliberately doesn't invent a new bulk-import mechanism: each file goes
+/// through the same preview as `choice import`/`table import`/`view
+/// import`/`form import` (<c>PreviewAsync</c>, the first half of each
+/// command's <c>RunAsync</c>), so every asset still gets its own diff,
+/// column/choice plan and safety gate (e.g. the form schema-violation
+/// gate); only the prompt is shared. <c>--yes</c> skips it; <c>--whatif</c>
+/// prints the diffs and never prompts or writes. <c>--solution</c> is
 /// required (not optional the way it is on the individual `table import`/
-/// `choice import` commands) and is likewise forwarded to every table/
-/// choice import, so any brand-new column/lookup relationship/global choice
-/// this run creates actually joins the solution it came from — see
-/// <see cref="Services.Dataverse.IDataverseClient.CreateAttributeAsync"/>'s
-/// own doc comment for the gap this closes; without it, a new asset would
-/// exist live but silently not show up in a later `solution export` of the
-/// same solution.
+/// `choice import` commands) and is forwarded to every table/choice
+/// import, so any brand-new column/lookup relationship/global choice this
+/// run creates actually joins the solution it came from — see
+/// <see cref="Services.Dataverse.IDataverseClient.CreateAttributeAsync"/>.
 ///
 /// One file failing (a validation error, a Dataverse rejection, a missing
-/// live counterpart) doesn't stop the rest — this keeps going through every
-/// remaining file so one bad form doesn't block importing everything else,
-/// then reports how many succeeded/failed at the end and exits non-zero if
-/// anything did. There's no cross-file rollback: each asset's own write is
-/// already atomic on its own terms (`table import`'s changeset, in
-/// particular), but nothing ties multiple files' writes together into one
-/// larger transaction.
+/// live counterpart) doesn't stop the rest: it's reported, never applied,
+/// and the remaining changes are still offered and applied. The exit code
+/// is non-zero if anything failed. There's no cross-file rollback.
 /// </summary>
 public sealed class ImportSolutionCommand(
     ITableImportService tableImportService,
@@ -64,12 +59,16 @@ public sealed class ImportSolutionCommand(
         public required string Solution { get; init; }
 
         [CommandOption("-y|--yes")]
-        [Description("Skip the confirmation prompt for every asset and import immediately.")]
+        [Description("Skip the confirmation prompt and import every changed asset immediately.")]
         public bool Yes { get; init; }
 
         [CommandOption("--whatif")]
-        [Description("Only show each asset's diff/plan — never prompt and never write anything to Dataverse.")]
+        [Description("Only show each changed asset's diff/plan — never prompt and never write anything to Dataverse.")]
         public bool WhatIf { get; init; }
+
+        [CommandOption("--verbose")]
+        [Description("Also print a 'No changes' line for every asset that already matches what's live. Unchanged assets are silent by default.")]
+        public bool Verbose { get; init; }
 
         [CommandOption("--no-transaction")]
         [Description("For every table import: send column create/update one request at a time instead of as a single atomic Dataverse changeset.")]
@@ -88,106 +87,68 @@ public sealed class ImportSolutionCommand(
             return 1;
         }
 
-        var succeeded = 0;
-        var failed = 0;
+        var tableDirectories = Directory.GetDirectories(settings.Input).OrderBy(d => d, StringComparer.OrdinalIgnoreCase).ToList();
+
+        var items = new List<SolutionImportItem>();
+
+        // Previews all run before anything is applied, so a column bound to a
+        // global choice that choices.yml creates in this same run can't see
+        // that choice live yet. Hand every table preview the names in
+        // choices.yml so it plans the column as a create; the apply order
+        // (choices first) makes that true by the time the table is written.
+        var pendingChoiceNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         var choicesPath = Path.Combine(settings.Input, "choices.yml");
         if (File.Exists(choicesPath))
         {
-            if (await TryRunAsync(choicesPath, () => new ImportChoiceCommand(globalChoiceImportService, importRunner).RunAsync(
-                new ImportChoiceCommand.Settings { Input = choicesPath, Yes = settings.Yes, WhatIf = settings.WhatIf, Solution = settings.Solution }, cancellationToken)))
+            try
             {
-                succeeded++;
+                foreach (var choice in GlobalChoiceYamlDeserializer.FromYaml(File.ReadAllText(choicesPath)))
+                {
+                    pendingChoiceNames.Add(choice.Name);
+                }
             }
-            else
+            catch (YamlDotNet.Core.YamlException)
             {
-                failed++;
+                // The choice item below reports the unparseable file itself.
             }
 
-            AnsiConsole.WriteLine();
+            var choiceSettings = new ImportChoiceCommand.Settings { Input = choicesPath, Yes = settings.Yes, WhatIf = settings.WhatIf, Solution = settings.Solution };
+            items.Add(new SolutionImportItem(choicesPath, (printUnchanged, ct) =>
+                new ImportChoiceCommand(globalChoiceImportService, importRunner).PreviewAsync(choiceSettings, printUnchanged, ct)));
         }
 
-        foreach (var entityDirectory in Directory.GetDirectories(settings.Input).OrderBy(d => d, StringComparer.OrdinalIgnoreCase))
+        foreach (var entityDirectory in tableDirectories)
         {
             foreach (var tablePath in Directory.GetFiles(entityDirectory, "*.table.yml").OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
             {
-                if (await TryRunAsync(tablePath, () => new ImportTableCommand(tableImportService, importRunner).RunAsync(
-                    new ImportTableCommand.Settings { Input = tablePath, Yes = settings.Yes, WhatIf = settings.WhatIf, NoTransaction = settings.NoTransaction, Solution = settings.Solution }, cancellationToken)))
-                {
-                    succeeded++;
-                }
-                else
-                {
-                    failed++;
-                }
-
-                AnsiConsole.WriteLine();
+                var tableSettings = new ImportTableCommand.Settings { Input = tablePath, Yes = settings.Yes, WhatIf = settings.WhatIf, NoTransaction = settings.NoTransaction, Solution = settings.Solution };
+                items.Add(new SolutionImportItem(tablePath, (printUnchanged, ct) =>
+                    new ImportTableCommand(tableImportService, importRunner).PreviewAsync(tableSettings, printUnchanged, pendingChoiceNames, ct)));
             }
 
             foreach (var viewPath in Directory.GetFiles(entityDirectory, "*.view.yml").OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
             {
-                if (await TryRunAsync(viewPath, () => new ImportViewCommand(viewImportService, importRunner).RunAsync(
-                    new ImportViewCommand.Settings { Input = viewPath, Yes = settings.Yes, WhatIf = settings.WhatIf }, cancellationToken)))
-                {
-                    succeeded++;
-                }
-                else
-                {
-                    failed++;
-                }
-
-                AnsiConsole.WriteLine();
+                var viewSettings = new ImportViewCommand.Settings { Input = viewPath, Yes = settings.Yes, WhatIf = settings.WhatIf };
+                items.Add(new SolutionImportItem(viewPath, (printUnchanged, ct) =>
+                    new ImportViewCommand(viewImportService, importRunner).PreviewAsync(viewSettings, printUnchanged, ct)));
             }
 
             foreach (var formPath in Directory.GetFiles(entityDirectory, "*.form.yml").OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
             {
-                if (await TryRunAsync(formPath, () => new ImportFormCommand(formImportService, importRunner).RunAsync(
-                    new ImportFormCommand.Settings { Input = formPath, Yes = settings.Yes, WhatIf = settings.WhatIf, AllowSchemaViolations = settings.AllowSchemaViolations }, cancellationToken)))
-                {
-                    succeeded++;
-                }
-                else
-                {
-                    failed++;
-                }
-
-                AnsiConsole.WriteLine();
+                var formSettings = new ImportFormCommand.Settings { Input = formPath, Yes = settings.Yes, WhatIf = settings.WhatIf, AllowSchemaViolations = settings.AllowSchemaViolations };
+                items.Add(new SolutionImportItem(formPath, (printUnchanged, ct) =>
+                    new ImportFormCommand(formImportService, importRunner).PreviewAsync(formSettings, printUnchanged, ct)));
             }
         }
 
-        if (succeeded == 0 && failed == 0)
+        if (items.Count == 0)
         {
-            ErrorConsole.Warn($"No choices.yml or table sub-folders found under '{settings.Input}' — nothing to import.");
+            ErrorConsole.Warn($"No choices.yml, or table sub-folders containing *.table.yml/*.view.yml/*.form.yml files, found under '{settings.Input}' — nothing to import.");
+
             return 0;
         }
 
-        AnsiConsole.MarkupLine(failed == 0
-            ? $"[green]Done.[/] {succeeded} asset(s) processed."
-            : $"[yellow]Done with errors.[/] {succeeded} succeeded, {failed} failed — see above.");
-
-        return failed == 0 ? 0 : 1;
-    }
-
-    /// <summary>
-    /// Runs one file's import, catching anything it throws so one bad file
-    /// genuinely can't stop the rest — the resilience this class's own doc
-    /// comment already claimed, but that nothing here actually enforced
-    /// until now: <see cref="ImportRunner.RunAsync{TSettings,TInput,TPreview}"/>
-    /// only ever translates a small, per-command allowlist of exception
-    /// types into a clean exit code (e.g. table/choice import only recognize
-    /// <see cref="InvalidDataException"/>) — anything else used to propagate
-    /// straight out of this whole command, aborting every remaining file.
-    /// </summary>
-    private static async Task<bool> TryRunAsync(string assetPath, Func<Task<int>> run)
-    {
-        try
-        {
-            return await run() == 0;
-        }
-        catch (Exception ex)
-        {
-            ErrorConsole.Print($"'{assetPath}' failed: {ex.Message}");
-            return false;
-        }
+        return await SolutionImportFlow.RunAsync(items, settings.Yes, settings.WhatIf, settings.Verbose, confirm: null, cancellationToken);
     }
 }
