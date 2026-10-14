@@ -17,13 +17,67 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
         // below misreports columns that are simply in a different order
         // (Dataverse's return order vs. whatever order the human wrote them
         // in) as wholesale removed-and-re-added.
-        var existingYaml = EntityYamlSerializer.ToYaml(existingEntity.WithAttributes(OrderForDiff(existingEntity.Attributes, entity.Attributes)));
+        // Live-only system columns are dropped first: this import never
+        // deletes columns, so listing createdby/ownerid/statecode etc. as
+        // removals is noise.
+        var diffAttributes = existingEntity.Attributes.Where(a => !IsLiveOnlySystemColumn(a, entity.Attributes)).ToList();
+        var existingYaml = EntityYamlSerializer.ToYaml(existingEntity.WithAttributes(OrderForDiff(diffAttributes, entity.Attributes)));
         var newYaml = EntityYamlSerializer.ToYaml(entity);
 
         var tableUpdateBody = await BuildTableUpdateBodyAsync(environmentUrl, accessToken, entity, existingEntity, cancellationToken);
         var attributePlans = await BuildAttributePlansAsync(environmentUrl, accessToken, entity, existingEntity, cancellationToken);
 
-        return new TableImportPreview(entity.LogicalName, existingYaml, newYaml, tableUpdateBody, attributePlans);
+        return new TableImportPreview(entity.LogicalName, existingYaml, newYaml, tableUpdateBody, attributePlans)
+        {
+            NotAppliedTableProperties = FindNotAppliedTableProperties(entity, existingEntity),
+        };
+    }
+
+    /// <summary>
+    /// A system column is one Dataverse reports as non-custom
+    /// (<c>IsCustomAttribute</c> false, so <see cref="AttributeDefinition.IsCustomField"/>
+    /// is null once read) - createdby, ownerid, statecode and their
+    /// companions. When it's live-only it can't be created or deleted by this
+    /// import, so it is hidden from the YAML diff (it still counts in the plan's unmanaged summary). Live-only custom
+    /// columns, and system columns the local YAML does list, still show.
+    /// </summary>
+    private static bool IsLiveOnlySystemColumn(AttributeDefinition live, IReadOnlyList<AttributeDefinition> local) =>
+        live.IsCustomField is not true
+        && !local.Any(a => string.Equals(a.Name, live.Name, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Table-level properties the local YAML specifies, that differ from live,
+    /// and that this import never writes (it only writes DisplayName,
+    /// PluralDisplayName and Description). Absent local values are "don't
+    /// touch" and never reported. Reasons separate a limitation of this tool
+    /// from something Dataverse itself doesn't allow.
+    /// </summary>
+    private static List<TablePropertyNotApplied> FindNotAppliedTableProperties(EntityDefinition local, EntityDefinition existing)
+    {
+        const string toolLimit = "this tool can't change it yet - use the Maker portal";
+        var result = new List<TablePropertyNotApplied>();
+
+        if (local.HasNotes is not null && local.HasNotes != (existing.HasNotes ?? false))
+        {
+            result.Add(new TablePropertyNotApplied("hasNotes", toolLimit));
+        }
+
+        if (local.HasActivities is not null && local.HasActivities != (existing.HasActivities ?? false))
+        {
+            result.Add(new TablePropertyNotApplied("hasActivities", toolLimit));
+        }
+
+        if (local.IsActivity is not null && local.IsActivity != (existing.IsActivity ?? false))
+        {
+            result.Add(new TablePropertyNotApplied("isActivity", "Dataverse can't change whether a table is an activity table after creation"));
+        }
+
+        if (local.OwnershipType is not null && !string.Equals(local.OwnershipType, existing.OwnershipType, StringComparison.OrdinalIgnoreCase))
+        {
+            result.Add(new TablePropertyNotApplied("ownershipType", "Dataverse can't change a table's ownership type after creation"));
+        }
+
+        return result;
     }
 
     public Task ApplyAsync(Uri environmentUrl, string accessToken, TableImportPreview preview, CancellationToken cancellationToken) =>

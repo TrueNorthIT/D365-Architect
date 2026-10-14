@@ -113,15 +113,32 @@ public sealed class ImportTableCommand(ITableImportService tableImportService, I
                 }
 
                 var unmanagedCount = GetUnmanaged(preview).Count;
-                return unmanagedCount == 0
+                var summary = unmanagedCount == 0
                     ? "the local YAML already matches what's live in Dataverse. Nothing to import."
                     : $"the local YAML already matches what's live in Dataverse. Nothing to import. ({unmanagedCount} live column{(unmanagedCount == 1 ? "" : "s")} not in this file {(unmanagedCount == 1 ? "is" : "are")} left alone — never deleted automatically.)";
+
+                // Table-level properties that can't be applied are explained
+                // here too, so "nothing to import" isn't mistaken for "matches".
+                return preview.NotAppliedTableProperties.Count == 0
+                    ? summary
+                    : summary + "\n" + string.Join("\n", TablePropertyNotAppliedFormatter.FormatLines(preview.NotAppliedTableProperties));
             },
 
             PrintChanges = preview =>
             {
                 DiffConsole.PrintDiff(TextDiff.Compute(preview.ExistingYaml, preview.NewYaml));
                 AnsiConsole.WriteLine();
+
+                if (preview.NotAppliedTableProperties.Count > 0)
+                {
+                    AnsiConsole.MarkupLine("[bold]Table properties:[/]");
+                    foreach (var line in TablePropertyNotAppliedFormatter.FormatLines(preview.NotAppliedTableProperties))
+                    {
+                        AnsiConsole.MarkupLine(line);
+                    }
+
+                    AnsiConsole.WriteLine();
+                }
 
                 var actionable = GetActionable(preview);
                 if (actionable.Count > 0)
