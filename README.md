@@ -506,8 +506,10 @@ changes in Dataverse. Pass `--whatif` to see the diff and stop there — no
 prompt, no write, regardless of `--yes`.
 
 **Unlike `build-xml`, a schema violation here can genuinely block the
-import.** Only the one specific, confirmed-safe pattern (`headerdensity`/
-`showinformselector`) is treated as informational; every other violation
+import.** Only confirmed-safe patterns are treated as informational (`headerdensity`/
+`showinformselector`, the Timeline control's activities/notes configuration,
+text inside a control's `<parameters>`, and a Quick View control's
+`HideQuickFormBorder`); every other violation
 refuses the import outright (before the confirmation prompt is even shown)
 unless `--allow-schema-violations` is passed. This isn't hypothetical
 caution — a different violation was once treated the same non-blocking way
