@@ -21,6 +21,19 @@ public sealed class FormTab
     public string? Label { get; init; }
 
     /// <summary>
+    /// <see cref="Label"/>'s own Dataverse languagecode, e.g. 1036 for
+    /// French. Only present when it isn't 1033 (English) — confirmed live as
+    /// a real gap otherwise: on a tenant whose base language isn't English,
+    /// there's no 1033 label at all, so the primary label read back is
+    /// genuinely in that other language, and writing it back always tagged
+    /// as 1033 regardless would silently mislabel it. Absent (the common
+    /// case) means 1033, same as every other field this tool omits at its
+    /// default.
+    /// </summary>
+    [YamlMember(Order = 2)]
+    public int? LabelLanguageCode { get; init; }
+
+    /// <summary>
     /// This label's text in every language besides the one shown as
     /// <see cref="Label"/>, keyed by Dataverse's own languagecode (e.g.
     /// 1036 for French). Absent on a single-language tenant (the
@@ -32,11 +45,11 @@ public sealed class FormTab
     /// default: this is genuine maker-authored text on a multi-language
     /// tenant, lost permanently on every round-trip until this was added.
     /// </remarks>
-    [YamlMember(Order = 2)]
+    [YamlMember(Order = 3)]
     public IReadOnlyDictionary<int, string>? Translations { get; init; }
 
     /// <summary>The tab's side-by-side columns, left to right.</summary>
-    [YamlMember(Order = 3)]
+    [YamlMember(Order = 4)]
     public IReadOnlyList<FormColumn> Columns { get; init; } = [];
 
     /// <summary>
@@ -44,7 +57,7 @@ public sealed class FormTab
     /// one simply not on the form at all. Omit to leave this tab visible;
     /// applying this file back won't hide it.
     /// </summary>
-    [YamlMember(Order = 4)]
+    [YamlMember(Order = 5)]
     public bool? Visible { get; init; }
 
     /// <summary>
@@ -55,7 +68,7 @@ public sealed class FormTab
     /// is assumed either way. Absent when this tab's FormXML doesn't set
     /// it at all.
     /// </summary>
-    [YamlMember(Order = 5)]
+    [YamlMember(Order = 6)]
     public bool? Collapsible { get; init; }
 
     /// <summary>
@@ -65,6 +78,6 @@ public sealed class FormTab
     /// confirmed against real tenant samples, so nothing is assumed either
     /// way. Absent when this tab's FormXML doesn't set it at all.
     /// </summary>
-    [YamlMember(Order = 6)]
+    [YamlMember(Order = 7)]
     public bool? AvailableOnPhone { get; init; }
 }

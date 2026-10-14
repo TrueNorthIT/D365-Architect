@@ -51,6 +51,10 @@
             "description": "The tab's display label.",
             "type": "string"
           },
+          "labelLanguageCode": {
+            "description": "Label's own Dataverse languagecode, e.g. 1036 for French. Only present when it isn't 1033 (English) — confirmed live as a real gap otherwise: on a tenant whose base language isn't English, there's no 1033 label at all, so the primary label read back is genuinely in that other language, and writing it back always tagged as 1033 regardless would silently mislabel it. Absent (the common case) means 1033, same as every other field this tool omits at its default.",
+            "type": "integer"
+          },
           "translations": {
             "description": "This label's text in every language besides the one shown as Label, keyed by Dataverse's own languagecode (e.g. 1036 for French). Absent on a single-language tenant (the overwhelming common case) or when this tab has only its own.",
             "type": "object",
@@ -82,6 +86,10 @@
                         "description": "The section's display label.",
                         "type": "string"
                       },
+                      "labelLanguageCode": {
+                        "description": "Label's own Dataverse languagecode, e.g. 1036 for French. Only present when it isn't 1033 (English) — see LabelLanguageCode's own doc comment for why. Absent (the common case) means 1033.",
+                        "type": "integer"
+                      },
                       "translations": {
                         "description": "This label's text in every language besides the one shown as Label, keyed by Dataverse's own languagecode (e.g. 1036 for French). Absent on a single-language tenant (the overwhelming common case) or when this section has only its own.",
                         "type": "object",
@@ -110,6 +118,10 @@
                             "label": {
                               "description": "The field's display label on the form.",
                               "type": "string"
+                            },
+                            "labelLanguageCode": {
+                              "description": "Label's own Dataverse languagecode, e.g. 1036 for French. Only present when it isn't 1033 (English) — see LabelLanguageCode's own doc comment for why. Absent (the common case) means 1033.",
+                              "type": "integer"
                             },
                             "translations": {
                               "description": "This label's text in every language besides the one shown as Label, keyed by Dataverse's own languagecode (e.g. 1036 for French). Absent on a single-language tenant (the overwhelming common case) or when this control has only its own.",
@@ -364,6 +376,10 @@
             "description": "The field's display label on the form.",
             "type": "string"
           },
+          "labelLanguageCode": {
+            "description": "Label's own Dataverse languagecode, e.g. 1036 for French. Only present when it isn't 1033 (English) — see LabelLanguageCode's own doc comment for why. Absent (the common case) means 1033.",
+            "type": "integer"
+          },
           "translations": {
             "description": "This label's text in every language besides the one shown as Label, keyed by Dataverse's own languagecode (e.g. 1036 for French). Absent on a single-language tenant (the overwhelming common case) or when this control has only its own.",
             "type": "object",
@@ -580,6 +596,10 @@
           "label": {
             "description": "The field's display label on the form.",
             "type": "string"
+          },
+          "labelLanguageCode": {
+            "description": "Label's own Dataverse languagecode, e.g. 1036 for French. Only present when it isn't 1033 (English) — see LabelLanguageCode's own doc comment for why. Absent (the common case) means 1033.",
+            "type": "integer"
           },
           "translations": {
             "description": "This label's text in every language besides the one shown as Label, keyed by Dataverse's own languagecode (e.g. 1036 for French). Absent on a single-language tenant (the overwhelming common case) or when this control has only its own.",
