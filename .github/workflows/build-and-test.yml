@@ -1,0 +1,43 @@
+name: Build and test
+
+# Runs the full test suite (D365 Architect.Tests) on every push and pull
+# request, against every branch - unlike publish-release.yml (which only
+# ever runs on main/develop and produces a release artifact), this is the
+# ordinary CI safety net: nothing here publishes anything, it just fails
+# loudly if the solution doesn't build or a test regresses.
+
+on:
+  push:
+  pull_request:
+
+env:
+  SOLUTION: D365 Architect.slnx
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore
+        run: dotnet restore "$SOLUTION"
+
+      - name: Build
+        run: dotnet build "$SOLUTION" --no-restore -c Release
+
+      - name: Test
+        run: dotnet test "$SOLUTION" --no-build -c Release --logger "trx;LogFileName=test-results.trx"
+
+      - name: Publish test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: "**/test-results.trx"
+          retention-days: 14

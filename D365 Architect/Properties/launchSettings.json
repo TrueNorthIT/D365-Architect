@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "D365 Architect": {
+      "commandName": "Project",
+      "commandLineArgs": "--help"
+    }
+  }
+}

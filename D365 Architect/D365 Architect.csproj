@@ -1,0 +1,89 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>D365Architect</RootNamespace>
+    <AssemblyName>d365architect</AssemblyName>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- Read by YamlSchemaGenerator to pull property descriptions straight
+         from these classes' own doc comments into the generated JSON
+         Schema, rather than writing them out a second time. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <!-- MinVer derives Version/AssemblyVersion/FileVersion from git tags at
+         build time (see .github/workflows/publish-release.yml): an
+         annotated "v1.2.3" tag on main yields a clean release version,
+         while any other commit (e.g. on develop) auto-increments the patch
+         and appends a "-alpha.0.{commits since tag}" pre-release suffix. -->
+    <MinVerTagPrefix>v</MinVerTagPrefix>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Lets D365Architect.Tests exercise the internal readers/builders/
+         validators directly (GlobalChoiceJsonReader, OptionSetDiffer,
+         DataverseSchemaNaming, ...) rather than only whatever's reachable
+         through the public surface. -->
+    <InternalsVisibleTo Include="D365Architect.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Microsoft's own official FormXML XSD schema, vendored verbatim: see
+         Resources/FormXmlSchema/NOTICE.md. Embedded (not just copied to the
+         output directory) so FormXmlValidator still has it available from
+         the standalone single-file build. -->
+    <EmbeddedResource Include="Resources/FormXmlSchema/*.xsd" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Copied into the publish output only (CopyToPublishDirectory, not
+         CopyToOutputDirectory) so a standalone win-x64 build carries the
+         README documenting every command alongside d365architect.exe,
+         without adding a copy step to the ordinary "dotnet build"/"dotnet
+         run" inner loop. README.md lives one level up from this project,
+         outside its own directory cone, so Link is needed to place it at
+         the output root rather than mirroring that "../" relative path. -->
+    <None Include="../README.md" Link="README.md" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.11" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.11" />
+    <PackageReference Include="Microsoft.Identity.Client" Version="4.88.0" />
+    <PackageReference Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.88.0" />
+    <PackageReference Include="Spectre.Console.Cli" Version="0.55.0" />
+    <PackageReference Include="YamlDotNet" Version="18.1.0" />
+    <!-- Build-time only: computes Version/AssemblyVersion/FileVersion from
+         git tags, contributes nothing to the published output itself. -->
+    <PackageReference Include="MinVer" Version="7.0.0" PrivateAssets="All" />
+  </ItemGroup>
+
+  <!--
+    Regenerates schema/*.schema.json (see docs/DEVELOPING.md's "Schema"
+    section) from the just-built assembly after every ordinary build, so
+    a curated model's shape/doc-comment change can never silently drift
+    from the committed schema files the way it previously could when
+    `schema export` had to be remembered and run by hand.
+
+    Conditions:
+    - Skipped for the standalone win-x64 publish (`PublishSingleFile=true`,
+      see Properties/PublishProfiles/win-x64.pubxml): YamlSchemaGenerator
+      needs this assembly's generated XML doc file for descriptions, which
+      a single-file publish doesn't carry alongside it — this target only
+      ever runs against the ordinary multi-file build output, which always
+      does (GenerateDocumentationFile is set project-wide above). Both
+      `dotnet build` and an ordinary `dotnet publish` (no profile) still
+      produce that build output first and do trigger this.
+    - Skipped for a design-time build (what an IDE runs continually just
+      for IntelliSense, not a real build a developer asked for) - without
+      this, every keystroke-triggered background build would re-run and
+      rewrite these files.
+  -->
+  <Target Name="RegenerateSchemas" AfterTargets="Build" Condition="'$(PublishSingleFile)' != 'true' and '$(DesignTimeBuild)' != 'true'">
+    <Exec Command="dotnet &quot;$(TargetPath)&quot; schema export --for table" WorkingDirectory="$(MSBuildProjectDirectory)/.." />
+    <Exec Command="dotnet &quot;$(TargetPath)&quot; schema export --for view" WorkingDirectory="$(MSBuildProjectDirectory)/.." />
+    <Exec Command="dotnet &quot;$(TargetPath)&quot; schema export --for form" WorkingDirectory="$(MSBuildProjectDirectory)/.." />
+  </Target>
+
+</Project>

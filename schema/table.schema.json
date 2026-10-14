@@ -1,0 +1,184 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "D365 Architect table definition",
+  "description": "Declarative YAML shape for a Dynamics table, produced by `d365architect table export`. A field left out of this file was left at Dataverse's own default, not \"unknown\" — see each field's own description for what that default is. Editing this file back into Dataverse (via the matching `import` command) will leave an omitted field at that default rather than whatever it happened to be before.",
+  "type": "object",
+  "properties": {
+    "entity": {
+      "description": "The table's logical name, e.g. \"account\" — written as the top-level \"entity\" key.",
+      "type": "string"
+    },
+    "schemaName": {
+      "description": "The customization-prefixed schema name, e.g. \"new_BankAccount\". Fixed at creation time — required when creating a table, immutable after.",
+      "type": "string"
+    },
+    "displayName": {
+      "description": "The table's singular display name, e.g. \"Account\".",
+      "type": "string"
+    },
+    "pluralDisplayName": {
+      "description": "The table's plural display name, e.g. \"Accounts\".",
+      "type": "string"
+    },
+    "description": {
+      "description": "The table's description.",
+      "type": "string"
+    },
+    "ownershipType": {
+      "description": "\"UserOwned\", \"OrganizationOwned\", etc. Required to create a table; can't be changed afterwards.",
+      "type": "string"
+    },
+    "isActivity": {
+      "description": "Only present when true — false is the platform default for a table. Omit to leave it as an ordinary table; applying this file back won't make it an activity type.",
+      "type": "boolean"
+    },
+    "hasActivities": {
+      "description": "Only present when true — false is the platform default for a table. Omit to leave activities off for this table; applying this file back won't turn them on.",
+      "type": "boolean"
+    },
+    "hasNotes": {
+      "description": "Only present when true — false is the platform default for a table. Omit to leave notes off for this table; applying this file back won't turn them on.",
+      "type": "boolean"
+    },
+    "attributes": {
+      "description": "The table's columns.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "description": "The column's logical name, e.g. \"name\".",
+            "type": "string"
+          },
+          "schemaName": {
+            "description": "The customization-prefixed schema name, e.g. \"new_BankName\". Required to create a column; immutable after.",
+            "type": "string"
+          },
+          "type": {
+            "description": "The column's Dynamics type, e.g. \"nvarchar\", \"primarykey\", \"lookup\".",
+            "type": "string"
+          },
+          "displayName": {
+            "description": "The column's display name.",
+            "type": "string"
+          },
+          "description": {
+            "description": "The column's description.",
+            "type": "string"
+          },
+          "physicalName": {
+            "description": "The underlying SQL column name, when it differs from the logical name in more than casing — only present when exported from a legacy unpacked solution's Entity.xml; live exports never set this, since Dataverse manages its own storage rather than mapping columns onto SQL Server directly.",
+            "type": "string"
+          },
+          "requiredLevel": {
+            "description": "\"recommended\", \"applicationrequired\" or \"systemrequired\". Only present when set to something other than \"none\" — that's Dataverse's default for every column type. Omit for an optional column; applying this file back won't add a requirement level.",
+            "type": "string"
+          },
+          "maxLength": {
+            "description": "String/Memo character limit.",
+            "type": "integer"
+          },
+          "precision": {
+            "description": "Decimal places. For Money, only meaningful when precisionSource is 2 (this column's own).",
+            "type": "integer"
+          },
+          "precisionSource": {
+            "description": "Money only: 0 = currency-specific, 1 = organization setting, 2 = this column's own precision.",
+            "type": "integer"
+          },
+          "minValue": {
+            "description": "Money/Decimal/Integer lower bound.",
+            "type": "number"
+          },
+          "maxValue": {
+            "description": "Money/Decimal/Integer upper bound.",
+            "type": "number"
+          },
+          "format": {
+            "description": "Type-specific format, e.g. \"Email\"/\"Text\" (String), \"DateOnly\"/\"DateAndTime\" (DateTime), \"TextArea\" (Memo).",
+            "type": "string"
+          },
+          "targets": {
+            "description": "Lookup/Customer/Owner: logical names of the table(s) this column can point to.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "isCustomField": {
+            "description": "Only present when true — false (a standard, non-custom field) is by far the common case. Purely informational: applying this file back never changes it either way — whether a column is custom is determined by how it was created, not something re-set on update.",
+            "type": "boolean"
+          },
+          "validForAdvancedFind": {
+            "description": "Whether this column can be used in Advanced Find.",
+            "type": "boolean"
+          },
+          "options": {
+            "description": "A Picklist/MultiSelectPicklist/State/Status column's own choice values, when it's backed by a *local* option set — null instead when it's backed by a global one (see GlobalOptionSetName; confirmed live that State/Status in particular normally are). Never set together with GlobalOptionSetName — a column uses one or the other, never both. See AttributeOptionDefinition for why Value is always explicit.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "description": "The option's integer value, e.g. 727000000. Ignored for a Status option being newly inserted — see this class's own doc comment.",
+                  "type": "integer"
+                },
+                "label": {
+                  "description": "The option's display label.",
+                  "type": "string"
+                },
+                "state": {
+                  "description": "Status only: which State (0 = Active, 1 = Inactive, by Dataverse's own convention — a table can define more) this status reason belongs to. Required to insert a brand-new Status option — Dataverse's InsertStatusValue action needs it and this tool never guesses it — but not otherwise meaningful (Picklist/ MultiSelectPicklist/State options don't have one; a State option's own Value already is its state).",
+                  "type": "integer"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "value",
+                "label"
+              ]
+            }
+          },
+          "globalOptionSetName": {
+            "description": "The shared GlobalOptionSetDefinitions choice this column uses instead of its own local Options — applies to Picklist/MultiSelectPicklist, and, confirmed live, State/Status too (every statecode/statuscode checked on a real tenant, standard and custom tables alike, turned out to be backed by a global {entity}_statecode/{entity}_statuscode choice, not a local one). This tool only ever *references* an existing global choice by name — it never creates, edits, or deletes one, since that's a shared, cross-table resource with a much wider blast radius than a single column; this also means State/Status option-renaming is inert whenever this is set (see `docs/yaml-conventions.md`).",
+            "type": "string"
+          },
+          "defaultValue": {
+            "description": "Boolean only: the value a new record gets for this column when nothing else is set.",
+            "type": "boolean"
+          },
+          "trueOptionLabel": {
+            "description": "Boolean only: the label shown for \"true\". Omitted when it's Dataverse's own default, \"True\".",
+            "type": "string"
+          },
+          "falseOptionLabel": {
+            "description": "Boolean only: the label shown for \"false\". Omitted when it's Dataverse's own default, \"False\".",
+            "type": "string"
+          },
+          "relationshipSchemaName": {
+            "description": "Lookup only, required to create a brand-new Lookup column: the schema name of the one-to-many relationship that owns this lookup — a separate name from the column's own SchemaName, never inferred. Not used for Customer (its two relationship names are derived from SchemaName instead — see `docs/yaml-conventions.md`) or for any other type.",
+            "type": "string"
+          },
+          "relationshipBehavior": {
+            "description": "Lookup only: the new relationship's Behavior — \"Referential\", \"ReferentialRestrictDelete\", or \"Parental\" (see RelationshipBehaviors). Only present when set to something other than \"Referential\" — the Maker UI's own default for a brand-new lookup, and the only one of the three that never collides with another Parental relationship the referencing table might already have (see `docs/yaml-conventions.md`).",
+            "type": "string",
+            "enum": [
+              "Referential",
+              "ReferentialRestrictDelete",
+              "Parental"
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "type"
+        ]
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "entity"
+  ]
+}

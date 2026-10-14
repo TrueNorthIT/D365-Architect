@@ -1,0 +1,556 @@
+# Developing D365 Architect
+
+This is the developer-facing counterpart to the root [`README.md`](../README.md):
+architecture, how the pieces fit together, and the conventions this codebase
+follows — for anyone working *on* the tool, not just running it. It isn't
+packaged into the standalone build (only `README.md` is — see the `csproj`'s
+`CopyToPublishDirectory` item); it only ever lives in the repo/source checkout.
+
+See also [`yaml-conventions.md`](yaml-conventions.md) for the detailed,
+audited rules the exported YAML itself follows (what an absent field means,
+how a converted structure maps back to its source shape) — this document
+covers the code around that YAML, not the YAML's own design rules.
+
+## Architecture at a glance
+
+| Folder | Purpose |
+|---|---|
+| `Program.cs` | Composition root — see below. |
+| `Commands/` | One subfolder per CLI branch (`Auth`, `Environments`, `Table`, `View`, `Form`, `Choice`, `Solution`, `Schema`), each a thin Spectre.Console.Cli layer over `Services/`. |
+| `Services/Authentication/` | MSAL-based sign-in, token cache, current-session tracking. |
+| `Services/Dataverse/` | The Web API client and its supporting validators/exceptions/DTOs. |
+| `Services/Conversion/` (+ `Models/`) | Table/view/form ↔ YAML readers, writers, and the curated models themselves. The biggest folder by far. |
+| `Services/Schema/` | Generates `schema/*.schema.json` from the curated models via reflection. |
+| `Services/EnvironmentService.cs` | **Placeholder scaffolding** — see below, don't mistake it for real config. |
+| `Infrastructure/` | The two-class bridge wiring Spectre.Console.Cli to Microsoft.Extensions.DependencyInjection. |
+| `Resources/FormXmlSchema/` | Microsoft's own FormXML XSD, vendored verbatim, embedded into the build. |
+| `Properties/PublishProfiles/` | The standalone single-file publish profile(s). |
+| `schema/` (repo root) | Generated JSON Schemas, committed — output of `schema export`, not hand-maintained. |
+| `docs/` | This file and `yaml-conventions.md`. |
+| `.github/workflows/` | CI/CD — see [Versioning & releases](#versioning--releases) below. |
+
+## Entry point & DI wiring
+
+`Program.cs` is top-level statements (no `Main` method), and is the entire
+composition root, in three explicit steps:
+
+1. **Register services** into a plain `ServiceCollection` — `IEnvironmentService`,
+   `AuthenticationOptions.FromEnvironment()`, `IAuthenticationService` →
+   `MsalAuthenticationService`, `IDataverseClient` → `DataverseClient` (via
+   `services.AddHttpClient<IDataverseClient, DataverseClient>()`), and one
+   reader/converter/export/import service per asset type.
+2. **Bridge to Spectre.Console.Cli** via `Infrastructure/TypeRegistrar.cs` +
+   `TypeResolver.cs` — a small `ITypeRegistrar`/`ITypeResolver` adapter pair so
+   Spectre resolves every command (and its constructor dependencies) through
+   the same DI container rather than `new`-ing them up itself.
+   `TypeRegistrar.Build()` is what calls `services.BuildServiceProvider()`.
+3. **Configure the command tree** — `app.Configure(config => { ... })` calls
+   one `Configure(IConfigurator)` static method per feature area
+   (`AuthCommands`, `EnvironmentCommands`, `TableCommands`, `ViewCommands`,
+   `FormCommands`, `ChoiceCommands`, `SolutionCommands`, `SchemaCommands`);
+   `WhoAmICommand` self-registers as a standalone top-level command (no
+   branch).
+
+The doc comments in `Program.cs` are explicit about the intent: commands never
+construct their own services or reach for a static/singleton instance, and
+adding a new command/branch is meant to be a one-line addition to that
+`Configure` call.
+
+## Commands/
+
+Every command derives from Spectre's `Command<TSettings>` (sync) or
+`AsyncCommand<TSettings>` (async), takes its services via primary-constructor
+injection, and defines a nested `Settings : CommandSettings` with
+`[CommandOption("-x|--long <PLACEHOLDER>")]`/`[Description]` attributes.
+
+| Branch | Commands | Source |
+|---|---|---|
+| `auth` | `login` | `Commands/Auth/LoginCommand.cs` |
+| *(top-level)* | `whoami` | `Commands/WhoAmICommand.cs` |
+| `environment` | `list`, `sync` | `Commands/Environments/ListEnvironmentsCommand.cs`, `SyncEnvironmentCommand.cs` |
+| `table` | `export`, `import` | `Commands/Table/ExportTableCommand.cs`, `ImportTableCommand.cs` |
+| `view` | `export`, `import` | `Commands/View/ExportViewCommand.cs`, `ImportViewCommand.cs` |
+| `form` | `export`, `build-xml`, `import` | `Commands/Form/ExportFormCommand.cs`, `BuildFormXmlCommand.cs`, `ImportFormCommand.cs` |
+| `choice` | `export`, `import` | `Commands/Choice/ExportChoiceCommand.cs`, `ImportChoiceCommand.cs` |
+| `solution` | `export`, `import` | `Commands/Solution/ExportSolutionCommand.cs`, `ImportSolutionCommand.cs` |
+| `schema` | `export`, `configure-vscode` | `Commands/Schema/ExportSchemaCommand.cs`, `ConfigureVsCodeCommand.cs` |
+
+A few shared helpers live alongside the commands that use them rather than in
+`Services/`, since they're rendering/parsing concerns specific to the CLI
+layer: `Commands/DiffConsole.cs` (the shared diff renderer), `Commands/Table/EntityYamlFileReader.cs`,
+`Commands/Form/FormYamlFileReader.cs` and `FormXmlValidationConsole.cs`.
+
+### `solution import` reuses each asset's own command, not a new bulk path
+
+`solution import` doesn't reimplement diffing/confirmation for a folder of
+files — each of `ImportTableCommand`/`ImportViewCommand`/`ImportFormCommand`/
+`ImportChoiceCommand` exposes a public `RunAsync(Settings, CancellationToken)`
+(pulled out of `ExecuteAsync`, which now just calls it) specifically so
+`ImportSolutionCommand` can construct one directly (`new
+ImportTableCommand(tableImportService, importRunner)`) and call it per file
+it finds, with its own `Settings` built from the folder's own file paths.
+Every asset still gets its full preview → diff → confirm → apply flow; one
+file failing doesn't stop the rest (see `ImportSolutionCommand`'s own doc
+comment for why, and how it reports the count at the end). If you add a
+fifth `Import*Command`, keep this same `RunAsync` shape so it can join
+`solution import`'s loop the same way, rather than solution import needing
+its own special case per asset type.
+
+### The diff-before-confirm pattern
+
+All three import commands (`table import`, `view import`, `form import`)
+share one shape, worth knowing before touching any of them:
+
+```
+PreviewAsync()                     // builds a preview: what would change, and why
+  → check HasChanges / build a plan
+  → print a diff via DiffConsole.PrintDiff(TextDiff.Compute(...))
+  → print extra structured info    // FormXmlValidator findings, or the column plan
+  → AnsiConsole.Confirm(...)        // gated by --yes, defaults to "no"
+  → ApplyAsync()                   // wrapped in an AnsiConsole.Status() spinner
+```
+
+Errors are caught per-command and mapped to a plain red message
+(`ErrorConsole.Print(ex)`, see `Commands/ErrorConsole.cs`) plus exit code 1 —
+never a raw stack trace. Route every error/warning message through
+`ErrorConsole.Print`/`Warn` rather than `AnsiConsole.MarkupLine` directly —
+`ex.Message` (and a file path, or a raw CLI argument) can carry external
+content this tool doesn't control (a Dataverse HTTP error body, in
+particular), and an unescaped `[...]` sequence inside it makes
+Spectre.Console try to parse it as markup and throw its own unrelated
+`Could not find color or style '...'` error, masking whatever the real error
+was — confirmed live once, before `ErrorConsole` existed and every call site
+had to remember `.EscapeMarkup()` by hand. `ErrorConsole` takes a plain
+interpolated string (`ErrorConsole.Print($"Couldn't parse '{path}' as a
+view: {ex.Message}")`) and escapes every interpolated value automatically —
+see its own doc comment for how. Domain-specific exceptions
+(`FormNotFoundException`, `AmbiguousSystemFormException`,
+`AuthenticationRequiredException`, etc.) exist
+specifically to give that message something meaningful to say.
+
+## Services/
+
+### Authentication
+
+`MsalAuthenticationService` uses **MSAL.NET**, not a hand-rolled OAuth flow,
+and deliberately **not** the device-code flow:
+
+- **Login**: `AcquireTokenInteractive` with `Prompt.SelectAccount`, opening the
+  system browser (avoids bundling an embedded webview dependency).
+- **Reuse**: `AcquireTokenSilent` on every later command, throwing
+  `AuthenticationRequiredException` on `MsalUiRequiredException` (expired/no
+  session).
+- **Token cache**: `%LocalAppData%\d365architect\msal.cache`, persisted via
+  `Microsoft.Identity.Client.Extensions.Msal`'s `MsalCacheHelper` —
+  OS-encrypted (DPAPI/keychain), letting a separate later CLI process reuse
+  the sign-in.
+- **Current session**: a separate, non-secret `%LocalAppData%\d365architect\profile.json`
+  (`{ EnvironmentUrl, Username }`) tracks which environment/account is
+  "current" — independent of the token cache itself.
+- **Client id/authority**: `AuthenticationOptions.cs` defaults to Microsoft's
+  own documented public client id for native/console Dataverse auth
+  (`51f81489-12ee-4a9e-aaae-a2591f45987d`), overridable via the
+  `d365architect_CLIENT_ID`/`d365architect_AUTHORITY` env vars for tenants
+  whose Conditional Access policies require their own app registration.
+
+There's no config file or committed secret anywhere for any of this — see
+`README.md`'s own note that there's no `auth logout` yet either (delete the
+`%LocalAppData%\d365architect` folder to sign out).
+
+### Dataverse
+
+`DataverseClient` is a **raw `HttpClient`** against the Web API
+(`/api/data/v9.2/`) — not the Dataverse SDK. Auth isn't this class's job; a
+bearer token is passed in per call. Worth knowing before extending it:
+
+- **Entity/attribute updates are always a full-object PUT**, never a partial
+  PATCH — confirmed directly from Microsoft's own docs ("you must use the PUT
+  method... and be careful to include all the existing properties that you
+  don't intend to change"). `MSCRM.MergeLabels: true` is sent on every such
+  PUT so an edited display name doesn't wipe out other languages' labels this
+  tool never touched.
+- **Solution-scoping** (the `--solution` option on export commands) goes
+  through `solutioncomponents`, filtered by `componenttype` (1=Entity,
+  2=Attribute, 9=Option Set, 26=View/SavedQuery, 60=SystemForm) plus
+  `_solutionid_value`. Only `TryGetSolutionEntityLogicalNamesAsync`
+  (`componenttype` 1 — what `solution export` uses to discover which tables
+  a solution touches) needs a second request after that: an Entity
+  component's `objectid` is the table's own `MetadataId`, and unlike
+  Attribute/View/SystemForm (each already scoped to one known table's own
+  bulk query) there's no cheaper way to turn that into a logical name than a
+  bulk, unfiltered `EntityDefinitions?$select=LogicalName,MetadataId` fetch,
+  filtered client-side against the component id set.
+- **A solution-owned table's own columns/views/forms often have *no*
+  individual `Attribute`/`View`/`SystemForm` solutioncomponents at all** —
+  confirmed live against a real tenant, not assumed: when a table is created
+  inside a solution (or explicitly set to "include all objects"), Dataverse
+  gives the table's own Entity component `rootcomponentbehavior` 0 ("Include
+  Subcomponents") and never separately lists its columns/views/forms as
+  their own solutioncomponent rows, even though they genuinely belong to the
+  solution. Naively treating "no explicit component IDs found" as "filter
+  down to nothing" — which is what `TableExportService`/`ViewExportService`/
+  `FormExportService` did before this was caught — silently exports an empty
+  table for exactly the common case (a table created for/inside that
+  solution) `solution export` most needs to get right.
+  `IDataverseClient.IsSolutionEntityIncludingSubcomponentsAsync` is the fix:
+  each of those three services checks it before filtering, and treats `true`
+  as "no filter" (same as no `--solution` at all) rather than trusting the
+  (correctly) empty explicit set. See
+  `DataverseClientSolutionEntityLookupTests` for the covered cases,
+  including a null `rootcomponentbehavior` (components that predate the
+  field) being treated the same as 0.
+- **A brand-new column/relationship/global choice needs its own explicit
+  `MSCRM.SolutionUniqueName` header, or it never joins any solution at
+  all** — confirmed live, separately from the gap above: creating a column
+  or a global choice with no such header always lands the new component
+  wherever Dataverse's own default solution context puts it (in practice,
+  the Default Solution), regardless of which solution's YAML asked for it.
+  `CreateAttributeAsync`/`CreateOneToManyRelationshipAsync`/
+  `CreateCustomerRelationshipsAsync`/`CreateGlobalOptionSetAsync` all take an
+  optional `solutionUniqueName` now — for the three that go through
+  `DataverseWrite`/`ExecuteTransactionAsync` (the batched changeset path),
+  it travels on the write itself (`DataverseWrite.CreateAttribute.SolutionUniqueName`
+  and friends) and `ToHttpRequest` turns it into the header on that one
+  request; `CreateGlobalOptionSetAsync` isn't part of that batching system,
+  so it sets the header directly. `table import --solution`/`choice import
+  --solution` (both optional) and `solution import`'s own `--solution`
+  (required, and forwarded to every table/choice import it runs) are the
+  only callers that ever pass a non-null value — an update to a column/
+  choice that already exists never needs this, since it's already scoped
+  (or not) however it originally was. See `DataverseClientSolutionHeaderTests`
+  for the header itself on both the individual and batched paths, and
+  `TableImportServiceTests`/`GlobalChoiceImportServiceTests`' own
+  `solutionUniqueName` threading cases.
+- **Publishing** (`PublishEntityAsync`, `PublishXml`) always publishes a whole
+  table (attributes/forms/views/ribbons together) — there's no documented way
+  to publish a single `systemform` on its own; `<entities><entity>` only ever
+  takes a table's logical name.
+- `GetEntityDefinitionJsonAsync` deliberately omits `$select` on the expanded
+  `Attributes` collection, since type-specific properties (MaxLength,
+  Precision, Targets, ...) aren't selectable on the base `AttributeMetadata`
+  type and would 400 if named.
+
+Supporting types: `AttributeChangeValidator` (pre-flight validation before any
+create/update request is built — every numeric bound in it is annotated with
+where it was confirmed, e.g. Microsoft Learn vs. "corroborated across
+multiple sources, not a single canonical page"), `AttributeMetadataJsonBuilder`
+(builds/mutates column JSON; `SupportedTypes` = `String`, `Memo`, `Integer`,
+`BigInt`, `Decimal`, `Money`, `DateTime` only — see its own doc comment for
+exactly why each excluded type is excluded), plus the not-found/ambiguous
+exceptions and `Existing*`/`WhoAmIResult` DTOs.
+
+### Conversion (the biggest folder)
+
+The key design split, from `IEntityDefinitionReader`'s own doc comment: a
+**table** needs two reader strategies — `EntityXmlDefinitionReader` (an
+unpacked solution's `Entity.xml`) and `EntityJsonDefinitionReader` (live Web
+API metadata) — because it can be sourced from disk or from a live
+environment. **Views and forms never need that split**: their content
+(`fetchxml`/`layoutxml`/`formxml`) is itself XML even when the wrapping record
+comes back as JSON from the Web API, so only one JSON reader per asset type is
+needed (`ViewJsonDefinitionReader`, `FormJsonDefinitionReader`).
+
+- **Views keep FetchXml/LayoutXml verbatim** — never decomposed, since (unlike
+  a table's columns) there's no bulk metadata endpoint to double-check a
+  decomposition against.
+- **Forms are decomposed structurally** (`FormJsonDefinitionReader` /
+  `FormXmlWriter`, `tabs` → `columns` → `sections` → `controls`) because a raw
+  FormXML blob isn't reviewable or diffable. `FormXmlWriter.Write(form,
+  existingRoot)` patches only the elements this tool manages onto the *live*
+  document rather than rebuilding a `<form>` from scratch, so anything never
+  decomposed (`Navigation`, `RibbonDiffXml`, ...) survives untouched. Ids this
+  tool never round-trips (a tab/cell's own GUID, a control's `uniqueid`, ...)
+  are synthesized via `DeterministicGuid` — derived from stable, human-authored
+  data rather than `Guid.NewGuid()` — so re-running on unchanged YAML produces
+  byte-identical FormXML.
+- `FormXmlValidator`/`FormControlValidator` catch two different classes of
+  problem: schema violations against Microsoft's vendored XSD, and
+  Dataverse's own stricter write-time requirements the XSD doesn't declare at
+  all (e.g. a missing `classid`). `FormXmlValidationMessage.IsKnownHarmless`
+  is deliberately narrow — see [FormXML schema validation](#formxml-schema-validation)
+  below.
+
+Shared plumbing worth knowing:
+
+- `DefaultValueConventions.cs` — the "an absent field means Dataverse's own
+  default" helpers (`RequiredLevelOrNull`, `TrueOrNull`, `FalseOrNull`) — see
+  [`yaml-conventions.md`](yaml-conventions.md) for the full rule and every
+  field it applies to.
+- `ReadOnlyListYamlTypeConverter.cs` — every curated model exposes lists as
+  `IReadOnlyList<T>` ("this is a read model, not something to mutate");
+  YamlDotNet can't instantiate an interface on deserialize, so this converter
+  reads into a concrete `List<T>` and hands it back through the interface.
+- `TextDiff.cs` — a classic LCS line diff. Notably, `form import`'s diff is
+  **not** the live document's raw FormXML compared against the rebuild — that
+  was tried first and showed every tab/section/cell as "changed" purely from
+  resynthesized ids. The fix: rebuild the *live* form's own content through
+  the identical `FormXmlWriter`/id rules first (`FormImportPreview.
+  ExistingComparableFormXml`), so only genuine content differences survive to
+  the diff.
+- `AssetFileNaming.cs` — `Slugify`/`MakeUnique`, used by views/forms since,
+  unlike tables/columns, they have no stable logical name to file under.
+
+`Conversion/Models/` holds the curated read models themselves
+(`EntityDefinition`, `ViewDefinition`, `FormDefinition`, ...) — these are what
+`YamlSchemaGenerator` (below) reflects over, and what every
+`*YamlSerializer`/`*YamlDeserializer` (de)serializes.
+
+### Schema
+
+`YamlSchemaGenerator` reflects over a curated model type to emit a JSON
+Schema, rather than hand-maintaining a second copy that could drift:
+
+- Property names come from `[YamlMember(Alias=...)]` (or camelCase fallback) —
+  the same source the matching `*YamlSerializer` uses.
+- `"required"` comes from the C# `required` modifier.
+- **Descriptions come from this assembly's own generated XML doc file**
+  (`AppContext.BaseDirectory/{AssemblyName}.xml`) — literally the same
+  `<summary>` text a developer reading the source sees. This is why
+  `schema export` must be run from an ordinary `dotnet build`/`dotnet run`
+  output, not the standalone single-file `.exe` (which doesn't carry the
+  `.xml` doc file) — see the README's own note on this.
+- `[SchemaEnum(typeof(X), nameof(X.SomeStaticMember))]` constrains a string
+  property to a fixed value set (e.g. `FormControl.Control` →
+  `StandardFormControls.FriendlyNames`), read via reflection so the schema's
+  enum can never drift from what validation actually accepts.
+
+**`schema/*.schema.json` regenerates itself automatically** — the `.csproj`'s
+own `RegenerateSchemas` target runs `schema export --for table/view/form`
+after every ordinary `dotnet build`/`dotnet publish`, so these three
+committed files can no longer silently drift from a model's actual shape the
+way they previously could when regenerating them meant a developer had to
+remember to run `schema export` by hand (confirmed missed at least once:
+`schema/form.schema.json` shipped without several fields for one whole PR
+before this target existed). Skipped for a design-time build (an IDE's own
+continuous background build, not a real one) and for the standalone win-x64
+publish (`PublishSingleFile=true` — that output doesn't carry the XML doc
+file `YamlSchemaGenerator` needs; see above). A plain `dotnet build` still
+writes these files as a side effect, so expect them to show as modified in
+`git status` whenever a curated model's shape or doc comments change — that's
+the target working, not a mistake; review and commit the diff like any other
+generated-but-committed artifact.
+
+### `EnvironmentService`/`IEnvironmentService` — not real yet
+
+Both are explicitly labeled placeholder/example code in their own doc
+comments: `IEnvironmentService.cs` calls itself "an example service... showing
+how sibling sub-commands can depend on the same injected service," and
+`EnvironmentService.cs` hardcodes `["dev","test","prod"]` and does
+`Task.Delay(200)` as a stand-in for real sync logic. **This is unrelated
+scaffolding, not a real config layer** — actual environment URLs are passed
+directly as CLI arguments (`-u|--url` on `auth login`), and the *current*
+signed-in environment is tracked by `profile.json` (see Authentication
+above), not by this service. Don't build on top of `IEnvironmentService`
+assuming it's wired into real Dataverse lookups — it isn't yet.
+
+## FormXML schema validation
+
+`Resources/FormXmlSchema/` vendors Microsoft's own official FormXML XSD
+(`FormXml.xsd` + its `RibbonCore`/`RibbonTypes`/`RibbonWSS` includes) verbatim
+from Microsoft's downloadable "Schemas.zip" — see `NOTICE.md` for exact
+provenance. It's embedded (`<EmbeddedResource Include="Resources/FormXmlSchema/*.xsd" />`),
+not just copied to the output directory, so the standalone single-file build
+still has it available.
+
+`FormXmlValidator` validates rebuilt FormXML against this schema before
+`form build-xml`/`form import` write anything. The two commands treat a
+violation differently:
+
+- `form build-xml` only ever writes a **local file** — every violation is
+  printed, but nothing blocks the write, since there's nothing live at stake.
+- `form import` writes to a **live environment** — only two specific,
+  confirmed-safe violation patterns are treated as informational:
+  `headerdensity`/`showinformselector` attributes real Dataverse FormXML
+  carries that the XSD doesn't declare, and the Timeline control's
+  `UClientActivitiesConfigurationJSON`/`UClientNotesConfigurationJSON`
+  (also missing from the vendored XSD, but standard Microsoft-shipped
+  content, confirmed safe by the user's own explicit D365 admin knowledge
+  rather than a live write). Every other violation blocks the import
+  outright (before the confirmation prompt) unless
+  `--allow-schema-violations` is passed.
+
+That split exists because of a real incident, not caution for its own sake: a
+*different* violation was once assumed similarly harmless and a real
+`form import` attempt failed live with a raw Dataverse 400. See
+[`yaml-conventions.md`](yaml-conventions.md#rebuilding-formxml-form-build-xml)
+for the full incident history and exactly which patterns are exempt. If
+you're ever tempted to widen `FormXmlValidationMessage.IsKnownHarmless`
+further, that history is the reason to be very sure first — confirm against
+a real write or an equally direct confirmation, not just because the
+content looks like it ought to be fine.
+
+## YAML conventions
+
+The rules the exported/imported YAML itself follows — what an absent field
+means, how a form control's `<parameters>` maps to YAML and back, why raw
+platform identifiers are never guessed at — are documented in full, with
+their empirical justification, in [`yaml-conventions.md`](yaml-conventions.md).
+That document is written for exactly two audiences: whoever's extending the
+import/export direction, and anyone hand-editing the YAML — read it before
+changing any reader/writer in `Services/Conversion/`.
+
+## Build & the dev inner loop
+
+```
+dotnet build "D365 Architect/D365 Architect.csproj" -c Release
+dotnet run --project "D365 Architect" -- <command> [options]
+```
+
+Both use the framework-dependent output — the one `schema export` needs (see
+above), and the faster loop for everyday changes. The standalone,
+single-file `win-x64` build (`dotnet publish ... -p:PublishProfile=win-x64`)
+is what CI publishes as a release asset; see the root README for the full
+command and what it produces.
+
+## Versioning & releases
+
+Versioning comes from **[MinVer](https://github.com/adamralph/minver)**
+(csproj `PackageReference`), not a hand-maintained version field:
+`MinVerTagPrefix` is set to `v`, so an annotated `v1.2.3` git tag on `main`
+yields a clean release version, and any other commit auto-increments the
+patch and appends a `-alpha.0.{commits since tag}` pre-release suffix.
+
+**Two things depend on this that are easy to get wrong if you're touching a
+model's version-sensitive output**:
+- The exe's own `AssemblyVersion`/`FileVersion`/`AssemblyInformationalVersion`
+  come from MinVer at build time — nothing to maintain by hand.
+- `dotnet build -getProperty:Version` **silently reports the SDK's fallback
+  `1.0.0` instead of the real MinVer version unless you also pass `-t:Build`**
+  — bare `-getProperty` skips target execution entirely, so MinVer's own
+  version-computing task never runs. This bit CI during development (see the
+  comment in `publish-release.yml`) — worth knowing if you ever script
+  against the computed version yourself.
+
+`.github/workflows/publish-release.yml` builds and publishes the standalone
+win-x64 exe as a GitHub Release on every push to `main` (a real release —
+either a maintainer's own pushed `vX.Y.Z` tag, or an auto-tagged patch bump)
+and `develop` (always a pre-release, tagged with the raw MinVer version
+string and marked "Pre-release" on GitHub). It also accepts
+`workflow_dispatch` for a manual re-run against any branch (once the workflow
+file itself has reached `main` — GitHub won't let you dispatch a workflow
+that doesn't exist yet on the default branch).
+
+## Testing
+
+**`D365 Architect.Tests`** (xUnit) covers the pure logic in `Services/Conversion/`
+and `Services/Dataverse/` — every reader, JSON builder, validator, and diff
+algorithm that doesn't itself make an HTTP call. Run it with:
+
+```
+dotnet test "D365 Architect.slnx"
+```
+
+CI (`.github/workflows/build-and-test.yml`) runs the same on every push and
+pull request, against every branch.
+
+**What's covered, and why it's structured this way:**
+
+- **Readers/builders/validators/diffing are tested directly against literal
+  JSON fixtures** — the exact shapes Dataverse's Web API actually returns
+  (`EntityJsonDefinitionReaderTests`, `GlobalChoiceJsonReaderTests`,
+  `AttributeMetadataJsonBuilderTests`, `GlobalChoiceMetadataJsonBuilderTests`,
+  `AttributeChangeValidatorTests`, `OptionSetDifferTests`, ...). Several of
+  these tests exist specifically because they encode a bug that was only ever
+  discoverable by testing against a real tenant — see "Regression tests worth
+  reading before touching their subject" below.
+- **`TableImportService`/`GlobalChoiceImportService`/`ViewImportService`'s own
+  orchestration logic** is tested against a hand-written
+  `FakeDataverseClient` (`TestSupport/FakeDataverseClient.cs`) — no mocking
+  library, matching this codebase's own preference for explicit code. Every
+  method not specifically configured by a test throws
+  `NotImplementedException` rather than silently returning a default, so a
+  test that exercises an unexpected call path fails loudly instead of passing
+  on a bogus result.
+- **`FormXmlWriter`/`FormJsonDefinitionReader`** get a dedicated round-trip
+  suite (`FormXmlWriterTests`) — patch-mode preservation of unmanaged
+  elements, dashboard refusal, and the deterministic-id guarantee that makes
+  re-running on unchanged YAML byte-identical.
+- **Internal classes are tested directly**, not just through their public
+  callers — the main project's `csproj` grants `D365 Architect.Tests`
+  `InternalsVisibleTo` for exactly this.
+
+**What this suite deliberately doesn't cover**: anything that needs a real
+HTTP round-trip to Dataverse — `DataverseClient` itself, `MsalAuthenticationService`,
+and the exact wire-level behavior any live API call actually has (a
+`JsonContent.Create` camelCasing quirk, a 204 that silently didn't apply, a
+missing `@odata.type` producing an entirely different failure than expected —
+see the regression list below for real examples). Nothing short of hitting a
+real tenant catches those; when you touch `DataverseClient`, `TableImportService`,
+`GlobalChoiceImportService`, `FormImportService`, or `ViewImportService`'s
+Dataverse-facing behavior, the existing bar (verify against a real
+environment and document what you checked, "confirmed live" style, the way
+the doc comments throughout `Services/Conversion/`/`Services/Dataverse/`
+already do) still applies **in addition to**, not instead of, adding/updating
+a unit test for the logic you can cover without one.
+
+**Regression tests worth reading before touching their subject** — each of
+these exists because a real, live Dataverse tenant behaved differently than
+the code assumed, confirmed and fixed in a since-merged session, and every one
+is called out by name in its test's own doc comment or `[Fact]` name:
+
+- `DataverseClientSolutionEntityLookupTests` — a solution-owned table (the
+  common case: created inside that solution, or set to "include all
+  objects") gets no individual Attribute/View/SystemForm solutioncomponents
+  at all — confirmed exporting a real seeded table via `solution export`
+  before the fix, which silently came back with `attributes: []`. See
+  `IsSolutionEntityIncludingSubcomponentsAsync`'s own doc comment.
+- `DataverseClientSolutionHeaderTests` — a brand-new column/relationship/
+  global choice never joins any solution unless the create request itself
+  carries `MSCRM.SolutionUniqueName` — confirmed live seeding a real global
+  choice via `solution import` and finding it missing from a follow-up
+  `solution export` of the same solution, despite having just been created
+  successfully.
+- `EntityJsonDefinitionReaderTests` — a live MultiSelectPicklist column's
+  `AttributeType` reports as `"Virtual"`, not `"MultiSelectPicklist"`; a
+  genuinely local option set can populate *both* `OptionSet` and
+  `GlobalOptionSet`, distinguishable only by `GlobalOptionSet`'s own
+  `IsGlobal` flag; a multi-line label containing `\r\n` must be normalized to
+  `\n` on read or it never round-trips through YAML byte-identical.
+- `AttributeMetadataJsonBuilderTests`/`GlobalChoiceMetadataJsonBuilderTests` —
+  binding a Picklist to an existing global choice needs the choice's raw
+  `MetadataId` GUID, never the `Name=` alternate-key form; an attribute/choice
+  update's cloned body needs `@odata.type` set explicitly or Dataverse
+  silently rejects whichever property doesn't belong on whatever it falls
+  back to resolving; a global choice's cloned update body must have `Options`
+  stripped before the PUT.
+- `AttributeChangeValidatorTests` — a BigInt column's attribute PUT always
+  succeeds (204) without ever actually persisting the change, so updating one
+  is refused outright rather than silently claiming success; a State option's
+  "no live match" warning must never be suppressed by a coincidental label
+  match the way Status's genuinely is.
+- `TableImportServiceTests`/`GlobalChoiceImportServiceTests` — two new
+  columns/choices in the same import can't silently collide on a
+  `SchemaName`/`RelationshipSchemaName`/`Name` Dataverse itself requires to be
+  unique.
+- `FormControlValidatorTests` — a control with both `Control` and
+  `CustomControlId` set must always be reported, even when the rendered
+  FormXML happens not to change as a result (`form import`'s own
+  `SkipBeforePrinting` is where that "even when nothing else differs" case
+  actually gets exercised end to end).
+
+## Conventions to follow
+
+- **`Nullable`/`ImplicitUsings` are both enabled**, and
+  `GenerateDocumentationFile` is `true` with `CS1591` suppressed — doc
+  comments aren't just decoration here, they feed `YamlSchemaGenerator`'s
+  output directly. Write them as design rationale (why, with evidence), the
+  way the existing ones read, not as a restatement of the signature.
+- **Errors are domain-specific exceptions**, caught per-command and rendered
+  as a plain red message — never let a raw exception/stack trace reach the
+  console.
+- **Never guess at a Dataverse API shape or bound** — every validation rule in
+  `AttributeChangeValidator`/`AttributeMetadataJsonBuilder` cites where it was
+  confirmed (a specific Microsoft Learn page, or "corroborated but not
+  independently cited" when that's genuinely the best available). If you add
+  a new check, cite it the same way, or flag explicitly that you didn't.
+- **YAML keys read as real words**, never source-format sigils (`@attr`/
+  `#text`) — see [`yaml-conventions.md`](yaml-conventions.md) Rule 2.
+- **An absent YAML field always means "left at Dataverse's own default"** —
+  never silently repurpose omission to mean something else; use
+  `DefaultValueConventions.cs`'s existing helpers, or add a new one following
+  the same confirmed-not-guessed standard, if you need another one.
+- **Destructive operations don't get silently automated**: `table import`
+  never deletes a column, `form import`/`view import` never create a
+  record that doesn't already exist. If you're adding a new import path,
+  keep that bar — surface what *would* change and let the user opt in,
+  rather than making the tool more automatically destructive by default.

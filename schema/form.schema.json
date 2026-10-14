@@ -1,0 +1,959 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "D365 Architect form definition",
+  "description": "Declarative YAML shape for a Dynamics form, produced by `d365architect form export`. A field left out of this file was left at Dataverse's own default, not \"unknown\" — see each field's own description for what that default is. Editing this file back into Dataverse (via the matching `import` command) will leave an omitted field at that default rather than whatever it happened to be before.",
+  "type": "object",
+  "properties": {
+    "form": {
+      "description": "The form's display name, e.g. \"Account Main Form\" — written as the top-level \"form\" key.",
+      "type": "string"
+    },
+    "entity": {
+      "description": "Logical name of the table this form belongs to, e.g. \"account\" (the systemform's objecttypecode).",
+      "type": "string"
+    },
+    "formId": {
+      "description": "The form's unique id in Dataverse. Used to match this file back to the exact form on import/rebuild, even if it's since been renamed or another form shares its name — leave as exported. Only absent for a file exported before this field existed.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "description": {
+      "description": "A description of the form, shown in the form picker.",
+      "type": "string"
+    },
+    "type": {
+      "description": "The kind of form this is, e.g. \"Quick Create\" or \"Dashboard\" — the systemform \"type\" option set's own label (see https://learn.microsoft.com/power-apps/developer/data-platform/reference/entities/systemform). Only present when it's something other than \"Main\" — an ordinary main form, and by far the most common case. Omit for a Main form; applying this file back won't change its type.",
+      "type": "string"
+    },
+    "isDefault": {
+      "description": "Only present when true — a table typically has one default form per type, and false is the common case for any given form. Omit to leave this as a non-default form; applying this file back won't make it the default.",
+      "type": "boolean"
+    },
+    "formActivationState": {
+      "description": "\"Inactive\" for a form that hasn't been published/activated yet. Absent — Dataverse's \"Active\" state — is the common case for any form that's actually in use. Omit to leave this form active; applying this file back won't deactivate it.",
+      "type": "string"
+    },
+    "isCustomizable": {
+      "description": "Only present when false — true (customizable) is the common case. Omit to leave this form customizable; applying this file back won't lock it down.",
+      "type": "boolean"
+    },
+    "tabs": {
+      "description": "The form's tabs, each with its columns, sections, and controls. Empty for a dashboard (not decomposed) or a form Dataverse returned no layout for.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "description": "The tab's internal name, e.g. \"tab_1\".",
+            "type": "string"
+          },
+          "label": {
+            "description": "The tab's display label.",
+            "type": "string"
+          },
+          "labelLanguageCode": {
+            "description": "Label's own Dataverse languagecode, e.g. 1036 for French. Only present when it isn't 1033 (English) — confirmed live as a real gap otherwise: on a tenant whose base language isn't English, there's no 1033 label at all, so the primary label read back is genuinely in that other language, and writing it back always tagged as 1033 regardless would silently mislabel it. Absent (the common case) means 1033, same as every other field this tool omits at its default.",
+            "type": "integer"
+          },
+          "translations": {
+            "description": "This label's text in every language besides the one shown as Label, keyed by Dataverse's own languagecode (e.g. 1036 for French). Absent on a single-language tenant (the overwhelming common case) or when this tab has only its own.",
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "columns": {
+            "description": "The tab's side-by-side columns, left to right.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "width": {
+                  "description": "This column's relative width, e.g. \"50%\", \"33%\", \"100%\" — kept as Dataverse states it, not normalised.",
+                  "type": "string"
+                },
+                "sections": {
+                  "description": "The sections stacked in this column, top to bottom.",
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "description": "The section's internal name, e.g. \"tab_1_column_1_section_1\".",
+                        "type": "string"
+                      },
+                      "label": {
+                        "description": "The section's display label.",
+                        "type": "string"
+                      },
+                      "labelLanguageCode": {
+                        "description": "Label's own Dataverse languagecode, e.g. 1036 for French. Only present when it isn't 1033 (English) — see LabelLanguageCode's own doc comment for why. Absent (the common case) means 1033.",
+                        "type": "integer"
+                      },
+                      "translations": {
+                        "description": "This label's text in every language besides the one shown as Label, keyed by Dataverse's own languagecode (e.g. 1036 for French). Absent on a single-language tenant (the overwhelming common case) or when this section has only its own.",
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "string"
+                        }
+                      },
+                      "columns": {
+                        "description": "How many side-by-side sub-columns this section lays its own fields into — independent of the tab's own columns. Only present when greater than 1 — a single column is the common case; applying this file back won't change a section's own column count.",
+                        "type": "integer"
+                      },
+                      "controls": {
+                        "description": "The section's fields, in reading order (left to right, top to bottom).",
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "description": "The control's internal id, e.g. \"name\" or \"CasesForCustomer\" (FormXML's `control` element's own `id`).",
+                              "type": "string"
+                            },
+                            "field": {
+                              "description": "The attribute logical name this control is bound to, e.g. \"name\" (FormXML's `datafieldname`). Null for a control that isn't bound to a single field — a subgrid, web resource, iframe, quick view control, or timeline.",
+                              "type": "string"
+                            },
+                            "label": {
+                              "description": "The field's display label on the form.",
+                              "type": "string"
+                            },
+                            "labelLanguageCode": {
+                              "description": "Label's own Dataverse languagecode, e.g. 1036 for French. Only present when it isn't 1033 (English) — see LabelLanguageCode's own doc comment for why. Absent (the common case) means 1033.",
+                              "type": "integer"
+                            },
+                            "translations": {
+                              "description": "This label's text in every language besides the one shown as Label, keyed by Dataverse's own languagecode (e.g. 1036 for French). Absent on a single-language tenant (the overwhelming common case) or when this control has only its own.",
+                              "type": "object",
+                              "additionalProperties": {
+                                "type": "string"
+                              }
+                            },
+                            "control": {
+                              "description": "Which control renders this cell — a Dataverse standard control by name, e.g. \"SingleLineText\", \"Lookup\", \"Subgrid\". Use customControlId instead for a custom/PCF control or one not in this list.",
+                              "type": "string",
+                              "enum": [
+                                "ActivitiesGrid",
+                                "Currency",
+                                "DateAndTime",
+                                "Decimal",
+                                "Email",
+                                "IFrame",
+                                "Lookup",
+                                "MultiSelectOptionSet",
+                                "MultilineText",
+                                "Notes",
+                                "OptionSet",
+                                "PartyList",
+                                "Phone",
+                                "QuickViewForm",
+                                "SingleLineText",
+                                "Subgrid",
+                                "TickerSymbol",
+                                "Timeline",
+                                "TwoOptions",
+                                "TwoOptionsCheckbox",
+                                "Url",
+                                "WebResource",
+                                "WebResourceImage",
+                                "WebResourceSilverlight",
+                                "WholeNumber"
+                              ]
+                            },
+                            "customControlId": {
+                              "description": "The control's raw Dataverse class id (a GUID), for a custom/PCF control or a standard one not yet recognized by name. Use control instead when the control is one of Dataverse's own standard ones.",
+                              "type": "string"
+                            },
+                            "isUnbound": {
+                              "description": "Only present when true — an unbound lookup control (its own `TargetEntities` parameter list names which tables it can point at, rather than the control being bound to a real relationship). Omit for an ordinary bound control; applying this file back won't unbind it.",
+                              "type": "boolean"
+                            },
+                            "disabled": {
+                              "description": "Only present when true — most controls on a form are enabled/editable. Omit to leave this control enabled; applying this file back won't disable it.",
+                              "type": "boolean"
+                            },
+                            "isRequired": {
+                              "description": "Only present when true — this field is forced \"Business Required\" on this form specifically, independent of the column's own metadata-level requirement level. Omit for the common case (no form-level override); applying this file back won't add one.",
+                              "type": "boolean"
+                            },
+                            "visible": {
+                              "description": "Only present when false — a deliberately hidden field, distinct from one simply not on the form at all. Omit to leave this control visible; applying this file back won't hide it.",
+                              "type": "boolean"
+                            },
+                            "showLabel": {
+                              "description": "Only present when false — this control's own field label is deliberately hidden (common on a subgrid, which already shows its own title bar and doesn't need a redundant label above it). Omit to leave this control's label shown; applying this file back won't hide it.",
+                              "type": "boolean"
+                            },
+                            "availableOnPhone": {
+                              "description": "Whether this control shows on the phone-optimized layout — FormXML's `availableforphone` attribute, shown exactly as stated rather than defaulted/stripped like this file's other booleans: which direction (true or false) is the common case for this specific attribute hasn't been confirmed against real tenant samples, so nothing is assumed either way. Absent when this control's FormXML doesn't set it at all.",
+                              "type": "boolean"
+                            },
+                            "columnSpan": {
+                              "description": "How many of the section's own sub-columns this control's cell spans. Only present when greater than 1 — a single column is the common case; applying this file back won't change a cell's own span.",
+                              "type": "integer"
+                            },
+                            "rowSpan": {
+                              "description": "How many rows this control's cell spans — used to make a tall control like a subgrid or notes timeline visually occupy several otherwise-empty rows rather than being squeezed into one. Only present when greater than 1 — a single row is the common case; applying this file back won't change a cell's own span.",
+                              "type": "integer"
+                            },
+                            "parameters": {
+                              "description": "This control's own settings — e.g. a subgrid's target table, relationship, and view; a web resource's name; a quick view control's source table and form. Each setting keeps its own platform name as its key; a setting with its own sub-settings becomes a nested map. Absent when the control has none set."
+                            },
+                            "additionalControls": {
+                              "description": "Alternate controls attached to this one via the form designer's \"add a component\" feature — e.g. a Calendar control added to a subgrid, or per-client (Web/Phone/Tablet) replacements. Absent when this control has none.",
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "id": {
+                                    "description": "This alternate's own class id (a GUID), when it's identified that way — mutually exclusive with name.",
+                                    "type": "string"
+                                  },
+                                  "name": {
+                                    "description": "This alternate's fully-qualified PCF control name, e.g. \"MscrmControls.FieldControls.RecentRecords\" — mutually exclusive with id.",
+                                    "type": "string"
+                                  },
+                                  "formFactor": {
+                                    "description": "Which client this alternate applies to (Web/Phone/Tablet), as Dataverse's raw integer — not mapped to a friendly name, since no authoritative reference for the values was found.",
+                                    "type": "integer"
+                                  },
+                                  "version": {
+                                    "description": "The alternate control's version.",
+                                    "type": "string"
+                                  },
+                                  "parameters": {
+                                    "description": "This alternate's own settings, same shape as a control's own parameters."
+                                  }
+                                },
+                                "additionalProperties": false
+                              }
+                            },
+                            "events": {
+                              "description": "Field-level event bindings scoped to this control specifically (e.g. an \"on change\" handler for this one field) — distinct from the form-wide event bindings at the top level. Absent when this control has none.",
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "name": {
+                                    "description": "The event's own name, e.g. \"onload\", or a custom name for a field-level event tied to attribute.",
+                                    "type": "string"
+                                  },
+                                  "attribute": {
+                                    "description": "The attribute logical name this event fires for, when it's field-level (a \"field changed\" event) rather than form-level.",
+                                    "type": "string"
+                                  },
+                                  "active": {
+                                    "description": "Whether this event is active.",
+                                    "type": "boolean"
+                                  },
+                                  "handlers": {
+                                    "description": "Handlers configured through the form designer's own \"Event Handlers\" UI. Absent when there are none.",
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "functionName": {
+                                          "description": "The bound function's fully-qualified name, e.g. \"AppCommon.Account.Instance.parentaccountid_setadditionalparams\".",
+                                          "type": "string"
+                                        },
+                                        "libraryName": {
+                                          "description": "The web resource this function comes from, e.g. \"AppCommon/Account/Account_main_system_library.js\".",
+                                          "type": "string"
+                                        },
+                                        "enabled": {
+                                          "description": "Whether this handler is enabled.",
+                                          "type": "boolean"
+                                        },
+                                        "passExecutionContext": {
+                                          "description": "Whether the platform passes its execution context as this function's first argument.",
+                                          "type": "boolean"
+                                        }
+                                      },
+                                      "additionalProperties": false,
+                                      "required": [
+                                        "functionName",
+                                        "libraryName"
+                                      ]
+                                    }
+                                  },
+                                  "internalHandlers": {
+                                    "description": "Handlers the platform itself injects (e.g. for a related-field default) rather than ones a maker configured. Absent when there are none.",
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "functionName": {
+                                          "description": "The bound function's fully-qualified name, e.g. \"AppCommon.Account.Instance.parentaccountid_setadditionalparams\".",
+                                          "type": "string"
+                                        },
+                                        "libraryName": {
+                                          "description": "The web resource this function comes from, e.g. \"AppCommon/Account/Account_main_system_library.js\".",
+                                          "type": "string"
+                                        },
+                                        "enabled": {
+                                          "description": "Whether this handler is enabled.",
+                                          "type": "boolean"
+                                        },
+                                        "passExecutionContext": {
+                                          "description": "Whether the platform passes its execution context as this function's first argument.",
+                                          "type": "boolean"
+                                        }
+                                      },
+                                      "additionalProperties": false,
+                                      "required": [
+                                        "functionName",
+                                        "libraryName"
+                                      ]
+                                    }
+                                  }
+                                },
+                                "additionalProperties": false
+                              }
+                            },
+                            "classId": {
+                              "description": "Deprecated — use control or customControlId instead. Still recognized for compatibility with a file exported before those existed, but never written by a fresh export.",
+                              "type": "string"
+                            }
+                          },
+                          "additionalProperties": false,
+                          "required": [
+                            "id"
+                          ]
+                        }
+                      },
+                      "visible": {
+                        "description": "Only present when false — a deliberately hidden section, distinct from one simply not on the form at all. Omit to leave this section visible; applying this file back won't hide it.",
+                        "type": "boolean"
+                      },
+                      "showLabel": {
+                        "description": "Only present when false — this section's own header label is deliberately hidden. Omit to leave this section's label shown; applying this file back won't hide it.",
+                        "type": "boolean"
+                      },
+                      "availableOnPhone": {
+                        "description": "Whether this section shows on the phone-optimized layout — FormXML's `availableforphone` attribute, shown exactly as stated rather than defaulted/stripped: which direction is the common case hasn't been confirmed against real tenant samples, so nothing is assumed either way. Absent when this section's FormXML doesn't set it at all.",
+                        "type": "boolean"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "visible": {
+            "description": "Only present when false — a deliberately hidden tab, distinct from one simply not on the form at all. Omit to leave this tab visible; applying this file back won't hide it.",
+            "type": "boolean"
+          },
+          "collapsible": {
+            "description": "Whether an end user can collapse/expand this tab — FormXML's `collapsible` attribute, shown exactly as stated rather than defaulted/stripped: which direction (true or false) is the common case hasn't been confirmed against real tenant samples, so nothing is assumed either way. Absent when this tab's FormXML doesn't set it at all.",
+            "type": "boolean"
+          },
+          "availableOnPhone": {
+            "description": "Whether this tab shows on the phone-optimized layout — FormXML's `availableforphone` attribute, shown exactly as stated rather than defaulted/stripped: which direction is the common case hasn't been confirmed against real tenant samples, so nothing is assumed either way. Absent when this tab's FormXML doesn't set it at all.",
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "headerControls": {
+      "description": "Controls pinned to the form's header bar, outside any tab. Absent when the form has none.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "description": "The control's internal id, e.g. \"name\" or \"CasesForCustomer\" (FormXML's `control` element's own `id`).",
+            "type": "string"
+          },
+          "field": {
+            "description": "The attribute logical name this control is bound to, e.g. \"name\" (FormXML's `datafieldname`). Null for a control that isn't bound to a single field — a subgrid, web resource, iframe, quick view control, or timeline.",
+            "type": "string"
+          },
+          "label": {
+            "description": "The field's display label on the form.",
+            "type": "string"
+          },
+          "labelLanguageCode": {
+            "description": "Label's own Dataverse languagecode, e.g. 1036 for French. Only present when it isn't 1033 (English) — see LabelLanguageCode's own doc comment for why. Absent (the common case) means 1033.",
+            "type": "integer"
+          },
+          "translations": {
+            "description": "This label's text in every language besides the one shown as Label, keyed by Dataverse's own languagecode (e.g. 1036 for French). Absent on a single-language tenant (the overwhelming common case) or when this control has only its own.",
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "control": {
+            "description": "Which control renders this cell — a Dataverse standard control by name, e.g. \"SingleLineText\", \"Lookup\", \"Subgrid\". Use customControlId instead for a custom/PCF control or one not in this list.",
+            "type": "string",
+            "enum": [
+              "ActivitiesGrid",
+              "Currency",
+              "DateAndTime",
+              "Decimal",
+              "Email",
+              "IFrame",
+              "Lookup",
+              "MultiSelectOptionSet",
+              "MultilineText",
+              "Notes",
+              "OptionSet",
+              "PartyList",
+              "Phone",
+              "QuickViewForm",
+              "SingleLineText",
+              "Subgrid",
+              "TickerSymbol",
+              "Timeline",
+              "TwoOptions",
+              "TwoOptionsCheckbox",
+              "Url",
+              "WebResource",
+              "WebResourceImage",
+              "WebResourceSilverlight",
+              "WholeNumber"
+            ]
+          },
+          "customControlId": {
+            "description": "The control's raw Dataverse class id (a GUID), for a custom/PCF control or a standard one not yet recognized by name. Use control instead when the control is one of Dataverse's own standard ones.",
+            "type": "string"
+          },
+          "isUnbound": {
+            "description": "Only present when true — an unbound lookup control (its own `TargetEntities` parameter list names which tables it can point at, rather than the control being bound to a real relationship). Omit for an ordinary bound control; applying this file back won't unbind it.",
+            "type": "boolean"
+          },
+          "disabled": {
+            "description": "Only present when true — most controls on a form are enabled/editable. Omit to leave this control enabled; applying this file back won't disable it.",
+            "type": "boolean"
+          },
+          "isRequired": {
+            "description": "Only present when true — this field is forced \"Business Required\" on this form specifically, independent of the column's own metadata-level requirement level. Omit for the common case (no form-level override); applying this file back won't add one.",
+            "type": "boolean"
+          },
+          "visible": {
+            "description": "Only present when false — a deliberately hidden field, distinct from one simply not on the form at all. Omit to leave this control visible; applying this file back won't hide it.",
+            "type": "boolean"
+          },
+          "showLabel": {
+            "description": "Only present when false — this control's own field label is deliberately hidden (common on a subgrid, which already shows its own title bar and doesn't need a redundant label above it). Omit to leave this control's label shown; applying this file back won't hide it.",
+            "type": "boolean"
+          },
+          "availableOnPhone": {
+            "description": "Whether this control shows on the phone-optimized layout — FormXML's `availableforphone` attribute, shown exactly as stated rather than defaulted/stripped like this file's other booleans: which direction (true or false) is the common case for this specific attribute hasn't been confirmed against real tenant samples, so nothing is assumed either way. Absent when this control's FormXML doesn't set it at all.",
+            "type": "boolean"
+          },
+          "columnSpan": {
+            "description": "How many of the section's own sub-columns this control's cell spans. Only present when greater than 1 — a single column is the common case; applying this file back won't change a cell's own span.",
+            "type": "integer"
+          },
+          "rowSpan": {
+            "description": "How many rows this control's cell spans — used to make a tall control like a subgrid or notes timeline visually occupy several otherwise-empty rows rather than being squeezed into one. Only present when greater than 1 — a single row is the common case; applying this file back won't change a cell's own span.",
+            "type": "integer"
+          },
+          "parameters": {
+            "description": "This control's own settings — e.g. a subgrid's target table, relationship, and view; a web resource's name; a quick view control's source table and form. Each setting keeps its own platform name as its key; a setting with its own sub-settings becomes a nested map. Absent when the control has none set."
+          },
+          "additionalControls": {
+            "description": "Alternate controls attached to this one via the form designer's \"add a component\" feature — e.g. a Calendar control added to a subgrid, or per-client (Web/Phone/Tablet) replacements. Absent when this control has none.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "description": "This alternate's own class id (a GUID), when it's identified that way — mutually exclusive with name.",
+                  "type": "string"
+                },
+                "name": {
+                  "description": "This alternate's fully-qualified PCF control name, e.g. \"MscrmControls.FieldControls.RecentRecords\" — mutually exclusive with id.",
+                  "type": "string"
+                },
+                "formFactor": {
+                  "description": "Which client this alternate applies to (Web/Phone/Tablet), as Dataverse's raw integer — not mapped to a friendly name, since no authoritative reference for the values was found.",
+                  "type": "integer"
+                },
+                "version": {
+                  "description": "The alternate control's version.",
+                  "type": "string"
+                },
+                "parameters": {
+                  "description": "This alternate's own settings, same shape as a control's own parameters."
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "events": {
+            "description": "Field-level event bindings scoped to this control specifically (e.g. an \"on change\" handler for this one field) — distinct from the form-wide event bindings at the top level. Absent when this control has none.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "description": "The event's own name, e.g. \"onload\", or a custom name for a field-level event tied to attribute.",
+                  "type": "string"
+                },
+                "attribute": {
+                  "description": "The attribute logical name this event fires for, when it's field-level (a \"field changed\" event) rather than form-level.",
+                  "type": "string"
+                },
+                "active": {
+                  "description": "Whether this event is active.",
+                  "type": "boolean"
+                },
+                "handlers": {
+                  "description": "Handlers configured through the form designer's own \"Event Handlers\" UI. Absent when there are none.",
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "functionName": {
+                        "description": "The bound function's fully-qualified name, e.g. \"AppCommon.Account.Instance.parentaccountid_setadditionalparams\".",
+                        "type": "string"
+                      },
+                      "libraryName": {
+                        "description": "The web resource this function comes from, e.g. \"AppCommon/Account/Account_main_system_library.js\".",
+                        "type": "string"
+                      },
+                      "enabled": {
+                        "description": "Whether this handler is enabled.",
+                        "type": "boolean"
+                      },
+                      "passExecutionContext": {
+                        "description": "Whether the platform passes its execution context as this function's first argument.",
+                        "type": "boolean"
+                      }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "functionName",
+                      "libraryName"
+                    ]
+                  }
+                },
+                "internalHandlers": {
+                  "description": "Handlers the platform itself injects (e.g. for a related-field default) rather than ones a maker configured. Absent when there are none.",
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "functionName": {
+                        "description": "The bound function's fully-qualified name, e.g. \"AppCommon.Account.Instance.parentaccountid_setadditionalparams\".",
+                        "type": "string"
+                      },
+                      "libraryName": {
+                        "description": "The web resource this function comes from, e.g. \"AppCommon/Account/Account_main_system_library.js\".",
+                        "type": "string"
+                      },
+                      "enabled": {
+                        "description": "Whether this handler is enabled.",
+                        "type": "boolean"
+                      },
+                      "passExecutionContext": {
+                        "description": "Whether the platform passes its execution context as this function's first argument.",
+                        "type": "boolean"
+                      }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "functionName",
+                      "libraryName"
+                    ]
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "classId": {
+            "description": "Deprecated — use control or customControlId instead. Still recognized for compatibility with a file exported before those existed, but never written by a fresh export.",
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      }
+    },
+    "footerControls": {
+      "description": "Controls pinned to the form's footer bar, outside any tab. Absent when the form has none.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "description": "The control's internal id, e.g. \"name\" or \"CasesForCustomer\" (FormXML's `control` element's own `id`).",
+            "type": "string"
+          },
+          "field": {
+            "description": "The attribute logical name this control is bound to, e.g. \"name\" (FormXML's `datafieldname`). Null for a control that isn't bound to a single field — a subgrid, web resource, iframe, quick view control, or timeline.",
+            "type": "string"
+          },
+          "label": {
+            "description": "The field's display label on the form.",
+            "type": "string"
+          },
+          "labelLanguageCode": {
+            "description": "Label's own Dataverse languagecode, e.g. 1036 for French. Only present when it isn't 1033 (English) — see LabelLanguageCode's own doc comment for why. Absent (the common case) means 1033.",
+            "type": "integer"
+          },
+          "translations": {
+            "description": "This label's text in every language besides the one shown as Label, keyed by Dataverse's own languagecode (e.g. 1036 for French). Absent on a single-language tenant (the overwhelming common case) or when this control has only its own.",
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "control": {
+            "description": "Which control renders this cell — a Dataverse standard control by name, e.g. \"SingleLineText\", \"Lookup\", \"Subgrid\". Use customControlId instead for a custom/PCF control or one not in this list.",
+            "type": "string",
+            "enum": [
+              "ActivitiesGrid",
+              "Currency",
+              "DateAndTime",
+              "Decimal",
+              "Email",
+              "IFrame",
+              "Lookup",
+              "MultiSelectOptionSet",
+              "MultilineText",
+              "Notes",
+              "OptionSet",
+              "PartyList",
+              "Phone",
+              "QuickViewForm",
+              "SingleLineText",
+              "Subgrid",
+              "TickerSymbol",
+              "Timeline",
+              "TwoOptions",
+              "TwoOptionsCheckbox",
+              "Url",
+              "WebResource",
+              "WebResourceImage",
+              "WebResourceSilverlight",
+              "WholeNumber"
+            ]
+          },
+          "customControlId": {
+            "description": "The control's raw Dataverse class id (a GUID), for a custom/PCF control or a standard one not yet recognized by name. Use control instead when the control is one of Dataverse's own standard ones.",
+            "type": "string"
+          },
+          "isUnbound": {
+            "description": "Only present when true — an unbound lookup control (its own `TargetEntities` parameter list names which tables it can point at, rather than the control being bound to a real relationship). Omit for an ordinary bound control; applying this file back won't unbind it.",
+            "type": "boolean"
+          },
+          "disabled": {
+            "description": "Only present when true — most controls on a form are enabled/editable. Omit to leave this control enabled; applying this file back won't disable it.",
+            "type": "boolean"
+          },
+          "isRequired": {
+            "description": "Only present when true — this field is forced \"Business Required\" on this form specifically, independent of the column's own metadata-level requirement level. Omit for the common case (no form-level override); applying this file back won't add one.",
+            "type": "boolean"
+          },
+          "visible": {
+            "description": "Only present when false — a deliberately hidden field, distinct from one simply not on the form at all. Omit to leave this control visible; applying this file back won't hide it.",
+            "type": "boolean"
+          },
+          "showLabel": {
+            "description": "Only present when false — this control's own field label is deliberately hidden (common on a subgrid, which already shows its own title bar and doesn't need a redundant label above it). Omit to leave this control's label shown; applying this file back won't hide it.",
+            "type": "boolean"
+          },
+          "availableOnPhone": {
+            "description": "Whether this control shows on the phone-optimized layout — FormXML's `availableforphone` attribute, shown exactly as stated rather than defaulted/stripped like this file's other booleans: which direction (true or false) is the common case for this specific attribute hasn't been confirmed against real tenant samples, so nothing is assumed either way. Absent when this control's FormXML doesn't set it at all.",
+            "type": "boolean"
+          },
+          "columnSpan": {
+            "description": "How many of the section's own sub-columns this control's cell spans. Only present when greater than 1 — a single column is the common case; applying this file back won't change a cell's own span.",
+            "type": "integer"
+          },
+          "rowSpan": {
+            "description": "How many rows this control's cell spans — used to make a tall control like a subgrid or notes timeline visually occupy several otherwise-empty rows rather than being squeezed into one. Only present when greater than 1 — a single row is the common case; applying this file back won't change a cell's own span.",
+            "type": "integer"
+          },
+          "parameters": {
+            "description": "This control's own settings — e.g. a subgrid's target table, relationship, and view; a web resource's name; a quick view control's source table and form. Each setting keeps its own platform name as its key; a setting with its own sub-settings becomes a nested map. Absent when the control has none set."
+          },
+          "additionalControls": {
+            "description": "Alternate controls attached to this one via the form designer's \"add a component\" feature — e.g. a Calendar control added to a subgrid, or per-client (Web/Phone/Tablet) replacements. Absent when this control has none.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "description": "This alternate's own class id (a GUID), when it's identified that way — mutually exclusive with name.",
+                  "type": "string"
+                },
+                "name": {
+                  "description": "This alternate's fully-qualified PCF control name, e.g. \"MscrmControls.FieldControls.RecentRecords\" — mutually exclusive with id.",
+                  "type": "string"
+                },
+                "formFactor": {
+                  "description": "Which client this alternate applies to (Web/Phone/Tablet), as Dataverse's raw integer — not mapped to a friendly name, since no authoritative reference for the values was found.",
+                  "type": "integer"
+                },
+                "version": {
+                  "description": "The alternate control's version.",
+                  "type": "string"
+                },
+                "parameters": {
+                  "description": "This alternate's own settings, same shape as a control's own parameters."
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "events": {
+            "description": "Field-level event bindings scoped to this control specifically (e.g. an \"on change\" handler for this one field) — distinct from the form-wide event bindings at the top level. Absent when this control has none.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "description": "The event's own name, e.g. \"onload\", or a custom name for a field-level event tied to attribute.",
+                  "type": "string"
+                },
+                "attribute": {
+                  "description": "The attribute logical name this event fires for, when it's field-level (a \"field changed\" event) rather than form-level.",
+                  "type": "string"
+                },
+                "active": {
+                  "description": "Whether this event is active.",
+                  "type": "boolean"
+                },
+                "handlers": {
+                  "description": "Handlers configured through the form designer's own \"Event Handlers\" UI. Absent when there are none.",
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "functionName": {
+                        "description": "The bound function's fully-qualified name, e.g. \"AppCommon.Account.Instance.parentaccountid_setadditionalparams\".",
+                        "type": "string"
+                      },
+                      "libraryName": {
+                        "description": "The web resource this function comes from, e.g. \"AppCommon/Account/Account_main_system_library.js\".",
+                        "type": "string"
+                      },
+                      "enabled": {
+                        "description": "Whether this handler is enabled.",
+                        "type": "boolean"
+                      },
+                      "passExecutionContext": {
+                        "description": "Whether the platform passes its execution context as this function's first argument.",
+                        "type": "boolean"
+                      }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "functionName",
+                      "libraryName"
+                    ]
+                  }
+                },
+                "internalHandlers": {
+                  "description": "Handlers the platform itself injects (e.g. for a related-field default) rather than ones a maker configured. Absent when there are none.",
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "functionName": {
+                        "description": "The bound function's fully-qualified name, e.g. \"AppCommon.Account.Instance.parentaccountid_setadditionalparams\".",
+                        "type": "string"
+                      },
+                      "libraryName": {
+                        "description": "The web resource this function comes from, e.g. \"AppCommon/Account/Account_main_system_library.js\".",
+                        "type": "string"
+                      },
+                      "enabled": {
+                        "description": "Whether this handler is enabled.",
+                        "type": "boolean"
+                      },
+                      "passExecutionContext": {
+                        "description": "Whether the platform passes its execution context as this function's first argument.",
+                        "type": "boolean"
+                      }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "functionName",
+                      "libraryName"
+                    ]
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "classId": {
+            "description": "Deprecated — use control or customControlId instead. Still recognized for compatibility with a file exported before those existed, but never written by a fresh export.",
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      }
+    },
+    "ancestor": {
+      "description": "Which form this one is derived from (FormXML's `<ancestor>`) — common on an Interactive-experience-style form built from an older one. Absent when this form has no ancestor.",
+      "type": "string"
+    },
+    "hiddenFields": {
+      "description": "Fields the form tracks but never renders on any tab. Absent when there are none.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "field": {
+            "description": "The attribute logical name, e.g. \"address1_addressid\" (FormXML's `datafieldname`).",
+            "type": "string"
+          },
+          "classId": {
+            "description": "The field's raw control class id, if Dataverse records one for it.",
+            "type": "string"
+          },
+          "relationship": {
+            "description": "Ties this hidden field to a specific relationship, if Dataverse records one for it — FormXML's `relationship` attribute, alongside its sibling ClassId/Field on the same `<data>` element. Absent when this hidden field's FormXML doesn't set it.",
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "field"
+        ]
+      }
+    },
+    "displayCondition": {
+      "description": "When this form is offered as a choice for a record, and to whom. Absent when the form has none (every published Main form has one, but not every form type does).",
+      "type": "object",
+      "properties": {
+        "fallbackForm": {
+          "description": "Whether this form is the fallback when no other form's conditions match. Only present when true — most forms with display conditions aren't the fallback.",
+          "type": "boolean"
+        },
+        "order": {
+          "description": "Where this form ranks against a table's other forms when a user is offered a choice.",
+          "type": "integer"
+        },
+        "roles": {
+          "description": "Security role ids this form is restricted to. Absent means every role can see it (FormXML's `<Everyone />` — the common case); present means only these roles can (FormXML's `<Role Id=\"...\"/>` list) — the two are mutually exclusive on a real form.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "libraries": {
+      "description": "JavaScript libraries this form loads. Absent when there are none.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "description": "The web resource's path, e.g. \"AppCommon/Account/Account_main_system_library.js\".",
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "name"
+        ]
+      }
+    },
+    "events": {
+      "description": "The form's business logic — event/handler bindings, not layout. Absent when there are none.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "description": "The event's own name, e.g. \"onload\", or a custom name for a field-level event tied to attribute.",
+            "type": "string"
+          },
+          "attribute": {
+            "description": "The attribute logical name this event fires for, when it's field-level (a \"field changed\" event) rather than form-level.",
+            "type": "string"
+          },
+          "active": {
+            "description": "Whether this event is active.",
+            "type": "boolean"
+          },
+          "handlers": {
+            "description": "Handlers configured through the form designer's own \"Event Handlers\" UI. Absent when there are none.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "functionName": {
+                  "description": "The bound function's fully-qualified name, e.g. \"AppCommon.Account.Instance.parentaccountid_setadditionalparams\".",
+                  "type": "string"
+                },
+                "libraryName": {
+                  "description": "The web resource this function comes from, e.g. \"AppCommon/Account/Account_main_system_library.js\".",
+                  "type": "string"
+                },
+                "enabled": {
+                  "description": "Whether this handler is enabled.",
+                  "type": "boolean"
+                },
+                "passExecutionContext": {
+                  "description": "Whether the platform passes its execution context as this function's first argument.",
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "functionName",
+                "libraryName"
+              ]
+            }
+          },
+          "internalHandlers": {
+            "description": "Handlers the platform itself injects (e.g. for a related-field default) rather than ones a maker configured. Absent when there are none.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "functionName": {
+                  "description": "The bound function's fully-qualified name, e.g. \"AppCommon.Account.Instance.parentaccountid_setadditionalparams\".",
+                  "type": "string"
+                },
+                "libraryName": {
+                  "description": "The web resource this function comes from, e.g. \"AppCommon/Account/Account_main_system_library.js\".",
+                  "type": "string"
+                },
+                "enabled": {
+                  "description": "Whether this handler is enabled.",
+                  "type": "boolean"
+                },
+                "passExecutionContext": {
+                  "description": "Whether the platform passes its execution context as this function's first argument.",
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "functionName",
+                "libraryName"
+              ]
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "form",
+    "entity"
+  ]
+}

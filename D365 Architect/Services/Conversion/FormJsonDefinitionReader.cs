@@ -1,0 +1,674 @@
+using System.Text.Json;
+using System.Xml;
+using System.Xml.Linq;
+using D365Architect.Services.Conversion.Models;
+using D365Architect.Services.Conversion.Models.ControlDefaults;
+
+namespace D365Architect.Services.Conversion;
+
+/// <summary>
+/// Reads a set of <see cref="FormDefinition"/>s out of a live Dataverse Web
+/// API <c>systemforms</c> response body — see
+/// <see cref="Dataverse.IDataverseClient.GetFormDefinitionsJsonAsync"/>. The
+/// <see cref="ViewJsonDefinitionReader"/> counterpart for forms.
+/// </summary>
+public sealed class FormJsonDefinitionReader
+{
+    /// <summary>Maps a systemform's raw `type` to its option set's own label.</summary>
+    private static readonly IReadOnlyDictionary<int, string> TypeNames = new Dictionary<int, string>
+    {
+        [0] = "Dashboard",
+        [1] = "AppointmentBook",
+        [2] = "Main",
+        [3] = "MiniCampaignBO",
+        [4] = "Preview",
+        [5] = "Mobile - Express",
+        [6] = "Quick View Form",
+        [7] = "Quick Create",
+        [8] = "Dialog",
+        [9] = "Task Flow Form",
+        [10] = "InteractionCentricDashboard",
+        [11] = "Card",
+        [12] = "Main - Interactive experience",
+        [13] = "Contextual Dashboard",
+        [100] = "Other",
+        [101] = "MainBackup",
+        [102] = "AppointmentBookBackup",
+        [103] = "Power BI Dashboard",
+    };
+
+    public IReadOnlyList<FormDefinition> Read(string content) => Read(content, allowedFormIds: null);
+
+    /// <summary>
+    /// As <see cref="Read(string)"/>, but keeps only the forms whose formid
+    /// is in <paramref name="allowedFormIds"/> — how <see cref="FormExportService"/>
+    /// scopes an export down to just the forms a given solution actually
+    /// customizes (see <see cref="Dataverse.IDataverseClient.TryGetSolutionSystemFormIdsAsync"/>).
+    /// Null means no filtering: every form in the response is kept.
+    /// </summary>
+    public IReadOnlyList<FormDefinition> Read(string content, IReadOnlySet<Guid>? allowedFormIds)
+    {
+        JsonDocument doc;
+        try
+        {
+            doc = JsonDocument.Parse(content);
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidDataException($"Form metadata is not well-formed JSON: {ex.Message}", ex);
+        }
+
+        using (doc)
+        {
+            var formElements = doc.RootElement.TryGetProperty("value", out var valueProperty) && valueProperty.ValueKind == JsonValueKind.Array
+                ? valueProperty.EnumerateArray()
+                : Enumerable.Empty<JsonElement>();
+
+            if (allowedFormIds is not null)
+            {
+                formElements = formElements.Where(f => IsInAllowedSet(f, allowedFormIds));
+            }
+
+            return formElements.Select(ParseForm).ToList();
+        }
+    }
+
+    public IReadOnlyList<FormSummary> ReadSummaries(string content) => ReadSummaries(content, allowedFormIds: null);
+
+    /// <summary>
+    /// As <see cref="Read(string, IReadOnlySet{Guid}?)"/>, but reads only
+    /// enough of each form (id, name, type) to list it for a human to
+    /// choose from — never touches <c>formxml</c> at all, so this is cheap
+    /// even for a table whose forms are individually large. See
+    /// <see cref="Dataverse.IDataverseClient.GetFormSummariesJsonAsync"/>.
+    /// </summary>
+    public IReadOnlyList<FormSummary> ReadSummaries(string content, IReadOnlySet<Guid>? allowedFormIds)
+    {
+        JsonDocument doc;
+        try
+        {
+            doc = JsonDocument.Parse(content);
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidDataException($"Form metadata is not well-formed JSON: {ex.Message}", ex);
+        }
+
+        using (doc)
+        {
+            var formElements = doc.RootElement.TryGetProperty("value", out var valueProperty) && valueProperty.ValueKind == JsonValueKind.Array
+                ? valueProperty.EnumerateArray()
+                : Enumerable.Empty<JsonElement>();
+
+            if (allowedFormIds is not null)
+            {
+                formElements = formElements.Where(f => IsInAllowedSet(f, allowedFormIds));
+            }
+
+            return formElements.Select(ParseSummary).ToList();
+        }
+    }
+
+    private static FormSummary ParseSummary(JsonElement form)
+    {
+        var formId = form.TryGetProperty("formid", out var idProperty) && idProperty.ValueKind == JsonValueKind.String && Guid.TryParse(idProperty.GetString(), out var id)
+            ? id
+            : Guid.Empty;
+        var name = GetString(form, "name") ?? "(unnamed form)";
+        var type = GetInt(form, "type") is { } typeValue ? TypeNames.GetValueOrDefault(typeValue, typeValue.ToString()) : "Unknown";
+
+        return new FormSummary(formId, name, type);
+    }
+
+    private static bool IsInAllowedSet(JsonElement form, IReadOnlySet<Guid> allowedFormIds) =>
+        form.TryGetProperty("formid", out var idProperty)
+        && idProperty.ValueKind == JsonValueKind.String
+        && Guid.TryParse(idProperty.GetString(), out var id)
+        && allowedFormIds.Contains(id);
+
+    private static FormDefinition ParseForm(JsonElement form)
+    {
+        if (!form.TryGetProperty("name", out var nameProperty) || nameProperty.ValueKind != JsonValueKind.String)
+        {
+            throw new InvalidDataException("A form is missing its 'name' property.");
+        }
+
+        var name = nameProperty.GetString()!;
+        var formXmlRoot = TryParseFormXml(GetString(form, "formxml"));
+        var additionalControls = ParseControlDescriptions(formXmlRoot);
+
+        var formId = form.TryGetProperty("formid", out var idProperty) && idProperty.ValueKind == JsonValueKind.String && Guid.TryParse(idProperty.GetString(), out var id)
+            ? id
+            : (Guid?)null;
+
+        return new FormDefinition
+        {
+            Name = name,
+            FormId = formId,
+            Entity = GetString(form, "objecttypecode") ?? throw new InvalidDataException($"Form '{name}' is missing its 'objecttypecode' property."),
+            Description = GetString(form, "description"),
+            Type = TypeOrNull(GetInt(form, "type")),
+            IsDefault = DefaultValueConventions.TrueOrNull(GetBool(form, "isdefault")),
+            FormActivationState = FormActivationStateOrNull(GetInt(form, "formactivationstate")),
+            IsCustomizable = DefaultValueConventions.FalseOrNull(GetManagedPropertyBool(form, "iscustomizable")),
+            Tabs = formXmlRoot?.Element("tabs")?.Elements("tab").Select(tab => ParseTab(tab, additionalControls)).ToList() ?? [],
+            HeaderControls = NullIfEmpty(ParseControls(formXmlRoot?.Element("header"), additionalControls)),
+            FooterControls = NullIfEmpty(ParseControls(formXmlRoot?.Element("footer"), additionalControls)),
+            Ancestor = (string?)formXmlRoot?.Element("ancestor")?.Attribute("id"),
+            HiddenFields = NullIfEmpty(formXmlRoot?.Element("hiddencontrols")?.Elements("data").Select(ParseHiddenField).ToList()),
+            DisplayCondition = formXmlRoot?.Element("DisplayConditions") is { } displayConditions ? ParseDisplayCondition(displayConditions) : null,
+            Libraries = NullIfEmpty(formXmlRoot?.Element("formLibraries")?.Elements("Library").Select(ParseLibrary).ToList()),
+            Events = NullIfEmpty(formXmlRoot?.Element("events")?.Elements("event").Select(ParseEvent).ToList()),
+        };
+    }
+
+    private static FormHiddenField ParseHiddenField(XElement data) => new()
+    {
+        Field = (string?)data.Attribute("datafieldname") ?? (string?)data.Attribute("id") ?? "",
+        ClassId = (string?)data.Attribute("classid"),
+        Relationship = (string?)data.Attribute("relationship"),
+    };
+
+    private static FormDisplayCondition ParseDisplayCondition(XElement displayConditions) => new()
+    {
+        FallbackForm = DefaultValueConventions.TrueOrNull((string?)displayConditions.Attribute("FallbackForm") == "true"),
+        Order = (int?)displayConditions.Attribute("Order"),
+        Roles = NullIfEmpty(displayConditions.Elements("Role").Select(role => (string?)role.Attribute("Id")).Where(id => id is not null).Select(id => id!).ToList()),
+    };
+
+    private static FormLibrary ParseLibrary(XElement library) => new()
+    {
+        Name = (string?)library.Attribute("name") ?? "",
+    };
+
+    private static FormEvent ParseEvent(XElement eventElement) => new()
+    {
+        Name = (string?)eventElement.Attribute("name"),
+        Attribute = (string?)eventElement.Attribute("attribute"),
+        Active = (bool?)eventElement.Attribute("active"),
+        Handlers = NullIfEmpty(eventElement.Element("Handlers")?.Elements("Handler").Select(ParseEventHandler).ToList()),
+        InternalHandlers = NullIfEmpty(eventElement.Element("InternalHandlers")?.Elements("Handler").Select(ParseEventHandler).ToList()),
+    };
+
+    private static FormEventHandler ParseEventHandler(XElement handler) => new()
+    {
+        FunctionName = (string?)handler.Attribute("functionName") ?? "",
+        LibraryName = (string?)handler.Attribute("libraryName") ?? "",
+        Enabled = (bool?)handler.Attribute("enabled"),
+        PassExecutionContext = (bool?)handler.Attribute("passExecutionContext"),
+    };
+
+    /// <summary>
+    /// Reads FormXML's separate `&lt;controlDescriptions&gt;` section into a
+    /// lookup by `forControl` — confirmed against a real tenant to match a
+    /// control's own `uniqueid` attribute, not the cell's or the control's
+    /// own `id`. See <see cref="FormAdditionalControl"/>.
+    ///
+    /// A `forControl` that matches no control actually on the form (seen
+    /// live — a leftover from a control that was since removed without its
+    /// `controlDescription` being cleaned up) is silently dropped rather
+    /// than surfaced some other way: this lookup is only ever consulted by
+    /// a real control's own `uniqueid` while parsing that control, so an
+    /// entry nothing ever looks up for just never gets used. Accepted as a
+    /// documented gap rather than modeled (e.g. as some
+    /// "OrphanedAdditionalControls" list) — it describes a control that's
+    /// already gone, not one currently on the form.
+    /// </summary>
+    private static IReadOnlyDictionary<string, IReadOnlyList<FormAdditionalControl>> ParseControlDescriptions(XElement? formRoot)
+    {
+        var result = new Dictionary<string, IReadOnlyList<FormAdditionalControl>>();
+
+        var descriptions = formRoot?.Element("controlDescriptions")?.Elements("controlDescription") ?? Enumerable.Empty<XElement>();
+        foreach (var description in descriptions)
+        {
+            var forControl = (string?)description.Attribute("forControl");
+            if (string.IsNullOrEmpty(forControl))
+            {
+                continue;
+            }
+
+            var additional = description.Elements("customControl").Select(ParseAdditionalControl).ToList();
+            if (additional.Count > 0)
+            {
+                result[forControl] = additional;
+            }
+        }
+
+        return result;
+    }
+
+    private static object? ParseAdditionalControlParameters(string? controlName, XElement? parameters)
+    {
+        if (parameters is null)
+        {
+            return null;
+        }
+
+        var converted = ConvertToObject(parameters, preserveDefaults: true);
+        return ControlDefaultsRegistry.Find(controlName) is { } spec ? ControlDefaultsApplier.Strip(spec, converted) : converted;
+    }
+
+    private static FormAdditionalControl ParseAdditionalControl(XElement customControl) => new()
+    {
+        Id = (string?)customControl.Attribute("id"),
+        Name = (string?)customControl.Attribute("name"),
+        FormFactor = (int?)customControl.Attribute("formFactor"),
+        Version = (string?)customControl.Attribute("version"),
+        // Additional controls are PCF custom controls: Dataverse validates
+        // their parameters against the control's own manifest, so defaults
+        // (false, empty elements) must survive — see ConvertToObject.
+        Parameters = ParseAdditionalControlParameters((string?)customControl.Attribute("name"), customControl.Element("parameters")),
+    };
+
+    /// <summary>
+    /// Parses FormXML defensively rather than letting one form's broken or
+    /// unusual markup fail the whole (many-forms-per-table) export: null
+    /// FormXML and unparseable FormXML both just mean "nothing to decompose"
+    /// rather than an error.
+    /// </summary>
+    private static XElement? TryParseFormXml(string? formXml)
+    {
+        if (string.IsNullOrEmpty(formXml))
+        {
+            return null;
+        }
+
+        try
+        {
+            return XElement.Parse(formXml);
+        }
+        catch (XmlException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>As <see cref="TryParseFormXml"/>, for the embedded-XML values <see cref="ConvertToObject"/> can hit inside a control's parameters.</summary>
+    private static XElement? TryParseEmbeddedXml(string xml)
+    {
+        try
+        {
+            return XElement.Parse(xml);
+        }
+        catch (XmlException)
+        {
+            return null;
+        }
+    }
+
+    private static FormTab ParseTab(XElement tab, IReadOnlyDictionary<string, IReadOnlyList<FormAdditionalControl>> additionalControls)
+    {
+        var (label, labelLanguageCode, translations) = ParseLabels(tab.Element("labels"));
+
+        return new FormTab
+        {
+            Name = (string?)tab.Attribute("name"),
+            Label = label,
+            LabelLanguageCode = labelLanguageCode,
+            Translations = translations,
+            Columns = tab.Element("columns")?.Elements("column").Select(column => ParseColumn(column, additionalControls)).ToList() ?? [],
+            Visible = DefaultValueConventions.FalseOrNull((bool?)tab.Attribute("visible")),
+            Collapsible = (bool?)tab.Attribute("collapsible"),
+            AvailableOnPhone = (bool?)tab.Attribute("availableforphone"),
+        };
+    }
+
+    private static FormColumn ParseColumn(XElement column, IReadOnlyDictionary<string, IReadOnlyList<FormAdditionalControl>> additionalControls) => new()
+    {
+        Width = (string?)column.Attribute("width"),
+        Sections = column.Element("sections")?.Elements("section").Select(section => ParseSection(section, additionalControls)).ToList() ?? [],
+    };
+
+    private static FormSection ParseSection(XElement section, IReadOnlyDictionary<string, IReadOnlyList<FormAdditionalControl>> additionalControls)
+    {
+        var (label, labelLanguageCode, translations) = ParseLabels(section.Element("labels"));
+
+        return new FormSection
+        {
+            Name = (string?)section.Attribute("name"),
+            Label = label,
+            LabelLanguageCode = labelLanguageCode,
+            Translations = translations,
+            // The section's own "columns" attribute is a string of one digit
+            // per sub-column (e.g. "11" = 2 equal columns) rather than a number
+            // to parse — its length, not its numeric value, is the column count.
+            Columns = (string?)section.Attribute("columns") is { Length: > 1 } columns ? columns.Length : null,
+            Controls = ParseControls(section, additionalControls),
+            Visible = DefaultValueConventions.FalseOrNull((bool?)section.Attribute("visible")),
+            ShowLabel = DefaultValueConventions.FalseOrNull((bool?)section.Attribute("showlabel")),
+            AvailableOnPhone = (bool?)section.Attribute("availableforphone"),
+        };
+    }
+
+    /// <summary>
+    /// Reads the `&lt;cell&gt;`/`&lt;control&gt;` pairs out of a container's
+    /// `&lt;rows&gt;` — shared by sections, headers, and footers, which all
+    /// use the same rows/row/cell/control shape. Only cells with no control
+    /// at all (pure layout spacers, carrying nothing worth keeping) are
+    /// skipped; every real control — bound to a field or not — is kept, see
+    /// <see cref="FormControl"/>'s own doc comment for why.
+    /// </summary>
+    private static IReadOnlyList<FormControl> ParseControls(XElement? container, IReadOnlyDictionary<string, IReadOnlyList<FormAdditionalControl>> additionalControls)
+    {
+        var rows = container?.Element("rows")?.Elements("row") ?? Enumerable.Empty<XElement>();
+
+        return rows
+            .SelectMany(row => row.Elements("cell"))
+            .Select(cell => ParseControl(cell, additionalControls))
+            .Where(control => control is not null)
+            .Select(control => control!)
+            .ToList();
+    }
+
+    private static FormControl? ParseControl(XElement cell, IReadOnlyDictionary<string, IReadOnlyList<FormAdditionalControl>> additionalControls)
+    {
+        var control = cell.Element("control");
+        var id = (string?)control?.Attribute("id");
+        if (string.IsNullOrEmpty(id))
+        {
+            return null;
+        }
+
+        var uniqueId = (string?)control!.Attribute("uniqueid");
+        var rawClassId = (string?)control.Attribute("classid");
+        var friendlyControl = rawClassId is not null ? StandardFormControls.TryGetFriendlyName(rawClassId) : null;
+        var (label, labelLanguageCode, translations) = ParseLabels(cell.Element("labels"));
+
+        return new FormControl
+        {
+            Id = id,
+            Field = (string?)control.Attribute("datafieldname"),
+            Label = label,
+            LabelLanguageCode = labelLanguageCode,
+            Translations = translations,
+            // A recognized standard control's classid becomes Control (the
+            // friendly name); anything else keeps the raw classid under
+            // CustomControlId instead — never both, and the legacy ClassId
+            // property is only ever populated by reading an old
+            // *.form.yml, never written here. See StandardFormControls'
+            // own doc comment for how "recognized" was actually confirmed.
+            Control = friendlyControl,
+            CustomControlId = rawClassId is not null && friendlyControl is null ? rawClassId : null,
+            IsUnbound = DefaultValueConventions.TrueOrNull((string?)control.Attribute("isunbound") == "true"),
+            Disabled = DefaultValueConventions.TrueOrNull((string?)control.Attribute("disabled") == "true"),
+            IsRequired = DefaultValueConventions.TrueOrNull((string?)control.Attribute("isrequired") == "true"),
+            Visible = DefaultValueConventions.FalseOrNull((bool?)cell.Attribute("visible")),
+            ShowLabel = DefaultValueConventions.FalseOrNull((bool?)cell.Attribute("showlabel")),
+            AvailableOnPhone = (bool?)cell.Attribute("availableforphone"),
+            ColumnSpan = (int?)cell.Attribute("colspan") is { } colspan and > 1 ? colspan : null,
+            RowSpan = (int?)cell.Attribute("rowspan") is { } rowspan and > 1 ? rowspan : null,
+            Parameters = control.Element("parameters") is { } parameters ? ConvertToObject(parameters) : null,
+            AdditionalControls = uniqueId is not null && additionalControls.TryGetValue(uniqueId, out var additional) ? additional : null,
+            // Not mentioned as a valid child of <cell> on Microsoft's own
+            // FormXML schema documentation page (only <labels>/<control>
+            // are) — real forms have it anyway, confirmed live rather than
+            // assumed. The actual downloadable XSD (see FormXmlValidator)
+            // already declares it correctly; only the docs page is behind.
+            Events = NullIfEmpty(cell.Element("events")?.Elements("event").Select(ParseEvent).ToList()),
+        };
+    }
+
+    /// <summary>
+    /// Converts a `&lt;parameters&gt;` element into plain YAML-serialisable
+    /// data structurally — not byte-for-byte the same shape as the source
+    /// XML, since that's not actually the goal: an eventual "apply" only
+    /// needs to be able to derive the original from this YAML, not have
+    /// this YAML mirror the XML's own conventions. So rather than the
+    /// terser but cryptic `@name`/`#text` XML-to-JSON convention, this uses
+    /// plain words instead:
+    ///
+    /// - A leaf element (no attributes, no children) becomes its text
+    ///   value — recursing when that text is itself a serialised XML
+    ///   fragment (e.g. a quick view control's QuickForms; some Dataverse
+    ///   parameters are double-encoded this way), wrapped under a reserved
+    ///   `xml` key naming the fragment's own root element (e.g.
+    ///   `{ xml: { QuickFormIds: { QuickFormId: ... } } }`) so
+    ///   <see cref="FormXmlWriter"/> knows to re-escape this back into text
+    ///   on the way out rather than emit it as real child elements — those
+    ///   are two structurally identical shapes on the way in (an XML
+    ///   fragment's own elements look just like real ones once parsed) but
+    ///   very much not the same thing on the way out: Dataverse's own
+    ///   runtime expects `QuickForms`' value as escaped text, not literal
+    ///   XML structure, and writing the latter isn't just a schema nitpick —
+    ///   it's a real functional difference, confirmed by a genuine
+    ///   `form build-xml` schema violation before this was fixed. Embedded
+    ///   JSON (e.g. a timeline control's *ConfigurationJSON parameters) is
+    ///   left as a plain string — a different, more common Dataverse
+    ///   pattern this tool doesn't also parse.
+    /// - An element with attributes and/or children becomes a map: its
+    ///   attributes (if any) grouped under `attributes`, its own text (if
+    ///   any, alongside attributes) under `value`, and each child element
+    ///   under its own name — a list when a name repeats. Element/attribute
+    ///   names themselves are kept as Dataverse names them (e.g.
+    ///   `RelationshipName`, `entityname`) rather than re-cased: those are
+    ///   already self-describing, and guessing at word boundaries to
+    ///   reformat them risks getting it wrong for exactly the same reason
+    ///   guessing at <see cref="FormControl.ClassId"/>'s meaning would.
+    ///   (`attributes`/`value`/`xml` could theoretically collide with a real
+    ///   child element of the same name — not seen in practice, but a
+    ///   known, accepted trade-off of choosing readability over an
+    ///   unambiguous-but-cryptic marker like `@`/`#`.)
+    /// - A literal "false" (case-insensitive) is dropped — except anywhere
+    ///   inside a `data-set` node (see <paramref name="insideDataSet"/>).
+    ///   Unlike these parameters' other values (strings, GUIDs, numbers —
+    ///   no reliable source says what any of those default to), a boolean
+    ///   has only two possible states: every one of these parameters is
+    ///   declared `type="xs:boolean" minOccurs="0"` with no XSD default, and
+    ///   every sample gathered from a real tenant agrees "false" is either
+    ///   the only value seen or the overwhelming majority — so omitting the
+    ///   element (this tool's own choice, not the schema's) and writing it
+    ///   as false come to the same thing either way. "true" is always kept,
+    ///   so the meaningful, deliberately-set state is never hidden — and
+    ///   still overridable by simply writing it back into the YAML.
+    ///   Dropping it turns an element/attribute/list entry empty in turn,
+    ///   all the way up to <see cref="FormControl.Parameters"/> itself
+    ///   coming back null when a control's whole parameter block was just
+    ///   defaults.
+    ///
+    ///   That "omitted ≡ false" equivalence only holds for controls the
+    ///   static FormXml.xsd actually governs (subgrid, quick view, etc.) —
+    ///   a `data-set`-wrapped block belongs to a PCF custom control (e.g.
+    ///   `ActivityCalendarControl`'s `data-set name="Calendar"`), whose
+    ///   dataset binding Dataverse validates at import time against the
+    ///   control's own manifest, not this XSD. Confirmed live: a `data-set`
+    ///   missing `IsUserView` (present as `false` on export, stripped by
+    ///   this same rule, and never restored) was rejected on import with
+    ///   `The dataset 'Calendar' should contain ViewId, IsUserView, or both
+    ///   nodes` — there, the node's structural *presence* disambiguates
+    ///   what `ViewId` even refers to (a system vs. a personal view), so
+    ///   dropping it is not the no-op it is for the XSD-governed controls
+    ///   this rule was validated against. So `false` is preserved for every
+    ///   element/attribute anywhere under a `data-set` node.
+    ///
+    ///   The same reasoning applies to everything under an additional
+    ///   (PCF) control's `parameters` (<paramref name="preserveDefaults"/>),
+    ///   and to empty elements too: `ModelFormControl`'s Enum parameters
+    ///   (`type="Enum" static="true"`) were exported with no value, which
+    ///   Dataverse's write path rejects (0x80160028), and its `value`
+    ///   block lost four empty and three `false` children, which imported
+    ///   cleanly but broke GetClientMetadata (502) for the form. So there,
+    ///   `false` and empty elements are kept (empty as `""`).
+    /// See <see cref="FormControl.Parameters"/>.
+    /// </summary>
+    /// <param name="element">The FormXML element to convert.</param>
+    /// <param name="preserveDefaults">
+    /// True for an additional control's parameters: keep `false` values and
+    /// empty elements rather than treating them as omittable defaults.
+    /// </param>
+    /// <param name="isRoot">
+    /// True only for the `parameters` element itself, whose own emptiness
+    /// still means "nothing to say" rather than a preserved empty value.
+    /// </param>
+    /// <param name="insideDataSet">
+    /// True once recursion has entered a `data-set` node (and for all of its
+    /// descendants) — see the "omitted ≡ false" note above for why `false`
+    /// stripping is unsafe there and must not apply.
+    /// </param>
+    private static object? ConvertToObject(XElement element, bool insideDataSet = false, bool preserveDefaults = false, bool isRoot = true)
+    {
+        var children = element.Elements().ToList();
+        var attributes = element.Attributes().ToList();
+
+        if (children.Count == 0 && attributes.Count == 0)
+        {
+            var value = element.Value;
+            if (string.IsNullOrEmpty(value) && preserveDefaults && !isRoot)
+            {
+                // Present-but-empty is not the same as absent for a PCF
+                // control's parameter (e.g. ModelFormControl's
+                // FilterRelationshipName): dropping it produced FormXML that
+                // Dataverse accepted on write but then 502'd compiling
+                // GetClientMetadata. Kept as an empty string.
+                return "";
+            }
+
+            if (string.IsNullOrEmpty(value))
+            {
+                // A genuinely empty leaf, e.g. a self-closing <parameters />
+                // (confirmed live: a base control's own default customControl
+                // entry in controlDescriptions has nothing else to say) — not
+                // the same as omitting the element entirely, but there's
+                // nothing here worth keeping either.
+                return null;
+            }
+
+            if (value.TrimStart().StartsWith('<') && TryParseEmbeddedXml(value) is { } embedded)
+            {
+                // Recording only the parsed content (as this used to) would
+                // discard which element it was embedded as (QuickForms' own
+                // <QuickFormIds> wrapper, here) — the `xml` key retains
+                // that, so FormXmlWriter can re-escape this back into text
+                // rather than emitting real elements. See this method's own
+                // doc comment for why that distinction matters.
+                return new Dictionary<string, object>
+                {
+                    ["xml"] = new Dictionary<string, object> { [embedded.Name.LocalName] = ConvertToObject(embedded, insideDataSet, preserveDefaults, isRoot: false) ?? "" },
+                };
+            }
+
+            return !(insideDataSet || preserveDefaults) && IsFalse(value) ? null : value;
+        }
+
+        var map = new Dictionary<string, object>();
+
+        var keptAttributes = attributes.Where(a => insideDataSet || preserveDefaults || !IsFalse(a.Value)).ToDictionary(a => a.Name.LocalName, object (a) => a.Value);
+        if (keptAttributes.Count > 0)
+        {
+            map["attributes"] = keptAttributes;
+        }
+
+        if (children.Count == 0)
+        {
+            if (!string.IsNullOrEmpty(element.Value) && (insideDataSet || preserveDefaults || !IsFalse(element.Value)))
+            {
+                map["value"] = element.Value;
+            }
+
+            return map.Count > 0 ? map : null;
+        }
+
+        foreach (var group in children.GroupBy(child => child.Name.LocalName))
+        {
+            var childInsideDataSet = insideDataSet || group.Key == "data-set";
+            var values = group.Select(child => ConvertToObject(child, childInsideDataSet, preserveDefaults, isRoot: false)).Where(value => value is not null).Select(value => value!).ToList();
+            if (values.Count == 0)
+            {
+                continue;
+            }
+
+            map[group.Key] = values.Count == 1 ? values[0] : values;
+        }
+
+        return map.Count > 0 ? map : null;
+    }
+
+    private static bool IsFalse(string value) => string.Equals(value, "false", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Reads every language's text out of a FormXML `&lt;labels&gt;`
+    /// container. The primary text is the English (1033) entry, falling
+    /// back to whichever entry comes first if English isn't present (same
+    /// tie-break this always used); every other entry's text comes back
+    /// under <c>Translations</c>, keyed by its own languagecode. Blank
+    /// labels (common on unlabeled/spacer cells) are treated as no label.
+    /// </summary>
+    /// <remarks>
+    /// Previously this only ever kept the primary entry, silently
+    /// discarding every other language's translation on export — confirmed
+    /// as a real gap, not a stripped default: on a multi-language tenant
+    /// that's genuine maker-authored text, permanently lost on every
+    /// round-trip until this was fixed.
+    /// </remarks>
+    private static (string? Label, int? LabelLanguageCode, IReadOnlyDictionary<int, string>? Translations) ParseLabels(XElement? labels)
+    {
+        if (labels is null)
+        {
+            return (null, null, null);
+        }
+
+        var entries = labels.Elements("label").ToList();
+        var primary = entries.FirstOrDefault(e => (string?)e.Attribute("languagecode") == "1033") ?? entries.FirstOrDefault();
+        var primaryText = (string?)primary?.Attribute("description");
+        var label = string.IsNullOrEmpty(primaryText) ? null : primaryText;
+
+        // Confirmed live as a real gap: on a tenant whose base language
+        // isn't English, the primary label (picked above, since there's no
+        // 1033 entry at all) is in that base language, not 1033 — but
+        // FormXmlWriter.WriteLabels used to hard-code "1033" when writing it
+        // back regardless, silently mislabeling the primary text's own
+        // language on every rebuild. Only set when it's not the common-case
+        // 1033, same "absent means the default" convention as everywhere
+        // else in this model.
+        var primaryLanguageCode = (int?)primary?.Attribute("languagecode");
+        var labelLanguageCode = label is not null && primaryLanguageCode is not null and not 1033 ? primaryLanguageCode : null;
+
+        var translations = entries
+            .Where(e => e != primary)
+            .Select(e => (LanguageCode: (int?)e.Attribute("languagecode"), Text: (string?)e.Attribute("description")))
+            .Where(e => e.LanguageCode is not null && !string.IsNullOrEmpty(e.Text))
+            .ToDictionary(e => e.LanguageCode!.Value, e => e.Text!);
+
+        return (label, labelLanguageCode, translations.Count > 0 ? translations : null);
+    }
+
+    private static IReadOnlyList<T>? NullIfEmpty<T>(IReadOnlyList<T>? items) => items is { Count: > 0 } ? items : null;
+
+    /// <summary>
+    /// 2 (Main) is Dataverse's ordinary form and by far the common case, so
+    /// it's treated the same way as any other platform-default value
+    /// elsewhere (see <see cref="DefaultValueConventions"/>) and left out.
+    /// </summary>
+    private static string? TypeOrNull(int? type) =>
+        type is null or 2 ? null : TypeNames.GetValueOrDefault(type.Value, type.Value.ToString());
+
+    /// <summary>1 (Active) is the common case for any form actually in use; only the exceptional "Inactive" (unpublished draft) is worth stating.</summary>
+    private static string? FormActivationStateOrNull(int? formActivationState) =>
+        formActivationState == 0 ? "Inactive" : null;
+
+    private static string? GetString(JsonElement parent, string propertyName) =>
+        parent.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
+
+    private static int? GetInt(JsonElement parent, string propertyName) =>
+        parent.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.Number
+            ? value.GetInt32()
+            : null;
+
+    private static bool? GetBool(JsonElement parent, string propertyName) =>
+        parent.TryGetProperty(propertyName, out var value) && value.ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? value.GetBoolean()
+            : null;
+
+    private static bool? GetManagedPropertyBool(JsonElement parent, string propertyName)
+    {
+        if (!parent.TryGetProperty(propertyName, out var managed) || managed.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        return managed.TryGetProperty("Value", out var value) && value.ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? value.GetBoolean()
+            : null;
+    }
+}
