@@ -500,7 +500,7 @@ the FormXML (the same patch-onto-the-live-document mechanism as
 prints a line-level diff between what's live now and what's about to
 replace it — the concrete answer to "must have a way to check differences
 between client and server". If the rebuild is identical to what's already
-live, nothing is written at all. Otherwise, unless `--yes` is passed, you
+live, nothing is written and validation is skipped. Otherwise, unless `--yes` is passed, you
 get a confirmation prompt (defaulting to "no") before anything actually
 changes in Dataverse. Pass `--whatif` to see the diff and stop there — no
 prompt, no write, regardless of `--yes`.

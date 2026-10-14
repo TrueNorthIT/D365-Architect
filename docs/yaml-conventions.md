@@ -586,7 +586,7 @@ are pretty-printed (one element per line) purely for this display; the
 actual payload sent to Dataverse is untouched by that. Only the changed
 lines plus a couple of lines of context are shown, not the whole document.
 If the two sides are identical (`FormImportPreview.HasChanges` is false),
-nothing is written and nothing is asked — confirmed live to actually be
+nothing is written, nothing is asked and validation is skipped — confirmed live to actually be
 true in practice for an unedited file on a real, complex form, not just in
 a minimal test case.
 
