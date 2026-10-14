@@ -10,7 +10,7 @@ using Spectre.Console.Cli;
 namespace D365Architect.Commands.Solution;
 
 /// <summary>
-/// `d365architect solution import --input ./examplesolution --solution examplesolution [--yes] [--whatif] [--verbose] [--no-transaction] [--allow-schema-violations]`
+/// `d365architect solution import --input ./examplesolution --solution examplesolution [--table account] [--yes] [--whatif] [--verbose] [--no-transaction] [--allow-schema-violations]`
 /// Walks a folder previously written by <c>solution export</c> — a
 /// <c>choices.yml</c> at its root, plus one sub-folder per table holding
 /// that table's own <c>*.table.yml</c>/<c>*.view.yml</c>/<c>*.form.yml</c>
@@ -36,6 +36,10 @@ namespace D365Architect.Commands.Solution;
 /// run creates actually joins the solution it came from — see
 /// <see cref="Services.Dataverse.IDataverseClient.CreateAttributeAsync"/>.
 ///
+/// <c>--table</c> (repeatable) limits the run to those tables' files
+/// (folder names matched case-insensitively; a name with no folder is an
+/// error) and skips <c>choices.yml</c>.
+///
 /// One file failing (a validation error, a Dataverse rejection, a missing
 /// live counterpart) doesn't stop the rest: it's reported, never applied,
 /// and the remaining changes are still offered and applied. The exit code
@@ -57,6 +61,10 @@ public sealed class ImportSolutionCommand(
         [CommandOption("-s|--solution <UNIQUE_NAME>")]
         [Description("Unique name of the solution these files came from. Forwarded to every table/choice import so any brand-new column/lookup relationship/global choice this run creates actually joins the solution, rather than silently landing outside it.")]
         public required string Solution { get; init; }
+
+        [CommandOption("-t|--table <LOGICAL_NAME>")]
+        [Description("Limit the import to this table's table/view/form files (folder name, case-insensitive). Repeat for several. Global choices are skipped. Errors if a name matches no table folder.")]
+        public string[] Tables { get; init; } = [];
 
         [CommandOption("-y|--yes")]
         [Description("Skip the confirmation prompt and import every changed asset immediately.")]
@@ -87,7 +95,22 @@ public sealed class ImportSolutionCommand(
             return 1;
         }
 
+        var limitedToTables = settings.Tables.Length > 0;
         var tableDirectories = Directory.GetDirectories(settings.Input).OrderBy(d => d, StringComparer.OrdinalIgnoreCase).ToList();
+
+        if (limitedToTables)
+        {
+            try
+            {
+                var wanted = SolutionTableFilter.Select(tableDirectories.Select(Path.GetFileName)!, settings.Tables, $"under '{settings.Input}'");
+                tableDirectories = tableDirectories.Where(d => wanted.Contains(Path.GetFileName(d), StringComparer.OrdinalIgnoreCase)).ToList();
+            }
+            catch (UnknownTableException ex)
+            {
+                ErrorConsole.Print($"{ex.Message}");
+                return 1;
+            }
+        }
 
         var items = new List<SolutionImportItem>();
 
@@ -99,7 +122,7 @@ public sealed class ImportSolutionCommand(
         var pendingChoiceNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         var choicesPath = Path.Combine(settings.Input, "choices.yml");
-        if (File.Exists(choicesPath))
+        if (!limitedToTables && File.Exists(choicesPath))
         {
             try
             {
@@ -144,7 +167,14 @@ public sealed class ImportSolutionCommand(
 
         if (items.Count == 0)
         {
-            ErrorConsole.Warn($"No choices.yml, or table sub-folders containing *.table.yml/*.view.yml/*.form.yml files, found under '{settings.Input}' — nothing to import.");
+            if (limitedToTables)
+            {
+                ErrorConsole.Warn($"The selected table folder(s) under '{settings.Input}' contain no *.table.yml, *.view.yml or *.form.yml files — nothing to import.");
+            }
+            else
+            {
+                ErrorConsole.Warn($"No choices.yml, or table sub-folders containing *.table.yml/*.view.yml/*.form.yml files, found under '{settings.Input}' — nothing to import.");
+            }
 
             return 0;
         }

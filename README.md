@@ -558,9 +558,9 @@ d365architect solution export --solution examplesolution
 ```
 
 Which tables to export is discovered from the solution itself — unlike
-`table export`/`view export`/`form export`, there's no `--table` option
+`table export`/`view export`/`form export`, `--table` is optional
 here, since a solution's own Entity components already say which tables it
-touches. Everything is written under `<output>/<solution>/`:
+touches. To export only some tables, pass `--table` (repeatable). Everything is written under `<output>/<solution>/`:
 
 ```
 examplesolution/
@@ -588,6 +588,7 @@ empty one.
 |-------------------|------------------------------------------------------------------------------|----------|
 | `-s, --solution`  | Unique name of the solution to export                                        | Yes      |
 | `-o, --output`    | Directory to create the solution's own folder under. Defaults to the current directory | No |
+| `-t, --table`     | Limit the export to this table (logical name, case-insensitive; repeatable). Skips `choices.yml`. Errors on a name not in the solution | No |
 
 #### `solution import`
 
@@ -604,6 +605,7 @@ d365architect solution import --input ./examplesolution --solution examplesoluti
 | `-i, --input`                | Path to a solution folder previously written by `solution export`        | Yes      |
 | `-s, --solution`             | Unique name of the solution these files came from                        | Yes      |
 | `-y, --yes`                  | Skip the confirmation prompt and import every changed asset immediately  | No       |
+| `-t, --table`                | Limit the import to this table's table/view/form files (folder name, case-insensitive; repeatable). Skips `choices.yml`. Errors on a name with no folder | No |
 | `--verbose`                  | Also print "No changes" for every unchanged asset (silent by default)    | No       |
 | `--whatif`                   | Only show each changed asset's diff/plan — never prompt and never write anything | No       |
 | `--no-transaction`           | For every table import: send column create/update one request at a time instead of as a single atomic Dataverse changeset | No |
