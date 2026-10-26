@@ -431,8 +431,10 @@ So `FormXmlValidationMessage.IsKnownHarmless` is deliberately narrow: true
 only for the specific, confirmed-safe `headerdensity`/`showinformselector`
 pattern and the Timeline control's
 `UClientActivitiesConfigurationJSON`/`UClientNotesConfigurationJSON`
-pattern, never inferred for anything that merely looks similar — that
-second pattern *is* the same "invalid child element inside `<parameters>`"
+pattern, text directly inside a control's `<parameters>` (PhoneNumberControl,
+ValidatedFieldControl, BusinessCardReader), and a Quick View control's
+`HideQuickFormBorder` child, never inferred for anything that merely looks
+similar. The Timeline pattern *is* the same "invalid child element inside `<parameters>`"
 shape that failed live in the incident two paragraphs up, which is
 precisely why it's confirmed by the user's own explicit, direct D365 admin
 confirmation rather than assumed by analogy to the first pattern. `form
@@ -584,7 +586,7 @@ are pretty-printed (one element per line) purely for this display; the
 actual payload sent to Dataverse is untouched by that. Only the changed
 lines plus a couple of lines of context are shown, not the whole document.
 If the two sides are identical (`FormImportPreview.HasChanges` is false),
-nothing is written and nothing is asked — confirmed live to actually be
+nothing is written, nothing is asked and validation is skipped — confirmed live to actually be
 true in practice for an unedited file on a real, complex form, not just in
 a minimal test case.
 

@@ -500,14 +500,16 @@ the FormXML (the same patch-onto-the-live-document mechanism as
 prints a line-level diff between what's live now and what's about to
 replace it — the concrete answer to "must have a way to check differences
 between client and server". If the rebuild is identical to what's already
-live, nothing is written at all. Otherwise, unless `--yes` is passed, you
+live, nothing is written and validation is skipped. Otherwise, unless `--yes` is passed, you
 get a confirmation prompt (defaulting to "no") before anything actually
 changes in Dataverse. Pass `--whatif` to see the diff and stop there — no
 prompt, no write, regardless of `--yes`.
 
 **Unlike `build-xml`, a schema violation here can genuinely block the
-import.** Only the one specific, confirmed-safe pattern (`headerdensity`/
-`showinformselector`) is treated as informational; every other violation
+import.** Only confirmed-safe patterns are treated as informational (`headerdensity`/
+`showinformselector`, the Timeline control's activities/notes configuration,
+text inside a control's `<parameters>`, and a Quick View control's
+`HideQuickFormBorder`); every other violation
 refuses the import outright (before the confirmation prompt is even shown)
 unless `--allow-schema-violations` is passed. This isn't hypothetical
 caution — a different violation was once treated the same non-blocking way

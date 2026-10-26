@@ -28,18 +28,27 @@ public sealed class FormImportService(IDataverseClient dataverseClient, FormJson
         // own — see that type's own doc comment — so both flow through the
         // identical IsKnownHarmless-gated blocking `form import` already
         // applies, with no separate plumbing needed.
-        var violations = FormControlValidator.Validate(form, existingRoot)
-            .Concat(FormXmlValidator.Validate(newFormXml))
-            .ToList();
-
-        // Rebuild the EXISTING form's own content through the exact same
-        // writer, base document, and deterministic id rules as newFormXml —
-        // see FormImportPreview.ExistingComparableFormXml's own doc comment
-        // for why comparing this canonicalized rebuild, rather than
-        // existing.FormXml itself, is what makes the confirmation diff
-        // meaningful instead of noise.
+        //
+        // FormControlValidator always runs, even on a no-op: it checks the
+        // local YAML's own control definitions (e.g. both 'control' and
+        // 'customControlId' set), which can be broken without changing the
+        // rendered FormXML at all. Only FormXmlValidator (the FormXML schema
+        // check) is skipped when the rebuild matches live: there is nothing
+        // to write, so validating would only block a no-op import over
+        // content Dataverse already holds.
         var existingForm = DecomposeExisting(form, existing.FormXml);
         var existingComparableFormXml = FormXmlWriter.Write(existingForm, existingRoot);
+
+        // Rebuilt through the exact same writer, base document, and
+        // deterministic id rules as newFormXml — see
+        // FormImportPreview.ExistingComparableFormXml's own doc comment for
+        // why comparing this canonicalized rebuild, rather than
+        // existing.FormXml itself, is what makes the diff meaningful.
+        IReadOnlyList<FormXmlValidationMessage> violations = existingComparableFormXml == newFormXml
+            ? FormControlValidator.Validate(form, existingRoot).ToList()
+            : FormControlValidator.Validate(form, existingRoot)
+                .Concat(FormXmlValidator.Validate(newFormXml))
+                .ToList();
 
         var entity = existing.EntityLogicalName ?? form.Entity;
 
