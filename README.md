@@ -296,6 +296,14 @@ d365architect view import --input active-accounts.view.yml
 | `-y, --yes`   | Skip the confirmation prompt and import immediately             | No       |
 | `--whatif`    | Only show the diff — never prompt and never write anything      | No       |
 
+Each exported file carries the view's `savedQueryId`. Import uses it to pick
+the target view, so two live views sharing a name no longer clash; an id that
+is not found live is an error (never a fallback to the name), and an id that
+belongs to a view on a different table is refused (a different name only warns,
+since renames are legitimate). Without `savedQueryId`, import
+matches on table and name and refuses an ambiguous match, listing the
+candidate ids to copy into the file.
+
 Simpler than `form import`: since FetchXML/LayoutXML are kept verbatim
 (never decomposed and rebuilt), the diff compares the live values against
 the local YAML directly, with no canonicalization step needed first. Only

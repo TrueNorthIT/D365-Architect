@@ -12,6 +12,11 @@
       "description": "Logical name of the table this view belongs to, e.g. \"account\" (the savedquery's returnedtypecode).",
       "type": "string"
     },
+    "savedQueryId": {
+      "description": "The view's savedqueryid. Import uses it, when present, to pick the target view directly rather than by table + name - which can match more than one live view (two views may share a name) and is then refused as ambiguous. An id that no longer exists live is an error, never a fallback to the name. Omit to match by table + name; export always writes it.",
+      "type": "string",
+      "format": "uuid"
+    },
     "description": {
       "description": "The view's description.",
       "type": "string"

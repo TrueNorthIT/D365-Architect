@@ -63,6 +63,15 @@ public sealed class ImportViewCommand(IViewImportService viewImportService, Impo
 
             PreviewStatusMessage = view => $"Looking up '{view.Name}'...",
 
+            OnPreviewBuilt = preview =>
+            {
+                if (preview.IdentityMismatchWarning is not null)
+                {
+                    ErrorConsole.Warn($"Warning: {preview.IdentityMismatchWarning}");
+                    AnsiConsole.WriteLine();
+                }
+            },
+
             SkipBeforePrinting = preview => preview.HasChanges
                 ? null
                 : "the local YAML already matches what's live in Dataverse. Nothing to import.",
@@ -87,7 +96,7 @@ public sealed class ImportViewCommand(IViewImportService viewImportService, Impo
 
             FormatDomainException = (ex, view) => ex switch
             {
-                ViewNotFoundException or AmbiguousSavedQueryException => $"[red]{ex.Message.EscapeMarkup()}[/]",
+                ViewNotFoundException or AmbiguousSavedQueryException or ViewIdentityMismatchException => $"[red]{ex.Message.EscapeMarkup()}[/]",
                 _ => null,
             },
         };
