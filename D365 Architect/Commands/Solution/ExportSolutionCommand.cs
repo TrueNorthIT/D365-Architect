@@ -40,6 +40,10 @@ public sealed class ExportSolutionCommand(IAuthenticationService authenticationS
         [CommandOption("-o|--output <DIRECTORY>")]
         [Description("Directory to create the solution's own folder under. Defaults to the current directory.")]
         public string? Output { get; init; }
+
+        [CommandOption("-t|--table <LOGICAL_NAME>")]
+        [Description("Limit the export to this table (logical name, case-insensitive). Repeat for several. Only those tables' table/view/form files are written; global choices are skipped. Errors if a name matches no table in the solution.")]
+        public string[] Tables { get; init; } = [];
     }
 
     protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
@@ -49,7 +53,7 @@ public sealed class ExportSolutionCommand(IAuthenticationService authenticationS
             var auth = await authenticationService.GetCurrentContextAsync(cancellationToken);
 
             var result = await AnsiConsole.Status().StartAsync($"Exporting solution '{settings.Solution}'...",
-                async _ => await solutionExportService.ExportSolutionAsync(auth.EnvironmentUrl, auth.AccessToken, settings.Solution, cancellationToken));
+                async _ => await solutionExportService.ExportSolutionAsync(auth.EnvironmentUrl, auth.AccessToken, settings.Solution, cancellationToken, settings.Tables));
 
             var solutionDirectory = Path.Combine(settings.Output ?? ".", settings.Solution);
             Directory.CreateDirectory(solutionDirectory);
@@ -96,6 +100,11 @@ public sealed class ExportSolutionCommand(IAuthenticationService authenticationS
         catch (AuthenticationRequiredException ex)
         {
             ErrorConsole.Print(ex);
+            return 1;
+        }
+        catch (UnknownTableException ex)
+        {
+            ErrorConsole.Print($"{ex.Message}");
             return 1;
         }
         catch (SolutionNotFoundException ex)

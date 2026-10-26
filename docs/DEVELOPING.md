@@ -100,6 +100,10 @@ doesn't stop the rest, which are still offered and applied. If you add a
 fifth `Import*Command`, give it the same `RunAsync`/`PreviewAsync` pair so it
 can join the loop without a special case.
 
+`--table` (repeatable, on `solution export` and `solution import`) is resolved
+by `SolutionTableFilter` (case-insensitive; an unmatched name throws
+`UnknownTableException`) and also skips global choices.
+
 ### The diff-before-confirm pattern
 
 All three import commands (`table import`, `view import`, `form import`)
