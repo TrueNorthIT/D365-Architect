@@ -144,11 +144,39 @@ public static class AttributeMetadataJsonBuilder
             case "String":
                 body["MaxLength"] = attribute.MaxLength ?? 100;
                 body["FormatName"] = new JsonObject { ["Value"] = attribute.Format ?? "Text" };
+
+                // Microsoft Learn, "Create autonumber columns": an
+                // auto-number column is an ordinary StringAttributeMetadata
+                // plus AutoNumberFormat, with FormatName Text (the default
+                // above; AttributeChangeValidator refuses any other format
+                // alongside it). Confirmed live 2026-10-26. The seed is never
+                // part of this body — it's a separate SetAutoNumberSeed call
+                // after the create (see TableImportService).
+                if (attribute.AutoNumberFormat is not null)
+                {
+                    body["AutoNumberFormat"] = attribute.AutoNumberFormat;
+                }
+
                 break;
 
             case "Memo":
                 body["MaxLength"] = attribute.MaxLength ?? 2000;
-                body["Format"] = "TextArea";
+
+                // Confirmed live (2026-10-26): a rich text column is a Memo
+                // created with FormatName RichText — the legacy Format
+                // property can't express it (it even reads back as "Text"),
+                // so it's left off rather than contradicting FormatName.
+                // Anything other than RichText/TextArea/none never gets here
+                // (AttributeChangeValidator.ValidateCreate refuses it).
+                if (attribute.Format == MemoFormats.RichText)
+                {
+                    body["FormatName"] = new JsonObject { ["Value"] = MemoFormats.RichText };
+                }
+                else
+                {
+                    body["Format"] = MemoFormats.TextArea;
+                }
+
                 break;
 
             case "Integer":
@@ -307,8 +335,18 @@ public static class AttributeMetadataJsonBuilder
                     existing["FormatName"] = new JsonObject { ["Value"] = attribute.Format };
                 }
 
+                // Microsoft Learn: an existing text column can be changed to
+                // auto-number (or have its format changed) by updating it.
+                if (attribute.AutoNumberFormat is not null)
+                {
+                    existing["AutoNumberFormat"] = attribute.AutoNumberFormat;
+                }
+
                 break;
 
+            // Format is never set here: switching plain <-> rich text is
+            // refused by AttributeChangeValidator, so an update leaves the
+            // live FormatName (and with it rich text) exactly as it was.
             case "Memo":
                 if (attribute.MaxLength is not null)
                 {

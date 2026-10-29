@@ -90,7 +90,7 @@ public sealed class AttributeDefinition
     [YamlMember(Order = 11)]
     public double? MaxValue { get; init; }
 
-    /// <summary>Type-specific format, e.g. "Email"/"Text" (String), "DateOnly"/"DateAndTime" (DateTime), "TextArea" (Memo).</summary>
+    /// <summary>Type-specific format, e.g. "Email"/"Text" (String), "DateOnly"/"DateAndTime" (DateTime), "TextArea" or "RichText" (Memo). A Memo can't be switched between plain and rich text after it's created.</summary>
     [YamlMember(Order = 12)]
     public string? Format { get; init; }
 
@@ -172,21 +172,34 @@ public sealed class AttributeDefinition
     public string? RelationshipBehavior { get; init; }
 
     /// <summary>
-    /// String only: makes this an auto-number column, e.g. <c>MSUM{SEQNUM:6}</c>
-    /// (Microsoft Learn, "Create autonumber columns" -
-    /// https://learn.microsoft.com/power-apps/developer/data-platform/create-auto-number-attributes).
-    /// Absent for an ordinary column. STUB: not read, written or compared yet.
+    /// String only: makes this an auto-number column, which Dataverse fills
+    /// in on every new row, e.g. <c>INV-{SEQNUM:6}</c> or
+    /// <c>{DATETIMEUTC:yyyyMMdd}-{SEQNUM:4}</c>. Can be added to or changed on
+    /// an existing text column. The column's format must be Text (or left out).
     /// </summary>
+    /// <remarks>
+    /// Microsoft Learn, "Create autonumber columns":
+    /// https://learn.microsoft.com/power-apps/developer/data-platform/create-auto-number-attributes
+    /// ("You can modify an existing format text column to be an autonumber
+    /// format"). Dataverse reports an ordinary String's <c>AutoNumberFormat</c>
+    /// as <c>""</c>; the reader turns that into null so it's never exported.
+    /// </remarks>
     [YamlMember(Order = 23)]
     public string? AutoNumberFormat { get; init; }
 
     /// <summary>
-    /// Optional, import-only: the next number the new auto-number column's
-    /// <c>{SEQNUM}</c> segment will use. Applied only in the same run that
-    /// creates the column and never written by export (it is not column
-    /// metadata; it is per-environment state set via <c>SetAutoNumberSeed</c>).
-    /// Requires <see cref="AutoNumberFormat"/>. STUB: not used yet.
+    /// Optional, import only: the first number a new auto-number column
+    /// will use. Only applied in the run that creates the column, and only in
+    /// that environment; ignored (with a note) once the column exists, so
+    /// re-importing never resets the counter. Never written by export.
+    /// Needs autoNumberFormat.
     /// </summary>
+    /// <remarks>
+    /// Not column metadata: it's per-environment state set by the
+    /// <c>SetAutoNumberSeed</c> action straight after the column's create
+    /// (see <see cref="Dataverse.IDataverseClient.SetAutoNumberSeedAsync"/>),
+    /// and isn't carried by a solution either.
+    /// </remarks>
     [YamlMember(Order = 24)]
     public int? AutoNumberSeed { get; init; }
 }

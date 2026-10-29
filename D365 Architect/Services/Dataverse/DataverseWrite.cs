@@ -69,6 +69,7 @@ public abstract record DataverseWrite
         OrderOptions => "reorder options",
         InsertStatusValue => "insert status value",
         UpdateStateValue => "update state value",
+        SetAutoNumberSeed w => $"set auto-number seed of column '{w.AttributeLogicalName}' on '{w.EntityLogicalName}'",
         _ => GetType().Name,
     };
 }

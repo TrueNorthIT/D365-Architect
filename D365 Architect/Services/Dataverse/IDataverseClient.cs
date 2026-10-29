@@ -400,7 +400,8 @@ public interface IDataverseClient
     /// autonumber columns", "Set a seed value":
     /// https://learn.microsoft.com/power-apps/developer/data-platform/create-auto-number-attributes
     /// Per-environment and not carried by a solution; calling it again resets
-    /// the counter. STUB: not implemented yet (tests only).
+    /// the counter, which is why <c>table import</c> only sends it in the run
+    /// that creates the column.
     /// </summary>
     Task SetAutoNumberSeedAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string attributeLogicalName, int value, CancellationToken cancellationToken);
 

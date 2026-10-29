@@ -171,10 +171,15 @@ public sealed class ImportTableCommand(ITableImportService tableImportService, I
     /// around it. WouldRemove is deliberately excluded here — see
     /// <see cref="GetUnmanaged"/> — because it's present on essentially
     /// every table (Dataverse's own auto-generated companion columns) and
-    /// isn't something this tool will ever act on regardless.
+    /// isn't something this tool will ever act on regardless. An Unchanged
+    /// plan is kept when it carries a warning (e.g. an autoNumberSeed ignored
+    /// because the column already exists), so a run with nothing to write
+    /// still tells the user why their change did nothing rather than just
+    /// "Nothing to import".
     /// </summary>
     private static List<AttributeImportPlan> GetActionable(TableImportPreview preview)
-        => preview.AttributePlans.Where(p => p.Action is not (AttributeImportAction.Unchanged or AttributeImportAction.WouldRemove)).ToList();
+        => preview.AttributePlans.Where(p => p.Action is not (AttributeImportAction.Unchanged or AttributeImportAction.WouldRemove)
+            || (p.Action == AttributeImportAction.Unchanged && p.Warnings is { Count: > 0 })).ToList();
 
     /// <summary>Live columns absent from the local YAML — never deleted, and never "actionable" (see <see cref="GetActionable"/>), just demoted to a count unless <c>--show-unmanaged</c> is passed.</summary>
     private static List<AttributeImportPlan> GetUnmanaged(TableImportPreview preview)
@@ -207,6 +212,9 @@ public sealed class ImportTableCommand(ITableImportService tableImportService, I
     {
         var line = plan.Action switch
         {
+            // The seed is per-environment state, not column metadata — said
+            // so here because it won't travel with a solution or re-apply.
+            AttributeImportAction.Create when plan.AutoNumberSeed is not null => $"[green]  + {plan.LogicalName.EscapeMarkup()} (create, auto-number seed {plan.AutoNumberSeed} — this environment only)[/]",
             AttributeImportAction.Create => $"[green]  + {plan.LogicalName.EscapeMarkup()} (create)[/]",
             AttributeImportAction.Update => $"[yellow]  ~ {plan.LogicalName.EscapeMarkup()} (update)[/]",
             AttributeImportAction.CreateLookupRelationship => $"[green]  + {plan.LogicalName.EscapeMarkup()} (create lookup relationship)[/]",
@@ -214,6 +222,7 @@ public sealed class ImportTableCommand(ITableImportService tableImportService, I
             AttributeImportAction.SkippedUnsupportedType => $"[grey]  ? {plan.LogicalName.EscapeMarkup()} (not applied: {plan.Reason?.EscapeMarkup()})[/]",
             AttributeImportAction.WouldRemove => $"[red]  - {plan.LogicalName.EscapeMarkup()} (not applied: {plan.Reason?.EscapeMarkup()})[/]",
             AttributeImportAction.Invalid => $"[red]  ! {plan.LogicalName.EscapeMarkup()} (not applied: {plan.Reason?.EscapeMarkup()})[/]",
+            AttributeImportAction.Unchanged => $"[grey]  = {plan.LogicalName.EscapeMarkup()} (unchanged)[/]",
             _ => $"  {plan.LogicalName.EscapeMarkup()}",
         };
 

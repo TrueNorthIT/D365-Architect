@@ -99,7 +99,7 @@
             "type": "number"
           },
           "format": {
-            "description": "Type-specific format, e.g. \"Email\"/\"Text\" (String), \"DateOnly\"/\"DateAndTime\" (DateTime), \"TextArea\" (Memo).",
+            "description": "Type-specific format, e.g. \"Email\"/\"Text\" (String), \"DateOnly\"/\"DateAndTime\" (DateTime), \"TextArea\" or \"RichText\" (Memo). A Memo can't be switched between plain and rich text after it's created.",
             "type": "string"
           },
           "targets": {
@@ -173,11 +173,11 @@
             ]
           },
           "autoNumberFormat": {
-            "description": "String only: makes this an auto-number column, e.g. MSUM{SEQNUM:6} (Microsoft Learn, \"Create autonumber columns\" - https://learn.microsoft.com/power-apps/developer/data-platform/create-auto-number-attributes). Absent for an ordinary column. STUB: not read, written or compared yet.",
+            "description": "String only: makes this an auto-number column, which Dataverse fills in on every new row, e.g. INV-{SEQNUM:6} or {DATETIMEUTC:yyyyMMdd}-{SEQNUM:4}. Can be added to or changed on an existing text column. The column's format must be Text (or left out).",
             "type": "string"
           },
           "autoNumberSeed": {
-            "description": "Optional, import-only: the next number the new auto-number column's {SEQNUM} segment will use. Applied only in the same run that creates the column and never written by export (it is not column metadata; it is per-environment state set via SetAutoNumberSeed). Requires AutoNumberFormat. STUB: not used yet.",
+            "description": "Optional, import only: the first number a new auto-number column will use. Only applied in the run that creates the column, and only in that environment; ignored (with a note) once the column exists, so re-importing never resets the counter. Never written by export. Needs autoNumberFormat.",
             "type": "integer"
           }
         },

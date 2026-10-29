@@ -119,7 +119,9 @@ public enum AttributeImportAction
     /// a customization prefix or containing an invalid character, a Name
     /// that won't match the logical name Dataverse actually derives, two new
     /// columns claiming the same SchemaName, an out-of-range MaxLength/
-    /// MinValue/MaxValue/Precision, or MinValue greater than MaxValue.
+    /// MinValue/MaxValue/Precision, MinValue greater than MaxValue, a Memo
+/// format that can't be created or a switch between plain and rich text,
+/// or autoNumberFormat/autoNumberSeed used where they don't apply.
     /// Caught before ever building a request, not left for Dataverse's own
     /// API error to explain.
     /// </summary>
@@ -135,8 +137,10 @@ public enum AttributeImportAction
 /// that Dataverse allows but warns against (e.g. lowering MaxLength below
 /// what existing data might exceed, or a local option/status value with no
 /// live match this tool won't insert automatically) — see
-/// <see cref="AttributeChangeValidator.Warnings"/>. Null for every other
-/// action.
+/// <see cref="AttributeChangeValidator.Warnings"/>. Also set on an
+/// <see cref="AttributeImportAction.Unchanged"/> or Update plan whose
+/// column has an <c>autoNumberSeed</c> that won't be applied because the
+/// column already exists. Null otherwise.
 /// </param>
 /// <param name="OptionChanges">
 /// Separate option-value actions (insert/rename/reorder) to run alongside
@@ -150,7 +154,8 @@ public enum AttributeImportAction
 /// Set only on an <see cref="AttributeImportAction.Create"/> whose column
 /// asked for an <c>autoNumberSeed</c>: the value that will be sent via
 /// <c>SetAutoNumberSeed</c> straight after the create. Null for every other
-/// plan. STUB: never populated yet.
+/// plan: a seed on a column that already exists is never sent (re-importing
+/// must not reset a live counter) and shows as a warning instead.
 /// </param>
 public sealed record AttributeImportPlan(string LogicalName, AttributeImportAction Action, string? Reason, JsonObject? RequestBody, IReadOnlyList<string>? Warnings = null, IReadOnlyList<OptionChangePlan>? OptionChanges = null, int? AutoNumberSeed = null);
 

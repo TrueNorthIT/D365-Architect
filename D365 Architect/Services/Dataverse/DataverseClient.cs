@@ -544,9 +544,8 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
     public async Task UpdateStateValueAsync(Uri environmentUrl, string accessToken, JsonObject body, CancellationToken cancellationToken) =>
         await SendWriteAsync(environmentUrl, accessToken, new DataverseWrite.UpdateStateValue(body), cancellationToken);
 
-    // STUB: not implemented yet (tests only) - see IDataverseClient.SetAutoNumberSeedAsync.
-    public Task SetAutoNumberSeedAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string attributeLogicalName, int value, CancellationToken cancellationToken) =>
-        throw new NotImplementedException();
+    public async Task SetAutoNumberSeedAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string attributeLogicalName, int value, CancellationToken cancellationToken) =>
+        await SendWriteAsync(environmentUrl, accessToken, new DataverseWrite.SetAutoNumberSeed(entityLogicalName, attributeLogicalName, value), cancellationToken);
 
     /// <summary>
     /// Shared by every simple "POST an action, ignore the response body"
@@ -659,6 +658,9 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         DataverseWrite.OrderOptions w => (HttpMethod.Post, "OrderOption", w.Body, []),
         DataverseWrite.InsertStatusValue w => (HttpMethod.Post, "InsertStatusValue", w.Body, []),
         DataverseWrite.UpdateStateValue w => (HttpMethod.Post, "UpdateStateValue", w.Body, []),
+        // Unbound action - Microsoft Learn, "Create autonumber columns", "Set a seed value":
+        // https://learn.microsoft.com/power-apps/developer/data-platform/create-auto-number-attributes
+        DataverseWrite.SetAutoNumberSeed w => (HttpMethod.Post, "SetAutoNumberSeed", new JsonObject { ["EntityName"] = w.EntityLogicalName, ["AttributeName"] = w.AttributeLogicalName, ["Value"] = w.Value }, []),
         _ => throw new NotSupportedException($"Unhandled {nameof(DataverseWrite)} case: {write.GetType().Name}"),
     };
 

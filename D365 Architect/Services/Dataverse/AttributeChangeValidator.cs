@@ -211,6 +211,18 @@ public static class AttributeChangeValidator
             return "BigInt columns can't be updated after creation — confirmed live that Dataverse's attribute PUT accepts the request but never actually applies any change to a BigInt column (not DisplayName, Description, or RequiredLevel), even though it reports success. This tool refuses the update rather than claim a change that silently never took effect.";
         }
 
+        var memoFormatError = ValidateMemoFormat(local, existing);
+        if (memoFormatError is not null)
+        {
+            return memoFormatError;
+        }
+
+        var autoNumberError = ValidateAutoNumber(local, existing);
+        if (autoNumberError is not null)
+        {
+            return autoNumberError;
+        }
+
         if (local.Type is "String" or "Memo" && local.MaxLength is <= 0)
         {
             return $"MaxLength must be greater than 0 (was {local.MaxLength}).";
@@ -284,6 +296,71 @@ public static class AttributeChangeValidator
             {
                 return $"Can't change '{local.Name}' from the global choice '{existing.GlobalOptionSetName}' to a local choice — switching isn't supported by this tool yet.";
             }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// A Memo's format: on create, only <see cref="MemoFormats"/> (or none)
+    /// can be built — anything else would otherwise be silently created as a
+    /// plain Memo. On update, a format equal to the live one is no change; a
+    /// switch between plain and rich text is refused, since
+    /// <see cref="AttributeMetadataJsonBuilder.ApplyUpdateFields"/> never
+    /// sends a Memo's format and no supported conversion has been confirmed.
+    /// That refusal also catches a rich text column exported before this tool
+    /// knew about rich text (it was written as <c>format: Text</c>, see
+    /// <see cref="MemoFormats"/>), so the message says to re-export.
+    /// </summary>
+    private static string? ValidateMemoFormat(AttributeDefinition local, AttributeDefinition? existing)
+    {
+        if (local.Type != "Memo" || local.Format is null)
+        {
+            return null;
+        }
+
+        if (existing is not null)
+        {
+            if (local.Format == existing.Format)
+            {
+                return null;
+            }
+
+            if ((local.Format == MemoFormats.RichText) != (existing.Format == MemoFormats.RichText))
+            {
+                var (from, to) = existing.Format == MemoFormats.RichText ? ("rich text", "plain text") : ("plain text", "rich text");
+                return $"Can't switch '{local.Name}' from {from} to {to} (live format '{existing.Format}', YAML format '{local.Format}') — this tool doesn't change an existing Memo between plain and rich text; create a new column instead. If this file was exported before rich text support, re-export it (a rich text column used to export as 'format: Text').";
+            }
+        }
+
+        return local.Format is MemoFormats.TextArea or MemoFormats.RichText
+            ? null
+            : $"Memo format '{local.Format}' isn't supported — use {MemoFormats.TextArea} or {MemoFormats.RichText}, or leave format out for a plain Memo.";
+    }
+
+    /// <summary>
+    /// <c>autoNumberFormat</c> is String-only and needs format Text
+    /// (Microsoft Learn, "Create autonumber columns":
+    /// https://learn.microsoft.com/power-apps/developer/data-platform/create-auto-number-attributes);
+    /// <c>autoNumberSeed</c> has nothing to seed without it. Refused rather
+    /// than dropped, so nobody is left thinking a column numbers itself.
+    /// </summary>
+    private static string? ValidateAutoNumber(AttributeDefinition local, AttributeDefinition? existing)
+    {
+        if (local.AutoNumberFormat is not null && local.Type != "String")
+        {
+            return $"autoNumberFormat is only supported on String columns — '{local.Name}' is a {local.Type}.";
+        }
+
+        if (local.AutoNumberSeed is not null && local.AutoNumberFormat is null)
+        {
+            return $"autoNumberSeed on '{local.Name}' needs an autoNumberFormat alongside it in the YAML — there's no sequence to seed without one.";
+        }
+
+        var format = local.Format ?? existing?.Format ?? "Text";
+        if (local.AutoNumberFormat is not null && format != "Text")
+        {
+            return $"'{local.Name}' has an autoNumberFormat but format '{format}' — an auto-number column's format must be Text.";
         }
 
         return null;
