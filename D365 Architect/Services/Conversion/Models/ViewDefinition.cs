@@ -19,9 +19,10 @@ namespace D365Architect.Services.Conversion.Models;
 /// creation with no meaning to a human editing this YAML, and — unlike an
 /// entity's LogicalName or an attribute's SchemaName — Dataverse doesn't
 /// require it as input when creating a view; <see cref="Name"/> is this
-/// asset's only practical identity. FetchXml/LayoutXml are kept verbatim
-/// rather than decomposed into a friendlier "columns" shape — see
-/// <see cref="ViewJsonDefinitionReader"/> for why that's left for later.
+/// asset's only practical identity. Export keeps FetchXml/LayoutXml verbatim
+/// rather than decomposing them — see <see cref="ViewJsonDefinitionReader"/>
+/// for why; a hand-written view may give <see cref="Columns"/> instead of a
+/// LayoutXml.
 /// </summary>
 public sealed class ViewDefinition
 {
@@ -110,8 +111,10 @@ public sealed class ViewDefinition
     /// name, default width 150) or <c>{ name, width }</c>. On import the tool builds the
     /// layout from this, adds any listed column missing from <see cref="FetchXml"/> and
     /// always includes the table's id column there, and fills in the table's type code.
-    /// Giving both this and <see cref="LayoutXml"/> is refused. Never written by
-    /// <c>view export</c>, which keeps writing the raw <see cref="LayoutXml"/>.
+    /// With no <see cref="FetchXml"/>, an existing view's live FetchXML is the base, and a
+    /// new view queries just these columns. Giving both this and <see cref="LayoutXml"/> is
+    /// refused. Never written by <c>view export</c>, which keeps writing the raw
+    /// <see cref="LayoutXml"/>.
     /// </summary>
     [YamlMember(Order = 11)]
     public IReadOnlyList<ViewColumn>? Columns { get; init; }

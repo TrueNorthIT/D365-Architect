@@ -74,7 +74,7 @@ public sealed class ImportSolutionCommand(
         public required string Input { get; init; }
 
         [CommandOption("-s|--solution <UNIQUE_NAME>")]
-        [Description("Unique name of the solution these files came from. Forwarded to every table/choice import so any brand-new column/lookup relationship/global choice this run creates actually joins the solution, rather than silently landing outside it.")]
+        [Description("Unique name of the solution these files came from. Forwarded to every table/choice/view/form import so any brand-new column/lookup relationship/global choice this run creates, and any view or form it creates or changes, actually joins the solution, rather than silently landing outside it.")]
         public required string Solution { get; init; }
 
         [CommandOption("-y|--yes")]
@@ -157,9 +157,9 @@ public sealed class ImportSolutionCommand(
         SolutionImportStage.ImportTable => new ImportTableCommand(tableImportService, importRunner).RunAsync(
             new ImportTableCommand.Settings { Input = assetPath, Yes = settings.Yes, WhatIf = settings.WhatIf, NoTransaction = settings.NoTransaction, Solution = settings.Solution }, cancellationToken),
         SolutionImportStage.ImportView => new ImportViewCommand(viewImportService, importRunner).RunAsync(
-            new ImportViewCommand.Settings { Input = assetPath, Yes = settings.Yes, WhatIf = settings.WhatIf }, cancellationToken),
+            new ImportViewCommand.Settings { Input = assetPath, Yes = settings.Yes, WhatIf = settings.WhatIf, Solution = settings.Solution }, cancellationToken),
         SolutionImportStage.ImportForm => new ImportFormCommand(formImportService, importRunner).RunAsync(
-            new ImportFormCommand.Settings { Input = assetPath, Yes = settings.Yes, WhatIf = settings.WhatIf, AllowSchemaViolations = settings.AllowSchemaViolations }, cancellationToken),
+            new ImportFormCommand.Settings { Input = assetPath, Yes = settings.Yes, WhatIf = settings.WhatIf, Solution = settings.Solution, AllowSchemaViolations = settings.AllowSchemaViolations }, cancellationToken),
         _ => throw new ArgumentOutOfRangeException(nameof(stage), stage, null),
     };
 

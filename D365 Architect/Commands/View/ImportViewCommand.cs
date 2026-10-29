@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using D365Architect.Commands;
 using D365Architect.Services.Conversion;
 using D365Architect.Services.Conversion.Models;
@@ -8,7 +9,7 @@ using Spectre.Console.Cli;
 namespace D365Architect.Commands.View;
 
 /// <summary>
-/// `d365architect view import --input account-active.view.yml [--yes] [--whatif]`
+/// `d365architect view import --input account-active.view.yml [--solution UNIQUE_NAME] [--yes] [--whatif]`
 /// Writes a `*.view.yml` file's Description/FetchXml/LayoutXml directly
 /// back into Dataverse. Needs sign-in.
 ///
@@ -18,10 +19,14 @@ namespace D365Architect.Commands.View;
 /// there's no id-resynthesis to cancel out before diffing — the live
 /// values are compared directly against the local YAML.
 ///
-/// Only ever updates a view that already exists — refuses (rather than
-/// creating one) when no view matches the YAML's table + name yet.
-/// `QueryType`/`IsDefault`/`IsQuickFindQuery` are never written — see
-/// <see cref="IViewImportService"/>'s own doc comment for why.
+/// A view matching nothing by the YAML's table + name is created — shown in
+/// the plan as `+ view '&lt;name&gt;' (create)` and confirmed like any other
+/// change; a stale `savedQueryId` is still an error. A hand-written file may
+/// list `columns` instead of a raw `layoutXml` (see
+/// <see cref="IViewImportService"/>). `--solution` adds whatever is created
+/// or changed to that solution. `QueryType`/`IsDefault`/`IsQuickFindQuery`
+/// are never written — see <see cref="IViewImportService"/>'s own doc
+/// comment for why.
 ///
 /// What this doesn't do yet: publish the change (Dataverse customizations
 /// still need publishing separately before end users see it) — and
@@ -44,8 +49,8 @@ public sealed class ImportViewCommand(IViewImportService viewImportService, Impo
 {
     public sealed class Settings : ImportSettingsBase
     {
-        // Test-first stub (REQ-22): the property exists so tests compile; the developer adds
-        // [CommandOption("-s|--solution <UNIQUE_NAME>")] and [Description(...)], as CreateTableCommand has, and wires it through.
+        [CommandOption("-s|--solution <UNIQUE_NAME>")]
+        [Description("Unique name of a solution to add the view to as it is created or changed.")]
         public string? Solution { get; init; }
     }
 
@@ -83,6 +88,11 @@ public sealed class ImportViewCommand(IViewImportService viewImportService, Impo
 
             PrintChanges = preview =>
             {
+                if (preview.IsCreate)
+                {
+                    AnsiConsole.MarkupLine($"[green]{$"+ view '{preview.Name}' (create)".EscapeMarkup()}[/]");
+                }
+
                 PrintFieldDiff("description", preview.ExistingDescription, preview.NewDescription, pretty: false);
                 PrintFieldDiff("fetchxml", preview.ExistingFetchXml, preview.NewFetchXml, pretty: true);
                 PrintFieldDiff("layoutxml", preview.ExistingLayoutXml, preview.NewLayoutXml, pretty: true);
@@ -91,17 +101,17 @@ public sealed class ImportViewCommand(IViewImportService viewImportService, Impo
 
             ApplyStatusMessage = "Importing...",
 
-            ApplyAsync = (auth, preview, ct) => viewImportService.ApplyAsync(auth.EnvironmentUrl, auth.AccessToken, preview, ct),
+            ApplyAsync = (auth, preview, ct) => viewImportService.ApplyAsync(auth.EnvironmentUrl, auth.AccessToken, preview, settings.Solution, ct),
 
             PrintSuccess = (view, preview) =>
             {
-                AnsiConsole.MarkupLine($"[green]Imported.[/] '{view.Name}' updated in Dataverse.");
+                AnsiConsole.MarkupLine($"[green]Imported.[/] '{view.Name.EscapeMarkup()}' {(preview.IsCreate ? "created" : "updated")} in Dataverse.");
                 AnsiConsole.MarkupLine("[grey]Note: this only updates the view's own fields — publish customizations separately (e.g. in the maker portal) before end users see the change; this tool doesn't publish yet. Until you do, a follow-up 'view export' won't show this change either — it reads the same unpublished state, not a sign the import failed.[/]");
             },
 
             FormatDomainException = (ex, view) => ex switch
             {
-                ViewNotFoundException or AmbiguousSavedQueryException or ViewIdentityMismatchException => $"[red]{ex.Message.EscapeMarkup()}[/]",
+                ViewNotFoundException or AmbiguousSavedQueryException or ViewIdentityMismatchException or InvalidDataException => $"[red]{ex.Message.EscapeMarkup()}[/]",
                 _ => null,
             },
         };

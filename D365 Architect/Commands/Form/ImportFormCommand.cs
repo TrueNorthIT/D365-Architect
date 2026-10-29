@@ -8,7 +8,7 @@ using Spectre.Console.Cli;
 namespace D365Architect.Commands.Form;
 
 /// <summary>
-/// `d365architect form import --input account-main-form.form.yml [--yes] [--whatif]`
+/// `d365architect form import --input account-main-form.form.yml [--solution UNIQUE_NAME] [--yes] [--whatif]`
 /// Writes a `*.form.yml` file's rebuilt FormXML directly back into
 /// Dataverse — straight from the YAML, not through `form build-xml` first.
 /// That command exists for a human to inspect/validate the rebuilt FormXML
@@ -31,12 +31,15 @@ namespace D365Architect.Commands.Form;
 /// nothing is written at all. Pass <c>--whatif</c> to see just the diff and
 /// never be prompted or write anything at all.
 ///
-/// Only ever updates a form that already exists — matched by the YAML's own
-/// `formId` when it has one (immune to a rename or a name shared with
-/// another form), or by table + name as a fallback for a file exported
-/// before that field existed. Refuses (rather than creating one) when
-/// nothing matches, and refuses outright for a dashboard, same as
-/// `build-xml`.
+/// Matches the live form by the YAML's own `formId` when it has one (immune
+/// to a rename or a name shared with another form; a stale one is an error),
+/// or otherwise by table + name + type (`type` absent = Main). A hand-written
+/// file that matches nothing is created — shown in the plan as
+/// `+ form '&lt;name&gt;' (&lt;type&gt;, create)` and confirmed like any other change —
+/// and more than one match is refused, listing the ids to choose from as
+/// `formId` (see <see cref="IFormImportService"/>). Refuses outright for a
+/// dashboard, same as `build-xml`. `--solution` adds whatever is created or
+/// changed to that solution.
 ///
 /// Publishes the form's owning table immediately after writing it — a
 /// separate <see cref="IFormImportService.PublishAsync"/> call this class
@@ -60,8 +63,8 @@ public sealed class ImportFormCommand(IFormImportService formImportService, Impo
 {
     public sealed class Settings : ImportSettingsBase
     {
-        // Test-first stub (REQ-22): the property exists so tests compile; the developer adds
-        // [CommandOption("-s|--solution <UNIQUE_NAME>")] and [Description(...)], as CreateTableCommand has, and wires it through.
+        [CommandOption("-s|--solution <UNIQUE_NAME>")]
+        [Description("Unique name of a solution to add the form to as it is created or changed.")]
         public string? Solution { get; init; }
 
         [CommandOption("--allow-schema-violations")]
@@ -117,7 +120,13 @@ public sealed class ImportFormCommand(IFormImportService formImportService, Impo
 
             PrintChanges = preview =>
             {
-                DiffConsole.PrintDiff(TextDiff.Compute(DiffConsole.PrettyPrintXml(preview.ExistingComparableFormXml), DiffConsole.PrettyPrintXml(preview.NewFormXml)));
+                if (preview.IsCreate)
+                {
+                    AnsiConsole.MarkupLine($"[green]{$"+ form '{preview.Name}' ({FormJsonDefinitionReader.FormTypeLabel(preview.FormType).ToLowerInvariant()}, create)".EscapeMarkup()}[/]");
+                }
+
+                var existingText = preview.IsCreate ? "" : DiffConsole.PrettyPrintXml(preview.ExistingComparableFormXml);
+                DiffConsole.PrintDiff(TextDiff.Compute(existingText, DiffConsole.PrettyPrintXml(preview.NewFormXml)));
                 AnsiConsole.WriteLine();
 
                 FormXmlValidationConsole.PrintViolations(preview.Violations);
@@ -143,15 +152,15 @@ public sealed class ImportFormCommand(IFormImportService formImportService, Impo
                 // doc comment for why publishing doesn't fit
                 // IImportService<TInput,TPreview> the way table/view import
                 // (which never publish) do.
-                await formImportService.ApplyAsync(auth.EnvironmentUrl, auth.AccessToken, preview, ct);
+                await formImportService.ApplyAsync(auth.EnvironmentUrl, auth.AccessToken, preview, settings.Solution, ct);
                 await formImportService.PublishAsync(auth.EnvironmentUrl, auth.AccessToken, preview, ct);
             },
 
-            PrintSuccess = (form, preview) => AnsiConsole.MarkupLine($"[green]Imported and published.[/] '{form.Name}' updated in Dataverse."),
+            PrintSuccess = (form, preview) => AnsiConsole.MarkupLine($"[green]Imported and published.[/] '{form.Name.EscapeMarkup()}' {(preview.IsCreate ? "created" : "updated")} in Dataverse."),
 
             FormatDomainException = (ex, form) => ex switch
             {
-                FormNotFoundException or AmbiguousSystemFormException or NotSupportedException => $"[red]{ex.Message.EscapeMarkup()}[/]",
+                FormNotFoundException or AmbiguousSystemFormException or NotSupportedException or InvalidDataException => $"[red]{ex.Message.EscapeMarkup()}[/]",
                 _ => null,
             },
         };

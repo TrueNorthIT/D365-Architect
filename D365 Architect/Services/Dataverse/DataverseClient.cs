@@ -355,28 +355,96 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         return new ExistingSystemForm(formId, formXml, entityLogicalName, name);
     }
 
-    public async Task UpdateSystemFormXmlAsync(Uri environmentUrl, string accessToken, Guid formId, string formXml, CancellationToken cancellationToken)
+    public async Task UpdateSystemFormXmlAsync(Uri environmentUrl, string accessToken, Guid formId, string formXml, CancellationToken cancellationToken) =>
+        await UpdateSystemFormXmlAsync(environmentUrl, accessToken, formId, formXml, solutionUniqueName: null, cancellationToken);
+
+    public async Task UpdateSystemFormXmlAsync(Uri environmentUrl, string accessToken, Guid formId, string formXml, string? solutionUniqueName, CancellationToken cancellationToken)
     {
         using var request = CreateRequest(environmentUrl, $"systemforms({formId})", accessToken, HttpMethod.Patch);
+        AddSolutionHeader(request, solutionUniqueName);
         request.Content = JsonContent.Create(new { formxml = formXml }, options: VerbatimJsonOptions);
 
         using var response = await httpClient.SendAsync(request, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);
     }
 
-    // ---- Simpler hand-written forms and views: compile-only stubs from the test-first pass; the developer implements these. ----
+    // Same 404-only-means-absent rule as EntityExistsAsync: any other failure
+    // throws, so a throttled or unauthorised read is never mistaken for "no
+    // such table" (which view import reports as a refusal naming it).
+    public async Task<EntityIdentity?> TryGetEntityIdentityAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken)
+    {
+        var relativePath = $"EntityDefinitions(LogicalName='{Uri.EscapeDataString(entityLogicalName)}')?$select=ObjectTypeCode,PrimaryIdAttribute,PrimaryNameAttribute";
 
-    public Task<EntityIdentity?> TryGetEntityIdentityAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken) => throw new NotImplementedException();
+        using var request = CreateRequest(environmentUrl, relativePath, accessToken);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            return null;
+        }
 
-    public Task CreateSavedQueryAsync(Uri environmentUrl, string accessToken, JsonObject body, string? solutionUniqueName, CancellationToken cancellationToken) => throw new NotImplementedException();
+        await EnsureSuccessAsync(response, cancellationToken);
 
-    public Task UpdateSavedQueryAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, string? description, string? fetchXml, string? layoutXml, string? solutionUniqueName, CancellationToken cancellationToken) => throw new NotImplementedException();
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        return new EntityIdentity(
+            root.GetProperty("ObjectTypeCode").GetInt32(),
+            root.GetProperty("PrimaryIdAttribute").GetString() ?? "",
+            root.GetProperty("PrimaryNameAttribute").GetString() ?? "");
+    }
 
-    public Task<IReadOnlyList<ExistingSystemForm>> FindSystemFormsAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string formName, int formType, CancellationToken cancellationToken) => throw new NotImplementedException();
+    public Task CreateSavedQueryAsync(Uri environmentUrl, string accessToken, JsonObject body, string? solutionUniqueName, CancellationToken cancellationToken) =>
+        PostRecordAsync(environmentUrl, accessToken, "savedqueries", body, solutionUniqueName, cancellationToken);
 
-    public Task CreateSystemFormAsync(Uri environmentUrl, string accessToken, JsonObject body, string? solutionUniqueName, CancellationToken cancellationToken) => throw new NotImplementedException();
+    public async Task<IReadOnlyList<ExistingSystemForm>> FindSystemFormsAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string formName, int formType, CancellationToken cancellationToken)
+    {
+        // Same apostrophe handling as TryGetSystemFormAsync: formName is a
+        // human-editable display name.
+        var relativePath = "systemforms?$select=formid,formxml,objecttypecode,name" +
+            $"&$filter=objecttypecode eq '{Uri.EscapeDataString(entityLogicalName)}' and name eq '{Uri.EscapeDataString(EscapeODataStringLiteral(formName))}' and type eq {formType}";
 
-    public Task UpdateSystemFormXmlAsync(Uri environmentUrl, string accessToken, Guid formId, string formXml, string? solutionUniqueName, CancellationToken cancellationToken) => throw new NotImplementedException();
+        using var request = CreateRequest(environmentUrl, relativePath, accessToken);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        using var doc = JsonDocument.Parse(json);
+        return doc.RootElement.GetProperty("value").EnumerateArray()
+            .Select(form => new ExistingSystemForm(
+                form.GetProperty("formid").GetGuid(),
+                form.TryGetProperty("formxml", out var x) && x.ValueKind == JsonValueKind.String ? x.GetString()! : "",
+                form.TryGetProperty("objecttypecode", out var e) && e.ValueKind == JsonValueKind.String ? e.GetString() : null,
+                form.TryGetProperty("name", out var n) && n.ValueKind == JsonValueKind.String ? n.GetString() : null))
+            .ToList();
+    }
+
+    public Task CreateSystemFormAsync(Uri environmentUrl, string accessToken, JsonObject body, string? solutionUniqueName, CancellationToken cancellationToken) =>
+        PostRecordAsync(environmentUrl, accessToken, "systemforms", body, solutionUniqueName, cancellationToken);
+
+    /// <summary>A plain record create (<c>POST {entitySetName}</c>), optionally into a solution — shared by the view and form creates.</summary>
+    private async Task PostRecordAsync(Uri environmentUrl, string accessToken, string entitySetName, JsonObject body, string? solutionUniqueName, CancellationToken cancellationToken)
+    {
+        using var request = CreateRequest(environmentUrl, entitySetName, accessToken, HttpMethod.Post);
+        AddSolutionHeader(request, solutionUniqueName);
+        request.Content = JsonContent.Create(body);
+
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+    }
+
+    /// <summary>
+    /// <c>MSCRM.SolutionUniqueName</c> on a create or an update, so the
+    /// component joins that solution as it is written (Learn, "Use optional
+    /// parameters": https://learn.microsoft.com/power-apps/developer/data-platform/optional-parameters#associate-a-solution-component-with-a-solution ).
+    /// Null sends nothing.
+    /// </summary>
+    private static void AddSolutionHeader(HttpRequestMessage request, string? solutionUniqueName)
+    {
+        if (solutionUniqueName is not null)
+        {
+            request.Headers.Add("MSCRM.SolutionUniqueName", solutionUniqueName);
+        }
+    }
 
     public async Task PublishEntityAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken)
     {
@@ -452,7 +520,10 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         return new ExistingSavedQuery(savedQueryId, description, fetchXml, layoutXml, entity, name);
     }
 
-    public async Task UpdateSavedQueryAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, string? description, string? fetchXml, string? layoutXml, CancellationToken cancellationToken)
+    public Task UpdateSavedQueryAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, string? description, string? fetchXml, string? layoutXml, CancellationToken cancellationToken) =>
+        UpdateSavedQueryAsync(environmentUrl, accessToken, savedQueryId, description, fetchXml, layoutXml, solutionUniqueName: null, cancellationToken);
+
+    public async Task UpdateSavedQueryAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, string? description, string? fetchXml, string? layoutXml, string? solutionUniqueName, CancellationToken cancellationToken)
     {
         var body = new Dictionary<string, string>();
         if (description is not null)
@@ -476,6 +547,7 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         }
 
         using var request = CreateRequest(environmentUrl, $"savedqueries({savedQueryId})", accessToken, HttpMethod.Patch);
+        AddSolutionHeader(request, solutionUniqueName);
         request.Content = JsonContent.Create(body);
 
         using var response = await httpClient.SendAsync(request, cancellationToken);
@@ -788,10 +860,7 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
     public async Task CreateGlobalOptionSetAsync(Uri environmentUrl, string accessToken, JsonObject body, string? solutionUniqueName, CancellationToken cancellationToken)
     {
         using var request = CreateRequest(environmentUrl, "GlobalOptionSetDefinitions", accessToken, HttpMethod.Post);
-        if (solutionUniqueName is not null)
-        {
-            request.Headers.Add("MSCRM.SolutionUniqueName", solutionUniqueName);
-        }
+        AddSolutionHeader(request, solutionUniqueName);
 
         request.Content = JsonContent.Create(body);
 
