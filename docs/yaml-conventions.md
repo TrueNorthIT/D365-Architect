@@ -1201,9 +1201,10 @@ A table-level key in `*.table.yml`: the logical name of the table's primary
 name column (e.g. `tn_name`). It has to be listed under `attributes`, and it's
 what `table create` builds the table's one column from. `table export` writes
 it, taken from the live table's `PrimaryNameAttribute`. If the key is absent,
-`table create` refuses rather than defaulting to a column name. `table import` reads the same model but doesn't act on the
-key (unverified whether it appears in the diff; confirm against a real
-`table import --whatif` before relying on it).
+`table create` refuses rather than defaulting to a column name. `table import` reads the same model but never writes the
+key — it only takes part in the informational diff. Confirmed live: a file
+carrying `primaryNameAttribute` re-imported against its own freshly-created
+table reports "already matches", so a matching key causes no spurious change.
 
 ## Global choices (`choice export`/`choice import`)
 

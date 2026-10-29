@@ -43,7 +43,7 @@ The YAML is for humans to manage and review. The export therefore aims to be **a
 2. **Reader**: populate it, omitting the default via `DefaultValueConventions` (or a new, confirmed helper).
 3. **Writer/builder**: restore it on the way out so import has full functionality. A new field is not done until it is written back.
 4. **Diff/preview**: ensure the import diff compares like with like (see `FormImportPreview.ExistingComparableFormXml`) so there are no spurious changes.
-5. **Safety**: imports show a diff and require confirmation; never silently delete (`table import` never drops a column; form/view import never create missing records). Route errors through `ErrorConsole` with domain exceptions, never raw stack traces.
+5. **Safety**: imports show a diff and require confirmation; never silently delete (`table import` never drops a column; form/view import never create missing records; creating a table is only ever `table create`'s explicit job, never a side effect of `table import`). Route errors through `ErrorConsole` with domain exceptions, never raw stack traces.
 6. **New asset type**: add the command branch, register it in `Program.cs`, add the services, reader, writer and (de)serializers, and extend `schema export`.
 7. **Tests** (`D365 Architect.Tests`, xUnit): test readers/writers against literal input, and add a **round-trip test** (write → read back, and rebuild twice is byte-identical). Confirm a new regression test fails without your fix. Run `dotnet test "D365 Architect.slnx"`.
 8. **Docs & schema**: update `docs/yaml-conventions.md` if you change what absent/omitted means. A `dotnet build` regenerates `schema/*.schema.json`; review and commit that diff.
