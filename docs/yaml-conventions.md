@@ -1064,10 +1064,10 @@ destructive, hard-to-reverse operation this tool refuses to guess its way
 into; if a column genuinely needs removing, that's a deliberate action to
 take elsewhere, not a side effect of a YAML file simply not mentioning it.
 
-**Never creates the table itself**, either — same "don't attempt the
-large, different, and separately-risky operation of bringing a whole new
-object into existence" boundary `form import`/`view import` already draw
-around forms/views that don't exist yet.
+**Never creates the table itself**, either. A column can only be added to a
+table that already exists; bringing the table into existence is `table
+create`'s job, a separate command with a narrower contract (see "Creating
+tables" below), so `table import` on its own never does it.
 
 **The diff is the table's decomposed YAML**, not a rebuilt artifact —
 unlike FormXML, there's no single canonical "table document" this tool
@@ -1125,6 +1125,86 @@ own error naming the rejection; pass `--no-transaction` to fall back to
 the same one-request-at-a-time behavior this tool always used before
 batching existed.
 
+## Creating tables (`table create`)
+
+`ITableCreateService`/`TableCreateService` (`d365architect table create --input
+x.table.yml [--solution NAME] [--yes] [--whatif]`) is the only path in this
+tool that brings a table into existence. It's deliberately narrow, for the
+same reason `table import` is: a whole new table is a larger, harder-to-undo
+write than a column, so each part of it has to be confirmed rather than
+assumed.
+
+- **One request.** The create is a single `POST EntityDefinitions`, built by
+  `EntityMetadataJsonBuilder.BuildCreateBody` from Microsoft's "Create table
+  definitions" example (`SchemaName`, `DisplayName`, `DisplayCollectionName`,
+  `Description`, `OwnershipType`, `IsActivity`/`HasActivities`/`HasNotes`
+  set to `false`). One request is atomic on its own, so it isn't wrapped in
+  a changeset.
+- **Only the primary name column is created**, from the file's
+  `primaryNameAttribute`, as a String column in Text format with its own
+  `IsPrimaryName: true`. Every other column is left for `table import`, which
+  already plans, diffs and creates the types it supports. Creating a table
+  and then importing its columns is two steps by design.
+- **Refuses rather than guesses.** `TableCreateValidator` requires
+  `schemaName` (with a publisher prefix), `ownershipType` (`UserOwned` or
+  `OrganizationOwned` only; `TeamOwned`, `BusinessOwned`, `BusinessParented`
+  and `None` are refused rather than mapped), `primaryNameAttribute` (a String
+  column listed under `attributes`), and both display names. Activity, elastic
+  and virtual tables are refused. Every problem is returned in one run.
+- **An existing table is a no-op.** If the logical name already exists live,
+  the command reports "already exists, nothing to create" and exits 0 without
+  validating the file. This is what lets `solution import` run it against
+  every table folder.
+- **`--solution`** passes `MSCRM.SolutionUniqueName` on the create, so the
+  new table joins that solution as it's created (the same gap `table import
+  --solution` closes for columns).
+- **Doesn't publish**, same as `table import`, and never rewrites the input
+  file.
+
+**Confirmed live** against a personal test environment (not a shared tenant):
+
+- A table `bogdan_tablecreatetest` was created with the body as built, and
+  Dataverse accepted it.
+- A second run against the same table reported "already exists" and changed
+  nothing.
+- The existence check for a table that doesn't exist returned 404, which is
+  how the tool tells "missing" from "present".
+- `solution export` of the solution the table was created into included the
+  new table, so `--solution` on create puts the table where it should be, and
+  the exported `*.table.yml` contained `primaryNameAttribute`.
+- A staged `solution import` (see the README's `solution import` section)
+  of a new table `bogdan_stagedtest`, plus an added column, a view and a main
+  form, created the table first, then imported the column, view and form in
+  one run. The input files were byte-identical afterwards.
+
+### Creating a new table and its views and forms
+
+Dataverse auto-creates seven views and three forms for a new table, and all
+three forms are named "Information" (main, card and quick view). That has two
+consequences for hand-written files:
+
+- A `*.form.yml` for a new table needs `formId` set, to say which of the three
+  it is. Without it the form is ambiguous by name.
+- A view's `layoutXml` needs the `object` attribute (the table's type code),
+  which only exists once the table has been created.
+
+So the practical workflow is: `table create` → `solution export` → edit the
+exported views and forms → `table import`/`view import`/`form import` (or a
+`solution import` of the folder). Recovery from a partly-failed run is to fix
+the file and rerun, since each stage is idempotent: an existing table is
+skipped, and an import applies only what still differs. There's no
+transaction across the whole `solution import`; each asset is its own write.
+
+### `primaryNameAttribute`
+
+A table-level key in `*.table.yml`: the logical name of the table's primary
+name column (e.g. `tn_name`). It has to be listed under `attributes`, and it's
+what `table create` builds the table's one column from. `table export` writes
+it, taken from the live table's `PrimaryNameAttribute`. If the key is absent,
+`table create` refuses rather than defaulting to a column name. `table import` reads the same model but doesn't act on the
+key (unverified whether it appears in the diff; confirm against a real
+`table import --whatif` before relying on it).
+
 ## Global choices (`choice export`/`choice import`)
 
 A global choice (`GlobalOptionSetDefinitions`) is its own top-level
@@ -1163,7 +1243,8 @@ hundred choices the file doesn't happen to mention would be noise, not a
 useful signal.
 
 **`choice import` can create a brand-new global choice**, unlike `table
-import` (which never creates the table itself) — a global choice doesn't
+import` (which only adds columns to a table that already exists; `table
+create` makes the table, see "Creating tables" below) — a global choice doesn't
 belong to an already-live table the way a column does, so there's nothing
 else it needs to already exist under. When nothing live matches a listed
 choice's `name` yet, that whole entry becomes its create body; otherwise

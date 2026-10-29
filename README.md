@@ -150,6 +150,8 @@ Work with D365 table definitions.
 
 Fetches a table's live definition from the currently signed-in environment
 and saves it as this tool's declarative YAML. Requires `auth login` first.
+The table-level keys include `primaryNameAttribute` (the table's primary name
+column), which `table create` needs when creating the table.
 
 ```
 d365architect table export --table account
@@ -208,7 +210,8 @@ more) shows up in the plan as not applied, with the reason, rather than
 being guessed at. **Columns are never deleted automatically**, no matter
 what the local YAML says or doesn't say — a column missing from the file
 just shows up in the plan as "not applied", nothing more. The table itself
-is never created if it doesn't exist yet, either. Unless `--yes` is passed,
+is never created here, either: `table create` does that, and only for the
+primary name column (see [`table create`](#table-create) below). Unless `--yes` is passed,
 you get a confirmation prompt (defaulting to "no") before anything actually
 changes in Dataverse, and if there's genuinely nothing to apply, nothing is
 written at all. Pass `--whatif` to see the diff/plan and stop there — no
@@ -245,6 +248,37 @@ model-driven apps, and this tool doesn't call it automatically. See
 [`docs/yaml-conventions.md`](docs/yaml-conventions.md#importing-tables-table-import)
 for the full detail, including exactly why each excluded column type is
 excluded.
+
+#### `table create`
+
+Creates a table that doesn't exist yet, from a `*.table.yml` file. Only the
+table and its primary name column are created; every other column is added
+afterwards with `table import`. Needs sign-in.
+
+```
+d365architect table create --input tn_project.table.yml --solution TNCore
+```
+
+| Option            | Description                                                                 | Required |
+|-------------------|------------------------------------------------------------------------------|----------|
+| `-i, --input`     | Path to the `*.table.yml` file describing the table                          | Yes      |
+| `-s, --solution`  | Unique name of a solution to add the new table to as it's created            | No       |
+| `-y, --yes`       | Skip the confirmation prompt and create the table immediately                | No       |
+| `--whatif`        | Only show what would be created — never prompt and never write anything      | No       |
+
+The file must give `schemaName` (with its publisher prefix), `ownershipType`
+(`UserOwned` or `OrganizationOwned` only), `primaryNameAttribute` (the logical
+name of a String column listed under `attributes`), and both display names.
+Nothing is guessed: anything missing or invalid is listed in one run and
+nothing is sent. Activity, elastic and virtual tables aren't supported.
+
+If the table already exists, the command says so ("already exists, nothing to
+create") and exits 0 without validating the file, so it's safe to run against
+every table in a solution. Like `table import`, it doesn't publish the change
+and never rewrites the input file. See
+[`docs/yaml-conventions.md`](docs/yaml-conventions.md#creating-tables-table-create)
+for the create body, the live confirmations, and the recommended workflow for a
+new table (create, then `solution export`, then edit the views and forms).
 
 ### `view`
 
@@ -602,8 +636,11 @@ empty one.
 #### `solution import`
 
 Walks a folder previously written by `solution export` and imports every
-file found — `choices.yml` first, then, for each table sub-folder, its
-`*.table.yml`, then its `*.view.yml` file(s), then its `*.form.yml` file(s).
+file found, in stages. First, every `*.table.yml` whose table doesn't exist
+live yet is created (`table create`'s flow). Then `choices.yml`, then, for
+each table sub-folder, its `*.table.yml` (columns), then its `*.view.yml`
+file(s), then its `*.form.yml` file(s). Each stage reads live state afresh,
+so a table created in the first stage is visible to the rest.
 
 ```
 d365architect solution import --input ./examplesolution --solution examplesolution
@@ -625,18 +662,24 @@ its own diff, its own column/choice plan, its own schema-violation gate.
 `--yes`/`--whatif`/`--no-transaction`/`--allow-schema-violations` are simply
 forwarded to every file they apply to, so `--yes` runs the whole solution
 unattended the same way it already does for a single asset. `--solution` is
-likewise forwarded to every table/choice import as their own `--solution`,
+likewise forwarded to every table create, table import and choice import as
+their own `--solution`,
 so any brand-new column/lookup relationship/global choice this run creates
 actually joins the solution it came from, rather than landing wherever
 Dataverse's own default solution context puts it and silently not showing
-up in a later `solution export` of the same solution. One file
+up in a later `solution export` of the same solution. One non-create file
 failing (a validation error, a live rejection, a missing counterpart)
 doesn't stop the rest — every remaining file is still attempted, with a
 final summary of how many succeeded/failed and a non-zero exit code if
 anything did. There's no cross-file rollback: each asset's own write is
 already atomic on its own terms (`table import`'s changeset, in
 particular), but nothing ties multiple files' writes together into one
-larger transaction.
+larger transaction. Recovery is to fix the file and rerun: existing tables are
+skipped, and each import applies only what still differs.
+
+A failed or declined table create is different: it stops the run at that
+table, since its views, forms and any later table's lookups can't succeed
+against a table that isn't there.
 
 Under `--whatif` a table that doesn't exist yet is reported as one that would
 be created, and its own `*.table.yml` import, views and forms are skipped with

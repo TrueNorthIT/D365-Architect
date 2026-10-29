@@ -68,7 +68,7 @@ injection, and defines a nested `Settings : CommandSettings` with
 | `auth` | `login` | `Commands/Auth/LoginCommand.cs` |
 | *(top-level)* | `whoami` | `Commands/WhoAmICommand.cs` |
 | `environment` | `list`, `sync` | `Commands/Environments/ListEnvironmentsCommand.cs`, `SyncEnvironmentCommand.cs` |
-| `table` | `export`, `import` | `Commands/Table/ExportTableCommand.cs`, `ImportTableCommand.cs` |
+| `table` | `export`, `import`, `create` | `Commands/Table/ExportTableCommand.cs`, `ImportTableCommand.cs`, `CreateTableCommand.cs` |
 | `view` | `export`, `import` | `Commands/View/ExportViewCommand.cs`, `ImportViewCommand.cs` |
 | `form` | `export`, `build-xml`, `import` | `Commands/Form/ExportFormCommand.cs`, `BuildFormXmlCommand.cs`, `ImportFormCommand.cs` |
 | `choice` | `export`, `import` | `Commands/Choice/ExportChoiceCommand.cs`, `ImportChoiceCommand.cs` |
@@ -91,7 +91,7 @@ ImportTableCommand(tableImportService, importRunner)`) and call it per file
 it finds, with its own `Settings` built from the folder's own file paths.
 Every asset still gets its full preview → diff → confirm → apply flow; one
 file failing doesn't stop the rest (see `ImportSolutionCommand`'s own doc
-comment for why, and how it reports the count at the end). If you add a
+comment for why, and how it reports the count at the end). The one exception is a failed or declined table create, which stops the run at that table: `SolutionImportOrchestrator` owns the stage ordering (creates first, then choices, then each table's columns, views and forms) and its doc comment gives the reasoning. `CreateTableCommand` keeps the same `RunAsync` shape, but returns which outcome happened (created, already exists, would create, declined), since an exit code of 0 can't tell them apart. If you add a
 fifth `Import*Command`, keep this same `RunAsync` shape so it can join
 `solution import`'s loop the same way, rather than solution import needing
 its own special case per asset type.
@@ -169,6 +169,10 @@ bearer token is passed in per call. Worth knowing before extending it:
   don't intend to change"). `MSCRM.MergeLabels: true` is sent on every such
   PUT so an edited display name doesn't wipe out other languages' labels this
   tool never touched.
+- **Creating a table** is one `POST EntityDefinitions`, built by
+  `EntityMetadataJsonBuilder` and checked first by `TableCreateValidator`. It
+  is the only write that makes a new table; see "Creating tables" in
+  [`yaml-conventions.md`](yaml-conventions.md) for the confirmed behaviour.
 - **Solution-scoping** (the `--solution` option on export commands) goes
   through `solutioncomponents`, filtered by `componenttype` (1=Entity,
   2=Attribute, 9=Option Set, 26=View/SavedQuery, 60=SystemForm) plus
@@ -551,6 +555,8 @@ is called out by name in its test's own doc comment or `[Fact]` name:
   the same confirmed-not-guessed standard, if you need another one.
 - **Destructive operations don't get silently automated**: `table import`
   never deletes a column, `form import`/`view import` never create a
-  record that doesn't already exist. If you're adding a new import path,
+  record that doesn't already exist. `table create` is the deliberate
+  exception: it creates a whole table, and only when none exists under that
+  name. If you're adding a new import path,
   keep that bar — surface what *would* change and let the user opt in,
   rather than making the tool more automatically destructive by default.
