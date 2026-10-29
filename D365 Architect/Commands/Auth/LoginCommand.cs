@@ -33,6 +33,11 @@ public sealed class LoginCommand(IAuthenticationService authenticationService) :
         {
             var result = await authenticationService.LoginInteractiveAsync(environmentUrl, cancellationToken);
             AnsiConsole.MarkupLine($"[green]Signed in[/] as {result.Username} to {result.EnvironmentUrl}");
+
+            if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(NonInteractiveAuthSettingsResolver.ModeVariable)))
+            {
+                ErrorConsole.Warn($"{NonInteractiveAuthSettingsResolver.ModeVariable} is set, so other commands will sign in from environment variables instead of this sign-in until it's cleared.");
+            }
             return 0;
         }
         catch (AuthenticationRequiredException ex)

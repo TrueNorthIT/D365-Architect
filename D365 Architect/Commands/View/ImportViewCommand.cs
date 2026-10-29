@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using D365Architect.Commands;
 using D365Architect.Services.Conversion;
 using D365Architect.Services.Conversion.Models;
@@ -8,7 +9,7 @@ using Spectre.Console.Cli;
 namespace D365Architect.Commands.View;
 
 /// <summary>
-/// `d365architect view import --input account-active.view.yml [--yes] [--whatif]`
+/// `d365architect view import --input account-active.view.yml [--solution UNIQUE_NAME] [--yes] [--whatif]`
 /// Writes a `*.view.yml` file's Description/FetchXml/LayoutXml directly
 /// back into Dataverse. Needs sign-in.
 ///
@@ -18,19 +19,23 @@ namespace D365Architect.Commands.View;
 /// there's no id-resynthesis to cancel out before diffing — the live
 /// values are compared directly against the local YAML.
 ///
-/// Only ever updates a view that already exists — refuses (rather than
-/// creating one) when no view matches the YAML's table + name yet.
-/// `QueryType`/`IsDefault`/`IsQuickFindQuery` are never written — see
-/// <see cref="IViewImportService"/>'s own doc comment for why.
+/// A view matching nothing by the YAML's table + name is created — shown in
+/// the plan as `+ view '&lt;name&gt;' (create)` and confirmed like any other
+/// change; a stale `savedQueryId` is still an error. A hand-written file may
+/// list `columns` instead of a raw `layoutXml` (see
+/// <see cref="IViewImportService"/>). `--solution` adds whatever is created
+/// or changed to that solution. `QueryType`/`IsDefault`/`IsQuickFindQuery`
+/// are never written — see <see cref="IViewImportService"/>'s own doc
+/// comment for why.
 ///
-/// What this doesn't do yet: publish the change (Dataverse customizations
-/// still need publishing separately before end users see it) — and
-/// confirmed live, that gap isn't just cosmetic for verification either: a
+/// Once the change is written, the view's table is published (Dataverse
+/// publishes a view as part of its table) unless <c>--no-publish</c> —
+/// and confirmed live, that gap isn't just cosmetic for verification: a
 /// plain <c>savedqueries</c> GET reflects the *published* state, so a
 /// follow-up `view export` won't show a just-written FetchXml/LayoutXml
 /// change until something publishes the table (same platform behavior
-/// documented on <see cref="Services.Dataverse.IDataverseClient.UpdateSavedQueryAsync"/>,
-/// confirmed for forms first — see <see cref="Services.Dataverse.IDataverseClient.UpdateSystemFormXmlAsync"/>).
+/// documented on <see cref="Services.Dataverse.IDataverseClient.UpdateSavedQueryAsync(Uri, string, Guid, string?, string?, string?, CancellationToken)"/>,
+/// confirmed for forms first — see <see cref="Services.Dataverse.IDataverseClient.UpdateSystemFormXmlAsync(Uri, string, Guid, string, CancellationToken)"/>).
 /// The write itself genuinely takes regardless.
 ///
 /// The shared preview → diff → confirm → apply flow itself lives in the
@@ -42,7 +47,12 @@ namespace D365Architect.Commands.View;
 public sealed class ImportViewCommand(IViewImportService viewImportService, ImportRunner importRunner)
     : AsyncCommand<ImportViewCommand.Settings>
 {
-    public sealed class Settings : ImportSettingsBase;
+    public sealed class Settings : PublishableImportSettings
+    {
+        [CommandOption("-s|--solution <UNIQUE_NAME>")]
+        [Description("Unique name of a solution to add the view to as it is created or changed.")]
+        public string? Solution { get; init; }
+    }
 
     protected override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken) =>
         RunAsync(settings, cancellationToken);
@@ -63,12 +73,26 @@ public sealed class ImportViewCommand(IViewImportService viewImportService, Impo
 
             PreviewStatusMessage = view => $"Looking up '{view.Name}'...",
 
+            OnPreviewBuilt = preview =>
+            {
+                if (preview.IdentityMismatchWarning is not null)
+                {
+                    ErrorConsole.Warn($"Warning: {preview.IdentityMismatchWarning}");
+                    AnsiConsole.WriteLine();
+                }
+            },
+
             SkipBeforePrinting = preview => preview.HasChanges
                 ? null
                 : "the local YAML already matches what's live in Dataverse. Nothing to import.",
 
             PrintChanges = preview =>
             {
+                if (preview.IsCreate)
+                {
+                    AnsiConsole.MarkupLine($"[green]{$"+ view '{preview.Name}' (create)".EscapeMarkup()}[/]");
+                }
+
                 PrintFieldDiff("description", preview.ExistingDescription, preview.NewDescription, pretty: false);
                 PrintFieldDiff("fetchxml", preview.ExistingFetchXml, preview.NewFetchXml, pretty: true);
                 PrintFieldDiff("layoutxml", preview.ExistingLayoutXml, preview.NewLayoutXml, pretty: true);
@@ -77,19 +101,25 @@ public sealed class ImportViewCommand(IViewImportService viewImportService, Impo
 
             ApplyStatusMessage = "Importing...",
 
-            ApplyAsync = (auth, preview, ct) => viewImportService.ApplyAsync(auth.EnvironmentUrl, auth.AccessToken, preview, ct),
+            ApplyAsync = (auth, preview, ct) => viewImportService.ApplyAsync(auth.EnvironmentUrl, auth.AccessToken, preview, settings.Solution, ct),
 
             PrintSuccess = (view, preview) =>
             {
-                AnsiConsole.MarkupLine($"[green]Imported.[/] '{view.Name}' updated in Dataverse.");
-                AnsiConsole.MarkupLine("[grey]Note: this only updates the view's own fields — publish customizations separately (e.g. in the maker portal) before end users see the change; this tool doesn't publish yet. Until you do, a follow-up 'view export' won't show this change either — it reads the same unpublished state, not a sign the import failed.[/]");
+                AnsiConsole.MarkupLine($"[green]Imported.[/] '{view.Name.EscapeMarkup()}' {(preview.IsCreate ? "created" : "updated")} in Dataverse.");
+                if (settings.NoPublish)
+                {
+                    AnsiConsole.MarkupLine("[grey]Note: --no-publish — publish customizations separately (e.g. in the maker portal) before end users see the change. Until you do, a follow-up 'view export' won't show this change either — it reads the same unpublished state, not a sign the import failed.[/]");
+                }
             },
 
             FormatDomainException = (ex, view) => ex switch
             {
-                ViewNotFoundException or AmbiguousSavedQueryException => $"[red]{ex.Message.EscapeMarkup()}[/]",
+                ViewNotFoundException or AmbiguousSavedQueryException or ViewIdentityMismatchException or InvalidDataException => $"[red]{ex.Message.EscapeMarkup()}[/]",
                 _ => null,
             },
+
+            // Dataverse publishes a view as part of its table.
+            PublishAsync = (auth, preview, ct) => viewImportService.PublishAsync(auth.EnvironmentUrl, auth.AccessToken, preview, ct),
         };
 
         return await importRunner.RunAsync(settings, viewImportService, spec, cancellationToken);

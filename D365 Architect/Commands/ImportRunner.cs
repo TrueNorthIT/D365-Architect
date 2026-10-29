@@ -19,9 +19,19 @@ namespace D365Architect.Commands;
 /// <see cref="RunAsync{TSettings,TInput,TPreview}"/> to run. Previewing
 /// needs no such per-command override: every import service's
 /// <c>PreviewAsync</c> has the exact same shape, so this calls it directly.
+/// Once a change is applied, a command whose spec has
+/// <see cref="ImportFlowSpec{TSettings,TInput,TPreview}.PublishAsync"/>
+/// publishes it too, unless <c>--no-publish</c>
+/// (<see cref="PublishableImportSettings"/>) - confirming the import is the
+/// only question asked. Nothing applied (no change, declined, <c>--whatif</c>)
+/// means nothing published.
 /// </summary>
 public sealed class ImportRunner(IAuthenticationService authenticationService)
 {
+    /// <summary>The signed-in context, for a flow that isn't one file's import - <c>solution import</c>'s create stage.</summary>
+    public Task<AuthenticatedContext> GetContextAsync(CancellationToken cancellationToken) =>
+        authenticationService.GetCurrentContextAsync(cancellationToken);
+
     public async Task<int> RunAsync<TSettings, TInput, TPreview>(TSettings settings, IImportService<TInput, TPreview> service, ImportFlowSpec<TSettings, TInput, TPreview> spec, CancellationToken cancellationToken)
         where TSettings : ImportSettingsBase
         where TInput : class
@@ -74,6 +84,13 @@ public sealed class ImportRunner(IAuthenticationService authenticationService)
 
             await AnsiConsole.Status().StartAsync(spec.ApplyStatusMessage, async _ => await spec.ApplyAsync(auth, preview, cancellationToken));
             spec.PrintSuccess(input, preview);
+
+            if (spec.PublishAsync is { } publishAsync && settings is not PublishableImportSettings { NoPublish: true })
+            {
+                await AnsiConsole.Status().StartAsync("Publishing...", async _ => await publishAsync(auth, preview, cancellationToken));
+                AnsiConsole.MarkupLine("[green]Published.[/]");
+            }
+
             return 0;
         }
         catch (AuthenticationRequiredException ex)

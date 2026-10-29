@@ -13,6 +13,19 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
+    /// <summary>
+    /// How long <see cref="ExecuteTransactionAsync"/> waits for its <c>$batch</c> changeset - longer than an ordinary request
+    /// (<see cref="RequestTimeout"/>), because each table create inside one takes 14-40 seconds.
+    /// </summary>
+    public TimeSpan TransactionTimeout { get; init; } = TimeSpan.FromMinutes(10);
+
+    /// <summary>
+    /// How long every other request waits - <see cref="HttpClient.Timeout"/>'s own default. Enforced here per request rather than
+    /// by <see cref="HttpClient.Timeout"/>, which can't be lengthened for one request: the client registered in <c>Program.cs</c>
+    /// has that set to infinite so it never cuts a <see cref="TransactionTimeout"/> short.
+    /// </summary>
+    public static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(100);
+
     // System.Net.Http.Json's JsonContent.Create camelCases property names by
     // default when no options are given (confirmed live: {"ParameterXml": ...}
     // came out on the wire as {"parameterXml": ...}, which Dataverse's
@@ -27,7 +40,7 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
     public async Task<WhoAmIResult> WhoAmIAsync(Uri environmentUrl, string accessToken, CancellationToken cancellationToken)
     {
         using var request = CreateRequest(environmentUrl, "WhoAmI", accessToken);
-        using var response = await httpClient.SendAsync(request, cancellationToken);
+        using var response = await SendAsync(request, RequestTimeout, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);
 
         var payload = await response.Content.ReadFromJsonAsync<WhoAmIResponse>(JsonOptions, cancellationToken)
@@ -39,7 +52,7 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
     public async Task<string?> TryGetUserFullNameAsync(Uri environmentUrl, string accessToken, Guid userId, CancellationToken cancellationToken)
     {
         using var request = CreateRequest(environmentUrl, $"systemusers({userId})?$select=fullname", accessToken);
-        using var response = await httpClient.SendAsync(request, cancellationToken);
+        using var response = await SendAsync(request, RequestTimeout, cancellationToken);
 
         if (!response.IsSuccessStatusCode)
         {
@@ -61,16 +74,38 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         // get at those without knowing each attribute's concrete type upfront.
         var relativePath = $"EntityDefinitions(LogicalName='{Uri.EscapeDataString(entityLogicalName)}')" +
             "?$select=LogicalName,SchemaName,DisplayName,DisplayCollectionName,Description," +
-            "OwnershipType,IsActivity,HasActivities,HasNotes" +
+            "OwnershipType,IsActivity,HasActivities,HasNotes,PrimaryNameAttribute" +
             "&$expand=Attributes";
 
         using var request = CreateRequest(environmentUrl, relativePath, accessToken);
         request.Headers.Add("Prefer", "odata.include-annotations=\"*\"");
-        using var response = await httpClient.SendAsync(request, cancellationToken);
+        using var response = await SendAsync(request, RequestTimeout, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);
 
         return await response.Content.ReadAsStringAsync(cancellationToken);
     }
+
+    // Unlike TryGetEntityMetadataIdAsync below, only a 404 means "not
+    // there": any other failure (401, 500, throttling) throws, because
+    // reading it as "doesn't exist" would send `table create`'s POST at a
+    // table that may well be live.
+    public async Task<bool> EntityExistsAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken)
+    {
+        var relativePath = $"EntityDefinitions(LogicalName='{Uri.EscapeDataString(entityLogicalName)}')?$select=MetadataId";
+
+        using var request = CreateRequest(environmentUrl, relativePath, accessToken);
+        using var response = await SendAsync(request, RequestTimeout, cancellationToken);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            return false;
+        }
+
+        await EnsureSuccessAsync(response, cancellationToken);
+        return true;
+    }
+
+    public async Task CreateEntityAsync(Uri environmentUrl, string accessToken, JsonObject entityMetadata, string? solutionUniqueName, CancellationToken cancellationToken) =>
+        await SendWriteAsync(environmentUrl, accessToken, new DataverseWrite.CreateEntity(entityMetadata, solutionUniqueName), cancellationToken);
 
     public async Task<IReadOnlySet<Guid>?> TryGetSolutionAttributeMetadataIdsAsync(Uri environmentUrl, string accessToken, string solutionUniqueName, CancellationToken cancellationToken)
     {
@@ -115,7 +150,7 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         // $expand) and filters client-side, the same "broad fetch, filter
         // locally" shape those single-table queries already apply.
         using var request = CreateRequest(environmentUrl, "EntityDefinitions?$select=LogicalName,MetadataId", accessToken);
-        using var response = await httpClient.SendAsync(request, cancellationToken);
+        using var response = await SendAsync(request, RequestTimeout, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);
 
         var json = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -147,7 +182,7 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         var relativePath = $"solutioncomponents?$filter=_solutionid_value eq {solutionId} and componenttype eq {entityComponentType} and objectid eq {entityMetadataId}&$select=rootcomponentbehavior";
 
         using var request = CreateRequest(environmentUrl, relativePath, accessToken);
-        using var response = await httpClient.SendAsync(request, cancellationToken);
+        using var response = await SendAsync(request, RequestTimeout, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);
 
         var json = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -173,7 +208,7 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         var relativePath = $"EntityDefinitions(LogicalName='{Uri.EscapeDataString(entityLogicalName)}')?$select=MetadataId";
 
         using var request = CreateRequest(environmentUrl, relativePath, accessToken);
-        using var response = await httpClient.SendAsync(request, cancellationToken);
+        using var response = await SendAsync(request, RequestTimeout, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
             return null;
@@ -191,7 +226,7 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
             $"&$filter=returnedtypecode eq '{Uri.EscapeDataString(entityLogicalName)}'&$orderby=name";
 
         using var request = CreateRequest(environmentUrl, relativePath, accessToken);
-        using var response = await httpClient.SendAsync(request, cancellationToken);
+        using var response = await SendAsync(request, RequestTimeout, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);
 
         return await response.Content.ReadAsStringAsync(cancellationToken);
@@ -219,7 +254,7 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
             $"&$filter=objecttypecode eq '{Uri.EscapeDataString(entityLogicalName)}'&$orderby=name";
 
         using var request = CreateRequest(environmentUrl, relativePath, accessToken);
-        using var response = await httpClient.SendAsync(request, cancellationToken);
+        using var response = await SendAsync(request, RequestTimeout, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);
 
         return await response.Content.ReadAsStringAsync(cancellationToken);
@@ -231,7 +266,7 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
             $"&$filter=objecttypecode eq '{Uri.EscapeDataString(entityLogicalName)}'&$orderby=name";
 
         using var request = CreateRequest(environmentUrl, relativePath, accessToken);
-        using var response = await httpClient.SendAsync(request, cancellationToken);
+        using var response = await SendAsync(request, RequestTimeout, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);
 
         return await response.Content.ReadAsStringAsync(cancellationToken);
@@ -262,7 +297,7 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
             $"&$filter=objecttypecode eq '{Uri.EscapeDataString(entityLogicalName)}' and name eq '{Uri.EscapeDataString(EscapeODataStringLiteral(formName))}'";
 
         using var request = CreateRequest(environmentUrl, relativePath, accessToken);
-        using var response = await httpClient.SendAsync(request, cancellationToken);
+        using var response = await SendAsync(request, RequestTimeout, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);
 
         var json = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -288,7 +323,7 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
             $"&$filter=objecttypecode eq '{Uri.EscapeDataString(entityLogicalName)}' and name eq '{Uri.EscapeDataString(EscapeODataStringLiteral(formName))}'";
 
         using var request = CreateRequest(environmentUrl, relativePath, accessToken);
-        using var response = await httpClient.SendAsync(request, cancellationToken);
+        using var response = await SendAsync(request, RequestTimeout, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);
 
         var json = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -315,7 +350,7 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         var relativePath = $"systemforms({formId})?$select=formid,formxml,objecttypecode,name";
 
         using var request = CreateRequest(environmentUrl, relativePath, accessToken);
-        using var response = await httpClient.SendAsync(request, cancellationToken);
+        using var response = await SendAsync(request, RequestTimeout, cancellationToken);
 
         if (response.StatusCode == HttpStatusCode.NotFound)
         {
@@ -333,13 +368,95 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         return new ExistingSystemForm(formId, formXml, entityLogicalName, name);
     }
 
-    public async Task UpdateSystemFormXmlAsync(Uri environmentUrl, string accessToken, Guid formId, string formXml, CancellationToken cancellationToken)
+    public async Task UpdateSystemFormXmlAsync(Uri environmentUrl, string accessToken, Guid formId, string formXml, CancellationToken cancellationToken) =>
+        await UpdateSystemFormXmlAsync(environmentUrl, accessToken, formId, formXml, solutionUniqueName: null, cancellationToken);
+
+    public async Task UpdateSystemFormXmlAsync(Uri environmentUrl, string accessToken, Guid formId, string formXml, string? solutionUniqueName, CancellationToken cancellationToken)
     {
         using var request = CreateRequest(environmentUrl, $"systemforms({formId})", accessToken, HttpMethod.Patch);
+        AddSolutionHeader(request, solutionUniqueName);
         request.Content = JsonContent.Create(new { formxml = formXml }, options: VerbatimJsonOptions);
 
-        using var response = await httpClient.SendAsync(request, cancellationToken);
+        using var response = await SendAsync(request, RequestTimeout, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);
+    }
+
+    // Same 404-only-means-absent rule as EntityExistsAsync: any other failure
+    // throws, so a throttled or unauthorised read is never mistaken for "no
+    // such table" (which view import reports as a refusal naming it).
+    public async Task<EntityIdentity?> TryGetEntityIdentityAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken)
+    {
+        var relativePath = $"EntityDefinitions(LogicalName='{Uri.EscapeDataString(entityLogicalName)}')?$select=ObjectTypeCode,PrimaryIdAttribute,PrimaryNameAttribute";
+
+        using var request = CreateRequest(environmentUrl, relativePath, accessToken);
+        using var response = await SendAsync(request, RequestTimeout, cancellationToken);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+
+        await EnsureSuccessAsync(response, cancellationToken);
+
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        return new EntityIdentity(
+            root.GetProperty("ObjectTypeCode").GetInt32(),
+            root.GetProperty("PrimaryIdAttribute").GetString() ?? "",
+            root.GetProperty("PrimaryNameAttribute").GetString() ?? "");
+    }
+
+    public Task CreateSavedQueryAsync(Uri environmentUrl, string accessToken, JsonObject body, string? solutionUniqueName, CancellationToken cancellationToken) =>
+        PostRecordAsync(environmentUrl, accessToken, "savedqueries", body, solutionUniqueName, cancellationToken);
+
+    public async Task<IReadOnlyList<ExistingSystemForm>> FindSystemFormsAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string formName, int formType, CancellationToken cancellationToken)
+    {
+        // Same apostrophe handling as TryGetSystemFormAsync: formName is a
+        // human-editable display name.
+        var relativePath = "systemforms?$select=formid,formxml,objecttypecode,name" +
+            $"&$filter=objecttypecode eq '{Uri.EscapeDataString(entityLogicalName)}' and name eq '{Uri.EscapeDataString(EscapeODataStringLiteral(formName))}' and type eq {formType}";
+
+        using var request = CreateRequest(environmentUrl, relativePath, accessToken);
+        using var response = await SendAsync(request, RequestTimeout, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        using var doc = JsonDocument.Parse(json);
+        return doc.RootElement.GetProperty("value").EnumerateArray()
+            .Select(form => new ExistingSystemForm(
+                form.GetProperty("formid").GetGuid(),
+                form.TryGetProperty("formxml", out var x) && x.ValueKind == JsonValueKind.String ? x.GetString()! : "",
+                form.TryGetProperty("objecttypecode", out var e) && e.ValueKind == JsonValueKind.String ? e.GetString() : null,
+                form.TryGetProperty("name", out var n) && n.ValueKind == JsonValueKind.String ? n.GetString() : null))
+            .ToList();
+    }
+
+    public Task CreateSystemFormAsync(Uri environmentUrl, string accessToken, JsonObject body, string? solutionUniqueName, CancellationToken cancellationToken) =>
+        PostRecordAsync(environmentUrl, accessToken, "systemforms", body, solutionUniqueName, cancellationToken);
+
+    /// <summary>A plain record create (<c>POST {entitySetName}</c>), optionally into a solution — shared by the view and form creates.</summary>
+    private async Task PostRecordAsync(Uri environmentUrl, string accessToken, string entitySetName, JsonObject body, string? solutionUniqueName, CancellationToken cancellationToken)
+    {
+        using var request = CreateRequest(environmentUrl, entitySetName, accessToken, HttpMethod.Post);
+        AddSolutionHeader(request, solutionUniqueName);
+        request.Content = JsonContent.Create(body);
+
+        using var response = await SendAsync(request, RequestTimeout, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+    }
+
+    /// <summary>
+    /// <c>MSCRM.SolutionUniqueName</c> on a create or an update, so the
+    /// component joins that solution as it is written (Learn, "Use optional
+    /// parameters": https://learn.microsoft.com/power-apps/developer/data-platform/optional-parameters#associate-a-solution-component-with-a-solution ).
+    /// Null sends nothing.
+    /// </summary>
+    private static void AddSolutionHeader(HttpRequestMessage request, string? solutionUniqueName)
+    {
+        if (solutionUniqueName is not null)
+        {
+            request.Headers.Add("MSCRM.SolutionUniqueName", solutionUniqueName);
+        }
     }
 
     public async Task PublishEntityAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken)
@@ -351,12 +468,26 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         // just one systemform within it.
         var parameterXml = new XElement("importexportxml",
             new XElement("entities",
-                new XElement("entity", entityLogicalName))).ToString(SaveOptions.DisableFormatting);
+                new XElement("entity", entityLogicalName)));
+        await PublishXmlAsync(environmentUrl, accessToken, parameterXml, cancellationToken);
+    }
 
+    public async Task PublishGlobalOptionSetsAsync(Uri environmentUrl, string accessToken, IReadOnlyList<string> optionSetNames, CancellationToken cancellationToken)
+    {
+        // Same PublishXmlRequest.ParameterXml page: <optionsets><optionset>
+        // takes a global choice's unique name; one element per choice, so
+        // a whole file goes out in a single request.
+        var parameterXml = new XElement("importexportxml",
+            new XElement("optionsets", optionSetNames.Select(name => new XElement("optionset", name))));
+        await PublishXmlAsync(environmentUrl, accessToken, parameterXml, cancellationToken);
+    }
+
+    private async Task PublishXmlAsync(Uri environmentUrl, string accessToken, XElement parameterXml, CancellationToken cancellationToken)
+    {
         using var request = CreateRequest(environmentUrl, "PublishXml", accessToken, HttpMethod.Post);
-        request.Content = JsonContent.Create(new { ParameterXml = parameterXml }, options: VerbatimJsonOptions);
+        request.Content = JsonContent.Create(new { ParameterXml = parameterXml.ToString(SaveOptions.DisableFormatting) }, options: VerbatimJsonOptions);
 
-        using var response = await httpClient.SendAsync(request, cancellationToken);
+        using var response = await SendAsync(request, RequestTimeout, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);
     }
 
@@ -366,7 +497,7 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
             $"&$filter=returnedtypecode eq '{Uri.EscapeDataString(entityLogicalName)}' and name eq '{Uri.EscapeDataString(EscapeODataStringLiteral(viewName))}'";
 
         using var request = CreateRequest(environmentUrl, relativePath, accessToken);
-        using var response = await httpClient.SendAsync(request, cancellationToken);
+        using var response = await SendAsync(request, RequestTimeout, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);
 
         var json = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -380,7 +511,7 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
 
         if (results.Count > 1)
         {
-            throw new AmbiguousSavedQueryException(entityLogicalName, viewName, results.Count);
+            throw new AmbiguousSavedQueryException(entityLogicalName, viewName, results.Select(r => r.GetProperty("savedqueryid").GetGuid()).ToList());
         }
 
         var result = results[0];
@@ -391,7 +522,35 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         return new ExistingSavedQuery(savedQueryId, description, fetchXml, layoutXml);
     }
 
-    public async Task UpdateSavedQueryAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, string? description, string? fetchXml, string? layoutXml, CancellationToken cancellationToken)
+    public async Task<ExistingSavedQuery?> TryGetSavedQueryByIdAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, CancellationToken cancellationToken)
+    {
+        var relativePath = $"savedqueries({savedQueryId})?$select=savedqueryid,description,fetchxml,layoutxml,returnedtypecode,name";
+
+        using var request = CreateRequest(environmentUrl, relativePath, accessToken);
+        using var response = await SendAsync(request, RequestTimeout, cancellationToken);
+
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+
+        await EnsureSuccessAsync(response, cancellationToken);
+
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        var description = root.TryGetProperty("description", out var d) && d.ValueKind == JsonValueKind.String ? d.GetString() : null;
+        var fetchXml = root.TryGetProperty("fetchxml", out var f) && f.ValueKind == JsonValueKind.String ? f.GetString() : null;
+        var layoutXml = root.TryGetProperty("layoutxml", out var l) && l.ValueKind == JsonValueKind.String ? l.GetString() : null;
+        var entity = root.TryGetProperty("returnedtypecode", out var e) && e.ValueKind == JsonValueKind.String ? e.GetString() : null;
+        var name = root.TryGetProperty("name", out var n) && n.ValueKind == JsonValueKind.String ? n.GetString() : null;
+        return new ExistingSavedQuery(savedQueryId, description, fetchXml, layoutXml, entity, name);
+    }
+
+    public Task UpdateSavedQueryAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, string? description, string? fetchXml, string? layoutXml, CancellationToken cancellationToken) =>
+        UpdateSavedQueryAsync(environmentUrl, accessToken, savedQueryId, description, fetchXml, layoutXml, solutionUniqueName: null, cancellationToken);
+
+    public async Task UpdateSavedQueryAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, string? description, string? fetchXml, string? layoutXml, string? solutionUniqueName, CancellationToken cancellationToken)
     {
         var body = new Dictionary<string, string>();
         if (description is not null)
@@ -415,9 +574,10 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         }
 
         using var request = CreateRequest(environmentUrl, $"savedqueries({savedQueryId})", accessToken, HttpMethod.Patch);
+        AddSolutionHeader(request, solutionUniqueName);
         request.Content = JsonContent.Create(body);
 
-        using var response = await httpClient.SendAsync(request, cancellationToken);
+        using var response = await SendAsync(request, RequestTimeout, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);
     }
 
@@ -428,7 +588,7 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
             "OwnershipType,IsActivity,HasActivities,HasNotes";
 
         using var request = CreateRequest(environmentUrl, relativePath, accessToken);
-        using var response = await httpClient.SendAsync(request, cancellationToken);
+        using var response = await SendAsync(request, RequestTimeout, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);
 
         return await response.Content.ReadAsStringAsync(cancellationToken);
@@ -444,7 +604,7 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
             $"/Microsoft.Dynamics.CRM.{attributeType}AttributeMetadata";
 
         using var request = CreateRequest(environmentUrl, relativePath, accessToken);
-        using var response = await httpClient.SendAsync(request, cancellationToken);
+        using var response = await SendAsync(request, RequestTimeout, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);
 
         return await response.Content.ReadAsStringAsync(cancellationToken);
@@ -467,7 +627,7 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
             "?$expand=OptionSet,GlobalOptionSet";
 
         using var request = CreateRequest(environmentUrl, relativePath, accessToken);
-        using var response = await httpClient.SendAsync(request, cancellationToken);
+        using var response = await SendAsync(request, RequestTimeout, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);
 
         return await response.Content.ReadAsStringAsync(cancellationToken);
@@ -497,6 +657,9 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
     public async Task UpdateStateValueAsync(Uri environmentUrl, string accessToken, JsonObject body, CancellationToken cancellationToken) =>
         await SendWriteAsync(environmentUrl, accessToken, new DataverseWrite.UpdateStateValue(body), cancellationToken);
 
+    public async Task SetAutoNumberSeedAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string attributeLogicalName, int value, CancellationToken cancellationToken) =>
+        await SendWriteAsync(environmentUrl, accessToken, new DataverseWrite.SetAutoNumberSeed(entityLogicalName, attributeLogicalName, value), cancellationToken);
+
     /// <summary>
     /// Shared by every simple "POST an action, ignore the response body"
     /// call above that isn't (yet) a <see cref="DataverseWrite"/> case — same
@@ -512,7 +675,7 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         using var request = CreateRequest(environmentUrl, actionName, accessToken, HttpMethod.Post);
         request.Content = JsonContent.Create(body);
 
-        using var response = await httpClient.SendAsync(request, cancellationToken);
+        using var response = await SendAsync(request, RequestTimeout, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);
     }
 
@@ -529,7 +692,7 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
 
         request.Content = JsonContent.Create(body);
 
-        using var response = await httpClient.SendAsync(request, cancellationToken);
+        using var response = await SendAsync(request, RequestTimeout, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);
     }
 
@@ -548,16 +711,18 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         request.Content = new StringContent(requestBody, Encoding.UTF8);
         request.Content.Headers.ContentType = MediaTypeHeaderValue.Parse($"multipart/mixed; boundary=\"{batchBoundary}\"");
 
-        using var response = await httpClient.SendAsync(request, cancellationToken);
+        using var response = await SendAsync(request, TransactionTimeout, cancellationToken);
         var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
 
-        if (!response.IsSuccessStatusCode)
+        // A failed changeset comes back as a 400 whose body is still the multipart response naming the failing
+        // request (seen live), so only a 400 with no multipart body to read is thrown as it stands.
+        var responseBoundary = response.Content.Headers.ContentType?.Parameters
+            .FirstOrDefault(p => p.Name.Equals("boundary", StringComparison.OrdinalIgnoreCase))?.Value?.Trim('"');
+        if (!response.IsSuccessStatusCode && responseBoundary is null)
         {
             throw new HttpRequestException($"Dataverse transaction failed ({(int)response.StatusCode} {response.StatusCode}): {responseBody}");
         }
 
-        var responseBoundary = response.Content.Headers.ContentType?.Parameters
-            .FirstOrDefault(p => p.Name.Equals("boundary", StringComparison.OrdinalIgnoreCase))?.Value?.Trim('"');
         if (responseBoundary is null)
         {
             throw new HttpRequestException($"Dataverse's $batch response had no multipart boundary to parse: {responseBody}");
@@ -572,8 +737,17 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
             // particular failure was the one Dataverse chose to report (it
             // stops at the first failure and rolls the rest back rather than
             // continuing — no `Prefer: odata.continue-on-error` is sent).
+            // Content-ID numbers the requests from 1 in the order of `writes`
+            // (see BuildTransactionRequestBody); null when Dataverse didn't say.
             var details = string.Join(" | ", failures.Select(f => $"[{f.StatusCode}] {f.Body}"));
-            throw new HttpRequestException($"Dataverse transaction rolled back — nothing in this batch of {writes.Count} write(s) was applied. {details}");
+            var failedContentId = failures.Select(f => int.TryParse(f.ContentId, out var id) ? id : (int?)null).FirstOrDefault(id => id is not null);
+            throw new DataverseTransactionFailedException(
+                $"Dataverse transaction rolled back — nothing in this batch of {writes.Count} write(s) was applied. {details}", failedContentId);
+        }
+
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new HttpRequestException($"Dataverse transaction failed ({(int)response.StatusCode} {response.StatusCode}): {responseBody}");
         }
     }
 
@@ -596,6 +770,9 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
     private static (HttpMethod Method, string RelativeUrl, JsonObject Body, IReadOnlyList<(string Name, string Value)> Headers) ToHttpRequest(DataverseWrite write) => write switch
     {
         DataverseWrite.UpdateEntity w => (HttpMethod.Put, $"EntityDefinitions(LogicalName='{Uri.EscapeDataString(w.EntityLogicalName)}')", w.Metadata, MergeLabelsHeader),
+        // POST to the collection itself, no key segment - Microsoft Learn, "Create table definitions":
+        // https://learn.microsoft.com/power-apps/developer/data-platform/webapi/create-update-entity-definitions-using-web-api
+        DataverseWrite.CreateEntity w => (HttpMethod.Post, "EntityDefinitions", w.Metadata, SolutionHeader(w.SolutionUniqueName)),
         DataverseWrite.CreateAttribute w => (HttpMethod.Post, $"EntityDefinitions(LogicalName='{Uri.EscapeDataString(w.EntityLogicalName)}')/Attributes", w.Metadata, SolutionHeader(w.SolutionUniqueName)),
         DataverseWrite.UpdateAttribute w => (HttpMethod.Put, $"EntityDefinitions(LogicalName='{Uri.EscapeDataString(w.EntityLogicalName)}')/Attributes(LogicalName='{Uri.EscapeDataString(w.AttributeLogicalName)}')", w.Metadata, MergeLabelsHeader),
         DataverseWrite.CreateOneToManyRelationship w => (HttpMethod.Post, "RelationshipDefinitions", w.Metadata, SolutionHeader(w.SolutionUniqueName)),
@@ -605,6 +782,9 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         DataverseWrite.OrderOptions w => (HttpMethod.Post, "OrderOption", w.Body, []),
         DataverseWrite.InsertStatusValue w => (HttpMethod.Post, "InsertStatusValue", w.Body, []),
         DataverseWrite.UpdateStateValue w => (HttpMethod.Post, "UpdateStateValue", w.Body, []),
+        // Unbound action - Microsoft Learn, "Create autonumber columns", "Set a seed value":
+        // https://learn.microsoft.com/power-apps/developer/data-platform/create-auto-number-attributes
+        DataverseWrite.SetAutoNumberSeed w => (HttpMethod.Post, "SetAutoNumberSeed", new JsonObject { ["EntityName"] = w.EntityLogicalName, ["AttributeName"] = w.AttributeLogicalName, ["Value"] = w.Value }, []),
         _ => throw new NotSupportedException($"Unhandled {nameof(DataverseWrite)} case: {write.GetType().Name}"),
     };
 
@@ -677,7 +857,7 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         var relativePath = $"GlobalOptionSetDefinitions(Name='{Uri.EscapeDataString(name)}')/Microsoft.Dynamics.CRM.OptionSetMetadata?$select=MetadataId,Name,DisplayName,Description,Options";
 
         using var request = CreateRequest(environmentUrl, relativePath, accessToken);
-        using var response = await httpClient.SendAsync(request, cancellationToken);
+        using var response = await SendAsync(request, RequestTimeout, cancellationToken);
 
         if (response.StatusCode == HttpStatusCode.NotFound)
         {
@@ -693,7 +873,7 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         var relativePath = "GlobalOptionSetDefinitions/Microsoft.Dynamics.CRM.OptionSetMetadata?$select=MetadataId,Name,DisplayName,Description,Options";
 
         using var request = CreateRequest(environmentUrl, relativePath, accessToken);
-        using var response = await httpClient.SendAsync(request, cancellationToken);
+        using var response = await SendAsync(request, RequestTimeout, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);
 
         return await response.Content.ReadAsStringAsync(cancellationToken);
@@ -718,14 +898,11 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
     public async Task CreateGlobalOptionSetAsync(Uri environmentUrl, string accessToken, JsonObject body, string? solutionUniqueName, CancellationToken cancellationToken)
     {
         using var request = CreateRequest(environmentUrl, "GlobalOptionSetDefinitions", accessToken, HttpMethod.Post);
-        if (solutionUniqueName is not null)
-        {
-            request.Headers.Add("MSCRM.SolutionUniqueName", solutionUniqueName);
-        }
+        AddSolutionHeader(request, solutionUniqueName);
 
         request.Content = JsonContent.Create(body);
 
-        using var response = await httpClient.SendAsync(request, cancellationToken);
+        using var response = await SendAsync(request, RequestTimeout, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);
     }
 
@@ -741,7 +918,7 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         request.Headers.Add("MSCRM.MergeLabels", "true");
         request.Content = JsonContent.Create(body);
 
-        using var response = await httpClient.SendAsync(request, cancellationToken);
+        using var response = await SendAsync(request, RequestTimeout, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);
     }
 
@@ -753,7 +930,7 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         var relativePath = $"solutioncomponents?$filter=_solutionid_value eq {solutionId} and componenttype eq {componentType}&$select=objectid";
 
         using var request = CreateRequest(environmentUrl, relativePath, accessToken);
-        using var response = await httpClient.SendAsync(request, cancellationToken);
+        using var response = await SendAsync(request, RequestTimeout, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);
 
         var json = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -768,7 +945,7 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         var relativePath = $"solutions?$select=solutionid&$filter=uniquename eq '{Uri.EscapeDataString(solutionUniqueName)}'";
 
         using var request = CreateRequest(environmentUrl, relativePath, accessToken);
-        using var response = await httpClient.SendAsync(request, cancellationToken);
+        using var response = await SendAsync(request, RequestTimeout, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);
 
         var json = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -786,6 +963,25 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         request.Headers.Add("OData-MaxVersion", "4.0");
         request.Headers.Add("OData-Version", "4.0");
         return request;
+    }
+
+    /// <summary>
+    /// Sends <paramref name="request"/>, cancelling it once <paramref name="timeout"/> has passed (the response body is buffered within
+    /// that time too, as <see cref="HttpClient.Timeout"/> would). A timeout surfaces as a <see cref="TimeoutException"/>, not as the
+    /// caller's own cancellation.
+    /// </summary>
+    private async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutSource.CancelAfter(timeout);
+        try
+        {
+            return await httpClient.SendAsync(request, timeoutSource.Token);
+        }
+        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException($"Dataverse didn't answer {request.Method} {request.RequestUri?.AbsolutePath} within {timeout.TotalSeconds:0} seconds.", ex);
+        }
     }
 
     private static async Task EnsureSuccessAsync(HttpResponseMessage response, CancellationToken cancellationToken)

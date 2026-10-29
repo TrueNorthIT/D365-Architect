@@ -431,8 +431,10 @@ So `FormXmlValidationMessage.IsKnownHarmless` is deliberately narrow: true
 only for the specific, confirmed-safe `headerdensity`/`showinformselector`
 pattern and the Timeline control's
 `UClientActivitiesConfigurationJSON`/`UClientNotesConfigurationJSON`
-pattern, never inferred for anything that merely looks similar — that
-second pattern *is* the same "invalid child element inside `<parameters>`"
+pattern, text directly inside a control's `<parameters>` (PhoneNumberControl,
+ValidatedFieldControl, BusinessCardReader), and a Quick View control's
+`HideQuickFormBorder` child, never inferred for anything that merely looks
+similar. The Timeline pattern *is* the same "invalid child element inside `<parameters>`"
 shape that failed live in the incident two paragraphs up, which is
 precisely why it's confirmed by the user's own explicit, direct D365 admin
 confirmation rather than assumed by analogy to the first pattern. `form
@@ -544,8 +546,9 @@ through `form export` since `FormId` was added. An id can't go stale or
 ambiguous the way table + name can (a rename, or two forms sharing a name —
 see `AmbiguousSystemFormException`), so once present it's what's actually
 imported onto; `Entity`/`Name` become purely informational at that point.
-Falls back to the old table + name lookup (`TryGetSystemFormAsync`) only
-for a `*.form.yml` exported before `FormId` existed. If the id resolves to
+Without a `formId` (a `*.form.yml` exported before `FormId` existed, or
+hand-written), the lookup is table + name + `type` (`IDataverseClient.
+FindSystemFormsAsync`; `type` absent = Main). If the id resolves to
 a form whose live table/name no longer match the YAML's own `Entity`/
 `Name` — copied into the wrong file, or renamed live since export — a
 warning is printed before the diff; it doesn't block, since the id is
@@ -554,12 +557,27 @@ longer resolves to anything (the form was deleted) throws
 `FormNotFoundException` with that id in the message, distinct from the
 table + name variant of the same exception.
 
-**Only ever updates a form that already exists.** Nothing matching throws
-`FormNotFoundException` rather than creating one — creating a brand-new
-form isn't supported yet (it would need a fair bit more: minimum required
-systemform properties beyond just `formxml`, and likely solution-context
-registration). Refuses a dashboard outright too, same as `build-xml`, for
-the same reason (`FormXmlWriter` itself refuses).
+**Creates a form that matches nothing.** Without a `formId`, the match is
+table + name + `type` (`type` absent = Main), not name alone: a new custom
+table's main, card and quick view forms are all named "Information"
+(confirmed live), so a name can't tell them apart. No match creates the
+form (`IDataverseClient.CreateSystemFormAsync`): `POST systemforms` with
+`name`, `objecttypecode`, `type` (the option-set integer), `formxml`, and
+`description` when the file gives one. `--solution` adds the
+`MSCRM.SolutionUniqueName` header. Learn gives no worked example for a form
+create, so the minimal body is confirmed only by live use: a `solution import`
+created three new main forms this way. The preview shows it as `+ form '<name>'
+(main, create)`, and the post-write message says "created" rather than
+"updated". Several matches are refused (`AmbiguousSystemFormException`, listing
+the candidate ids to use as `formId`). A `formId` that matches nothing is
+`FormNotFoundException` and never creates a form. A `type` that isn't one of
+Dataverse's is refused. A dashboard is refused outright, same as `build-xml`,
+for the same reason (`FormXmlWriter` itself refuses).
+
+**Matching by name + type can reach an auto-made form.** Because the match is
+name + type, a file for a new table that names "Information" with the type of
+one of the three auto-made forms updates that form rather than creating a new
+one. Setting `formId` is the way to say which one is meant.
 
 **"Must have a way to check differences between client and server"** (this
 feature's own originating requirement) is `TextDiff`, applied to the actual
@@ -584,7 +602,7 @@ are pretty-printed (one element per line) purely for this display; the
 actual payload sent to Dataverse is untouched by that. Only the changed
 lines plus a couple of lines of context are shown, not the whole document.
 If the two sides are identical (`FormImportPreview.HasChanges` is false),
-nothing is written and nothing is asked — confirmed live to actually be
+nothing is written, nothing is asked and validation is skipped — confirmed live to actually be
 true in practice for an unedited file on a real, complex form, not just in
 a minimal test case.
 
@@ -601,6 +619,16 @@ would need tracking a version marker (e.g. `modifiedon`, or an ETag via
 *does* reliably catch: every meaningful change about to happen — which is
 still the concrete, useful half of "checking differences", just not the
 whole of it.
+
+**Labels a file leaves out aren't a change.** Dataverse fills in a cell's
+`<labels>` from its column's display name on save when the cell was written
+without one, so a file that leaves `label` out would diff on every run. The
+live side drops only those auto-labels, and only for cells the file leaves
+unlabelled (`FormImportService.WithoutLabelsTheFileLeftOut`). A label the file
+does give is still compared. The consequence: deleting a `label:` from an
+exported form reads as "no change", so the import writes nothing and the live
+label stays as it is. (Whether a label removed from a file should ever be
+removed live is not decided; it is not done.)
 
 **Confirmation is the default, not an afterthought.** Unless `--yes` is
 passed, `form import` shows the diff and every `FormXmlValidator` finding
@@ -623,7 +651,7 @@ the `headerdensity` case, which turned out only to hold for that one case.
 **Publishes after writing.** `UpdateSystemFormXmlAsync` only patches the
 `systemform` record's `formxml` column — Dataverse customizations still
 need publishing separately before end users see the change. `form import`
-does that itself: `FormImportService.ApplyAsync` follows the write with a
+does that itself, for a created form as well as an updated one: `FormImportService.ApplyAsync` follows the write with a
 call to `IDataverseClient.PublishEntityAsync`, the `PublishXml` action
 against the form's owning table. There's no finer-grained way to publish a
 single `systemform` on its own — confirmed against Microsoft's own docs for
@@ -650,24 +678,71 @@ against the local YAML's own values directly — pretty-printed purely for
 the display, same as form import's XML, but with no canonicalization step
 needed first.
 
-**Only three fields are ever written**: `Description`, `FetchXml`,
+**`savedQueryId` picks the target view.** `view export` writes the view's
+`savedqueryid` as the top-level `savedQueryId` key (omitted when absent).
+Import resolves by that id when present (`TryGetSavedQueryByIdAsync`); an id
+that no longer exists throws `ViewNotFoundException`, as form import does,
+and never falls back to the name. Without it, an ambiguous table + name still
+throws `AmbiguousSavedQueryException`, whose message tells the user to add
+`savedQueryId` and lists the candidate ids.
+
+**Only three fields are ever written on an update**: `Description`, `FetchXml`,
 `LayoutXml`. `QueryType`/`IsDefault`/`IsQuickFindQuery`/`IsUserDefined`/
 `IsCustomizable` are all documented on `ViewDefinition` itself as fields
 applying a YAML file back doesn't change (setting the default view, for
 one, needs a dedicated qualifying action, not a plain field write) — import
 respects that boundary rather than attempting a guess at any of them.
 
-**Only updates a view that already exists** — `ViewNotFoundException`
-otherwise, same reasoning as `FormNotFoundException`. A local field that's
-null means "don't touch this", never "clear it" — confirmed in
+**Creates a view that matches nothing.** Without a `savedQueryId`, a table +
+name match that finds nothing is a create (`ViewImportService.ApplyAsync`,
+`IDataverseClient.CreateSavedQueryAsync`): `POST savedqueries` with `name`,
+`returnedtypecode` (the table), `fetchxml`, `layoutxml`, `querytype` 0 and
+`description` when given, per Microsoft's "Customize Views in Model-driven
+Apps" (Create views). `--solution` adds the `MSCRM.SolutionUniqueName`
+header. Only a public view can be created, so a `queryType` other than
+`MainApplicationView` is refused. A create needs `columns` or a raw
+`layoutXml`, and a raw `layoutXml` needs a `fetchXml`. A `savedQueryId` that
+matches nothing is `ViewNotFoundException` and never creates. Confirmed live:
+a `solution import` created nine views this way (All, Active and Inactive on
+each of three tables), and a view created on `account` with `--solution` was
+added to that solution as component type 26. Created views are published like
+changed ones; see "Publishing" below.
+
+**`columns:` builds the layout.** Instead of a raw `layoutXml`, a hand-written
+file may list `columns`: plain names, or `{name, width}` entries (width defaults
+to 150, `ViewImportService`'s `DefaultColumnWidth`). `ViewColumn` and
+`ViewColumnYamlTypeConverter` read both shapes, and the schema marks the
+plain-string form with `SchemaPlainStringShorthandAttribute`. The generated
+`layoutXml` is a `resultset` grid whose `jump` is the table's primary name
+column and whose row `id` is its primary id column (`EntityIdentity`, from
+`IDataverseClient.TryGetEntityIdentityAsync`). The grid's `object` is the
+table's live type code, which is also corrected on a raw `layoutXml` that
+carries a different one (an export from another environment). A listed column
+the FetchXML doesn't query is added as an `<attribute>`, since a shown but
+unqueried column renders blank. With no `fetchXml` on create, a minimal
+`<fetch>` for the table is used. The file's own mistakes are refused before
+any call: `columns` with `layoutXml`, an empty list, and a name listed twice.
+If the table isn't live, the import stops and says to run `table create` first.
+
+**Comparison rules (re-import is quiet).** Dataverse changes two things on
+save, so the diff ignores them when the file leaves them out.
+`ComparableExistingFetchXml` drops the `savedqueryid` attribute from the live
+`<fetch>` root when the file's own `<fetch>` lacks it (an exported file keeps
+it and compares as written). Cell labels are the same case on a form (see
+the form section). Consequently a hand-written view re-imports as unchanged.
+
+A local field that's null means "don't touch this", never "clear it" — confirmed in
 `IDataverseClient.UpdateSavedQueryAsync`'s own contract, and mirrored in
 `ViewImportPreview.HasChanges`, which only compares a field when the local
 YAML actually has a value there.
 
-**What this doesn't do yet**: publish the change. Unlike `form import` (see
-above — it now calls `PublishEntityAsync` after writing), `view import`
-still only patches the `savedquery` record itself; Dataverse customizations
-still need publishing separately before end users see the change.
+**Publishing.** Dataverse publishes a view with its table, so once a view is
+created or updated `view import` runs `PublishEntityAsync` on `preview.Entity`
+(`ImportRunner`, straight after the apply, with no second prompt). Nothing is
+published when nothing was applied (no changes, declined, `--whatif`), and
+`--no-publish` skips it. A confirmed live publish succeeded; a change written
+with `--no-publish` isn't visible to `view export` until the table is
+published.
 
 ## Importing tables (`table import`)
 
@@ -755,6 +830,61 @@ treat it as a confirmed-live platform quirk specific to this one type, not
 a citation. This tool refuses the update up front (an `Invalid` plan,
 same mechanism as an immutable `Type`/`SchemaName`/`Targets` change) rather
 than ever claim "Imported." for a write that silently never took effect.
+
+### Rich text and auto-number columns
+
+**Rich text Memo.** `format: RichText` on a Memo creates a rich text column:
+the create body sends `FormatName: { Value: "RichText" }` (see
+`MemoFormats`). The legacy `Format` property can't express it, so a rich
+text column reads back as `Format: Text` and only `FormatName` says
+`RichText`. `format: TextArea` (or no format) creates a plain Memo as before.
+Any other Memo format is refused, not created as a plain Memo.
+
+- Export reads rich text from `FormatName`, so `table export` writes
+  `format: RichText`. Exports made before this support existed wrote a rich
+  text column as `format: Text`; importing one of those against the live rich
+  text column is refused, and the message says to re-export.
+- Switching an existing Memo between plain and rich text is planned as
+  `invalid` and never attempted. Create a new column instead.
+- An update never writes a Memo's format, so an unchanged rich text column
+  stays rich text.
+
+**Confirmed live** (personal test environment, 2026-10-26): a rich text
+column created through the Web API read back as `Format: Text`,
+`FormatName: RichText`; `table export` then wrote `format: RichText`, and
+`table import --whatif` on that export reported no changes. A `table import`
+in default transaction mode created a rich text Memo with `MaxLength: 100000`.
+
+**Auto-number String.** `autoNumberFormat` (e.g. `DATA{SEQNUM:6}`) on a String
+column makes it an auto-number column. It's sent as `AutoNumberFormat` on the
+create (with `FormatName` left as Text), on an update of an existing Text
+column, compared against the live value, and written by export. It's refused
+on any non-String column and alongside any non-Text format. The tool doesn't
+validate the format string itself; Dataverse doesn't either at create time, so
+a bad format only fails when the first record is saved.
+
+**Auto-number seed.** `autoNumberSeed` (an integer; needs `autoNumberFormat`)
+sets the first number the column will use, via the unbound
+`SetAutoNumberSeed` action (`IDataverseClient.SetAutoNumberSeedAsync`). It is
+only sent in the run that creates the column: in the same changeset, straight
+after the create, by default, or as its own request after the create with
+`--no-transaction`. On an existing column it is never sent. The plan says
+`seed ignored — column already exists` as a warning, even when the column is
+otherwise Unchanged. The reason it's create-only: the seed is per environment
+(a solution doesn't carry it), and calling it again resets the counter, which
+risks duplicate numbers. Without a seed, sequences start at 1000. Export never
+writes `autoNumberSeed`. The create line in the plan reads
+`+ col (create, auto-number seed N — this environment only)`.
+
+**Confirmed live** (same environment, 2026-10-26): a default-transaction
+`table import` created a rich text Memo and a String with
+`autoNumberFormat: DATA{SEQNUM:6}` and `autoNumberSeed: 1` in one changeset,
+so Dataverse accepts `SetAutoNumberSeed` in the same changeset as the create.
+The first record got `DATA000001`. An existing column's format changed from
+`MSUM{SEQNUM:6}` to `MSUM{SEQNUM:8}` in the same changeset, and without a seed
+its next value was `MSUM00001000`. Re-importing the same file (still with
+`autoNumberSeed: 1`) showed the seed-ignored warning and did not reset the
+counter: the next record got `DATA000002`.
 
 ### Boolean and Choice (Picklist/MultiSelectPicklist)
 
@@ -985,6 +1115,12 @@ real table, not just reasoned about:
 - **An invalid `RequiredLevel`** — anything other than `None`,
   `Recommended`, `ApplicationRequired`, or `SystemRequired` (Dataverse's
   own documented values) on either create or update.
+- **A Memo format other than `TextArea` or `RichText`**, a plain-to-rich-text
+  switch (or the reverse) on an existing Memo, and an `autoNumberFormat` on a
+  non-String column or alongside a non-Text format (`AttributeChangeValidator`).
+  An `autoNumberSeed` without an `autoNumberFormat` is also refused. An
+  `autoNumberSeed` on an existing column is a warning, not a refusal (see
+  "Rich text and auto-number columns").
 - **A non-positive, or excessive, `MaxLength`** on a String/Memo column —
   must be greater than 0, and (String only) no more than 4000. Corroborated
   across multiple sources rather than a single canonical Microsoft Learn
@@ -1054,10 +1190,10 @@ destructive, hard-to-reverse operation this tool refuses to guess its way
 into; if a column genuinely needs removing, that's a deliberate action to
 take elsewhere, not a side effect of a YAML file simply not mentioning it.
 
-**Never creates the table itself**, either — same "don't attempt the
-large, different, and separately-risky operation of bringing a whole new
-object into existence" boundary `form import`/`view import` already draw
-around forms/views that don't exist yet.
+**Never creates the table itself**, either. A column can only be added to a
+table that already exists; bringing the table into existence is `table
+create`'s job, a separate command with a narrower contract (see "Creating
+tables" below), so `table import` on its own never does it.
 
 **The diff is the table's decomposed YAML**, not a rebuilt artifact —
 unlike FormXML, there's no single canonical "table document" this tool
@@ -1078,14 +1214,15 @@ can't be applied (`hasNotes`, `hasActivities`, `isActivity`, `ownershipType`)
 are listed as `not applied: <reason>` in the plan and never written; they
 don't count as a change on their own.
 
-**What this doesn't do yet**: publish the change. Unlike form/view
-import's still-open question about whether publishing turns out to be
-necessary, Microsoft's own docs are explicit here: *"When you update a
-table or column definition, use the PublishXml Action before the changes
-you make are applied to the model-driven applications."* `table import`
-doesn't call it yet — the change is real and stored the moment `apply`
-succeeds, but won't be visible in model-driven apps until published
-separately.
+**Publishing.** Microsoft's own docs are explicit that publishing is needed:
+*"When you update a table or column definition, use the PublishXml Action
+before the changes you make are applied to the model-driven applications."*
+The change is real and stored the moment `apply` succeeds, but isn't visible in
+model-driven apps until published, so `table import` publishes the table
+(`PublishEntityAsync`, so its forms and views come with it) straight after
+applying, with no second prompt. Nothing is published when nothing was applied
+(no changes, declined, `--whatif`), and `--no-publish` skips it. Confirmed
+live: publishing three tables succeeded.
 
 ### Applying the plan: one changeset, or one request at a time
 
@@ -1119,6 +1256,128 @@ reject a batched metadata write, `table import` will surface Dataverse's
 own error naming the rejection; pass `--no-transaction` to fall back to
 the same one-request-at-a-time behavior this tool always used before
 batching existed.
+
+## Creating tables (`table create`)
+
+`ITableCreateService`/`TableCreateService` (`d365architect table create --input
+x.table.yml [--solution NAME] [--yes] [--whatif]`) is the only path in this
+tool that brings a table into existence. It's deliberately narrow, for the
+same reason `table import` is: a whole new table is a larger, harder-to-undo
+write than a column, so each part of it has to be confirmed rather than
+assumed.
+
+- **One request.** The create is a single `POST EntityDefinitions`, built by
+  `EntityMetadataJsonBuilder.BuildCreateBody` from Microsoft's "Create table
+  definitions" example (`SchemaName`, `DisplayName`, `DisplayCollectionName`,
+  `Description`, `OwnershipType`, `IsActivity`/`HasActivities`/`HasNotes`
+  set to `false`). One request is atomic on its own, so it isn't wrapped in
+  a changeset.
+- **Only the primary name column is created**, from the file's
+  `primaryNameAttribute`, as a String column in Text format with its own
+  `IsPrimaryName: true`. Every other column is left for `table import`, which
+  already plans, diffs and creates the types it supports. Creating a table
+  and then importing its columns is two steps by design.
+- **The primary name column's MaxLength is 850, whatever is sent.** The
+  create body sends the column's `maxLength` (100 when omitted), but
+  Dataverse sets the primary name's MaxLength to 850 regardless. Confirmed
+  live with a 100 sent; the column read back at 850.
+- **Refuses rather than guesses.** `TableCreateValidator` requires
+  `schemaName` (with a publisher prefix), `ownershipType` (`UserOwned` or
+  `OrganizationOwned` only; `TeamOwned`, `BusinessOwned`, `BusinessParented`
+  and `None` are refused rather than mapped), `primaryNameAttribute` (a String
+  column listed under `attributes`), and both display names. Activity, elastic
+  and virtual tables are refused. Every problem is returned in one run.
+- **An existing table is a no-op.** If the logical name already exists live,
+  the command reports "already exists, nothing to create" and exits 0 without
+  validating the file, so it's safe to run against every table folder.
+  (`solution import` doesn't run it per file: it previews every table the same
+  way, asks once, and creates the missing ones in one transaction - see below.)
+- **`--solution`** passes `MSCRM.SolutionUniqueName` on the create, so the
+  new table joins that solution as it's created (the same gap `table import
+  --solution` closes for columns).
+- **Publishes the table it created**, same as `table import` (ending with
+  "Published."), unless `--no-publish`; a table that already exists isn't
+  published. It never rewrites the input file.
+- **The primary name column's `RequiredLevel` is ignored at create.** Dataverse
+  returned the column as not required even when the file asked for it
+  (confirmed live). The staged `solution import` corrects it in its column
+  stage, because `table import` then sees the difference. A standalone
+  `table create` leaves it as Dataverse created it until `table import` runs on
+  the same file.
+
+**Confirmed live** against a personal test environment (not a shared tenant):
+
+- A table `bogdan_tablecreatetest` was created with the body as built, and
+  Dataverse accepted it.
+- A second run against the same table reported "already exists" and changed
+  nothing.
+- The existence check for a table that doesn't exist returned 404, which is
+  how the tool tells "missing" from "present".
+- `solution export` of the solution the table was created into included the
+  new table, so `--solution` on create puts the table where it should be, and
+  the exported `*.table.yml` contained `primaryNameAttribute`.
+- A staged `solution import` (see the README's `solution import` section)
+  of a new table `bogdan_stagedtest`, plus an added column, a view and a main
+  form, created the table first, then imported the column, view and form in
+  one run. The input files were byte-identical afterwards. (That run created
+  tables one at a time; see below for the one-transaction create.)
+
+### Creating several tables at once (`solution import`)
+
+`solution import`'s first stage previews every `*.table.yml` exactly as
+`table create` would, lists the tables that don't exist yet, asks once
+("Create these N tables?", skipped by `--yes`) and sends all the creates as
+one Web API `$batch` changeset of `POST EntityDefinitions` requests, each with
+`MSCRM.SolutionUniqueName` when `--solution` is given. A changeset is
+all-or-nothing: if Dataverse rejects any create, none is kept. Its error part
+carries the `Content-ID` of the failing request; requests are numbered from 1
+over the creates actually sent (tables that already exist aren't sent), so the
+tool maps that number back to the table and names it with Dataverse's reason.
+With only one table sent it is named even without a `Content-ID`. The run then
+stops before choices, columns, views and forms. A table file that fails
+validation stops the stage the same way before anything is sent, and declining
+the prompt creates nothing and stops the run. Under `--whatif` the missing
+tables are listed, nothing is asked or written, and their folders are skipped.
+The changeset gets a longer timeout than an ordinary request (10 minutes, as
+each table create takes 14-40 s). The create stage itself doesn't publish: a
+new table is published by whichever later step changes it.
+
+Not confirmed live yet: a metadata `$batch` of `EntityDefinitions` creates with
+the solution header on each part, and the exact `Content-ID` format Dataverse
+returns on the failed part.
+
+### Creating a new table and its views and forms
+
+Dataverse auto-creates seven views and three forms for a new table, and all
+three forms are named "Information" (main, card and quick view). That has two
+consequences for hand-written files:
+
+- A `*.form.yml` for one of the three "Information" forms is told apart by its
+  `type` (absent = Main), and `formId` names it exactly. Without `formId`, a
+  name + type that still matches more than one form is refused, listing the ids.
+- A raw `layoutXml` needs the `object` attribute (the table's type code), which
+  only exists once the table has been created. `columns:` on a view fills it
+  in from the live table, so a view can be written before anything is exported.
+
+So the practical workflow is: `table create` → `solution export` → edit the
+exported views and forms (or hand-write new ones, with `columns:` for a view)
+→ `table import`/`view import`/`form import` (or a `solution import` of the
+folder), which creates any view or main form that doesn't exist yet. Recovery from a partly-failed run is to fix
+the file and rerun, since each stage is idempotent: an existing table is
+skipped, and an import applies only what still differs. Apart from the
+table creates, there's no transaction across the whole `solution import`;
+each asset is its own write.
+
+### `primaryNameAttribute`
+
+A table-level key in `*.table.yml`: the logical name of the table's primary
+name column (e.g. `tn_name`). It has to be listed under `attributes`, and it's
+what `table create` builds the table's one column from. `table export` writes
+it, taken from the live table's `PrimaryNameAttribute`. If the key is absent,
+`table create` refuses rather than defaulting to a column name. `table import` reads the same model but never writes the
+key — it only takes part in the informational diff. Confirmed live: a file
+carrying `primaryNameAttribute` re-imported against its own freshly-created
+table reports "already matches", so a matching key causes no spurious change.
 
 ## Global choices (`choice export`/`choice import`)
 
@@ -1158,7 +1417,8 @@ hundred choices the file doesn't happen to mention would be noise, not a
 useful signal.
 
 **`choice import` can create a brand-new global choice**, unlike `table
-import` (which never creates the table itself) — a global choice doesn't
+import` (which only adds columns to a table that already exists; `table
+create` makes the table, see "Creating tables" below) — a global choice doesn't
 belong to an already-live table the way a column does, so there's nothing
 else it needs to already exist under. When nothing live matches a listed
 choice's `name` yet, that whole entry becomes its create body; otherwise
@@ -1212,11 +1472,17 @@ properties), a global choice's own `Options` has to be named directly in
 `$select` instead. See `IDataverseClient.TryGetGlobalOptionSetJsonAsync`/`GetGlobalOptionSetsJsonAsync`'s
 own doc comments for the exact confirmed URLs.
 
+**Publishing.** Once the changes are applied, `choice import` publishes every
+choice listed in the file, in file order, in one `PublishGlobalOptionSetsAsync`
+call, with no second prompt. Nothing is published when nothing was applied (no
+changes, declined, `--whatif`), and `--no-publish` skips it. Not confirmed live
+yet (the `<optionsets>` publish body is unverified against a real environment).
+
 **What this doesn't do yet**: deleting an option (`IDataverseClient.DeleteOptionValueAsync`
 exists but is never called automatically, same policy as a table column's
 options), reordering/renaming an option on a *managed* global choice this
 tool doesn't own the publisher of (Dataverse's own restriction, not this
-tool's), and publishing — same still-open gap `table import` has.
+tool's). Publishing is covered above.
 
 **`--solution` confirmed live** against a real solution on a real tenant:
 correctly narrowed the unscoped export down to just that solution's own

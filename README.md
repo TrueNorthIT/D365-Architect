@@ -109,10 +109,98 @@ access. Your sign-in is stored on your own machine only, under
 `%LOCALAPPDATA%\d365architect`. There's no `auth logout` yet — to sign out,
 delete that folder.
 
+#### Non-interactive sign-in (pipelines)
+
+For a pipeline or any other unattended run, skip `auth login` and set
+environment variables instead: every command then signs in from them
+directly, with no browser and nothing saved to disk. Set
+`d365architect_AUTH_MODE` to choose how, and `d365architect_URL` to the
+environment's URL. While `d365architect_AUTH_MODE` is set, any saved
+`auth login` sign-in is ignored entirely; unset it (or leave it blank) to go
+back to the interactive sign-in.
+
+| `d365architect_AUTH_MODE` | Signs in as | Also needs | Optional |
+|---------------------------|-------------|------------|----------|
+| `clientsecret`     | A service principal, with a client secret | `d365architect_TENANT_ID`, `d365architect_CLIENT_ID`, `d365architect_CLIENT_SECRET` | |
+| `certificate`      | A service principal, with a certificate | `d365architect_TENANT_ID`, `d365architect_CLIENT_ID`, and exactly one of `d365architect_CERTIFICATE_PATH` (a `.pfx` or `.pem` file) or `d365architect_CERTIFICATE_THUMBPRINT` (looked up in the Windows certificate store, `CurrentUser\My` then `LocalMachine\My`) | `d365architect_CERTIFICATE_PASSWORD` (for a password-protected `.pfx`) |
+| `azurecli`         | Whoever the Azure CLI is already signed in as (respecting `AZURE_CONFIG_DIR`) | | `d365architect_TENANT_ID` |
+| `managedidentity`  | The machine's managed identity | | `d365architect_CLIENT_ID` (a user-assigned identity's client ID; without it, the system-assigned identity) |
+| `workloadidentity` | A service principal, via workload identity federation | `d365architect_TENANT_ID`, `d365architect_CLIENT_ID`, `d365architect_FEDERATED_TOKEN_FILE` (or `AZURE_FEDERATED_TOKEN_FILE`) | |
+
+`d365architect_URL` is required in every mode and must be an `https://` URL,
+e.g. `https://yourorg.crm.dynamics.com`. The mode value is case-insensitive;
+variable names are not. Values left empty count as not set.
+
+Whichever identity you use must exist in the environment as a user —
+for a service principal or managed identity, an
+[application user](https://learn.microsoft.com/power-platform/admin/manage-application-users)
+— with a security role that allows whatever the command does.
+
+A missing or invalid variable stops the command straight away with an
+error naming it; it never falls back to opening a browser, and the client
+secret and certificate password are never printed. `whoami` shows which
+mode signed in, e.g. `Non-interactive sign-in: signed in via clientsecret
+as Pipeline Deployer (application 2222...) to https://yourorg.crm.dynamics.com/`.
+
+Note that `d365architect_CLIENT_ID` means something different depending on
+whether `d365architect_AUTH_MODE` is set: without it, it overrides the app
+registration used for the interactive `auth login` (see above); with it, it's
+the service principal or managed identity to sign in as.
+
+##### Azure DevOps examples
+
+Pair this with `--yes`, so imports don't wait for a confirmation prompt
+nobody is there to answer. Both examples assume `d365architect.exe` is
+already on the agent (e.g. checked in under `tools/`, or downloaded by an
+earlier step).
+
+Reusing an Azure Resource Manager service connection through the
+`AzureCLI@2` task — the task signs the Azure CLI in as the service
+connection's service principal, and `azurecli` mode picks that up:
+
+```yaml
+steps:
+  - task: AzureCLI@2
+    displayName: Import account table
+    inputs:
+      azureSubscription: my-dataverse-service-connection
+      scriptType: pscore
+      scriptLocation: inlineScript
+      inlineScript: |
+        ./tools/d365architect.exe whoami
+        ./tools/d365architect.exe table import --input qad/account/account.table.yml --yes
+    env:
+      d365architect_AUTH_MODE: azurecli
+      d365architect_URL: https://yourorg.crm.dynamics.com
+```
+
+With a client secret held in a secret pipeline variable (here
+`DataverseClientSecret`). Secret variables aren't passed to scripts
+automatically, so map it in through `env`:
+
+```yaml
+variables:
+  - group: dataverse-deploy # holds DataverseClientSecret, marked secret
+
+steps:
+  - pwsh: |
+      ./tools/d365architect.exe whoami
+      ./tools/d365architect.exe table import --input qad/account/account.table.yml --yes
+    displayName: Import account table
+    env:
+      d365architect_AUTH_MODE: clientsecret
+      d365architect_URL: https://yourorg.crm.dynamics.com
+      d365architect_TENANT_ID: 00000000-0000-0000-0000-000000000000
+      d365architect_CLIENT_ID: 11111111-1111-1111-1111-111111111111
+      d365architect_CLIENT_SECRET: $(DataverseClientSecret)
+```
+
 ### `whoami`
 
 Shows who you're currently signed in as, and to which environment. Run
-`auth login` first if you see a "not signed in" message.
+`auth login` first if you see a "not signed in" message. For a
+[non-interactive sign-in](#non-interactive-sign-in-pipelines), it also
+shows which `d365architect_AUTH_MODE` was used.
 
 ```
 d365architect whoami
@@ -150,6 +238,8 @@ Work with D365 table definitions.
 
 Fetches a table's live definition from the currently signed-in environment
 and saves it as this tool's declarative YAML. Requires `auth login` first.
+The table-level keys include `primaryNameAttribute` (the table's primary name
+column), which `table create` needs when creating the table.
 
 ```
 d365architect table export --table account
@@ -190,6 +280,7 @@ d365architect table import --input account.table.yml
 | `--whatif`          | Only show the diff/plan — never prompt and never write anything | No      |
 | `--no-transaction`  | Send every column create/update one request at a time instead of as a single atomic Dataverse changeset | No |
 | `-s, --solution`    | Unique name of a solution to add any brand-new column (or lookup relationship) to as it's created | No |
+| `--no-publish`      | Don't publish the table after importing                        | No       |
 
 Pass `--solution` when a column in the file doesn't exist live yet, so the
 new column joins that solution as part of the same write — without it, a
@@ -208,7 +299,8 @@ more) shows up in the plan as not applied, with the reason, rather than
 being guessed at. **Columns are never deleted automatically**, no matter
 what the local YAML says or doesn't say — a column missing from the file
 just shows up in the plan as "not applied", nothing more. The table itself
-is never created if it doesn't exist yet, either. Unless `--yes` is passed,
+is never created here, either: `table create` does that, and only for the
+primary name column (see [`table create`](#table-create) below). Unless `--yes` is passed,
 you get a confirmation prompt (defaulting to "no") before anything actually
 changes in Dataverse, and if there's genuinely nothing to apply, nothing is
 written at all. Pass `--whatif` to see the diff/plan and stop there — no
@@ -230,7 +322,9 @@ an invalid character (e.g. `BankName` or `new_Bank Name` instead of
 actually derives from SchemaName, two new columns claiming the same
 SchemaName, an invalid `RequiredLevel`, a MaxLength outside 1–4000
 (String/Memo), an Integer MinValue/MaxValue outside -2147483648 to
-2147483647, a Decimal/Money Precision outside 1–10, or MinValue greater
+2147483647, a Memo format other than `TextArea` or `RichText` (or a switch
+between plain and rich text on an existing Memo), an `autoNumberFormat` on a
+non-String column, a Decimal/Money Precision outside 1–10, or MinValue greater
 than MaxValue — all show up in the plan as `invalid` with the specific
 reason, rather than being attempted and failing with a raw Dataverse API
 error. See `docs/yaml-conventions.md` for which of these are confirmed
@@ -238,6 +332,14 @@ against Microsoft's own documented bounds versus a reasonable, same-shape
 extension. A few things Dataverse allows but warns against (lowering
 `MaxLength`/`Precision` below what existing data might exceed) still plan
 as a normal update, just with a warning printed alongside.
+
+A String column can also be an auto-number column with `autoNumberFormat`
+(e.g. `DATA{SEQNUM:6}`), and `autoNumberSeed` sets its first number. The seed
+is only applied in the run that creates the column, in this environment only
+(it isn't part of the solution); on an existing column the plan warns that it
+was ignored, so re-importing never resets the counter. The format string
+itself isn't validated by the tool. See `docs/yaml-conventions.md` for the
+rich text and auto-number details.
 
 By default, every write in the column plan (plus the table-level update, if
 any) is sent as a single atomic Dataverse changeset — either all of it
@@ -247,12 +349,51 @@ time instead, same as this tool always did before batching existed — useful
 if an environment turns out to reject batched metadata writes, or if
 partial progress on failure is actually what you want.
 
-**What this doesn't do yet**: publish the change — Dataverse's own docs
-confirm this is required for a table/column change to take effect in
-model-driven apps, and this tool doesn't call it automatically. See
+**Publishes what it changed.** Dataverse's own docs confirm a table/column
+change needs publishing before it takes effect in model-driven apps, so once
+the changes are applied the table is published (its forms and views come
+with it) and the run ends with "Published.". Confirming the import is the only
+question asked. Nothing is published when nothing was applied: no changes,
+a declined prompt, or `--whatif`. Pass `--no-publish` to write the changes
+without publishing them. See
 [`docs/yaml-conventions.md`](docs/yaml-conventions.md#importing-tables-table-import)
 for the full detail, including exactly why each excluded column type is
 excluded.
+
+#### `table create`
+
+Creates a table that doesn't exist yet, from a `*.table.yml` file. Only the
+table and its primary name column are created; every other column is added
+afterwards with `table import`. Needs sign-in.
+
+```
+d365architect table create --input tn_project.table.yml --solution TNCore
+```
+
+| Option            | Description                                                                 | Required |
+|-------------------|------------------------------------------------------------------------------|----------|
+| `-i, --input`     | Path to the `*.table.yml` file describing the table                          | Yes      |
+| `-s, --solution`  | Unique name of a solution to add the new table to as it's created            | No       |
+| `-y, --yes`       | Skip the confirmation prompt and create the table immediately                | No       |
+| `--whatif`        | Only show what would be created — never prompt and never write anything      | No       |
+| `--no-publish`    | Don't publish the table after creating it                                    | No       |
+
+The file must give `schemaName` (with its publisher prefix), `ownershipType`
+(`UserOwned` or `OrganizationOwned` only), `primaryNameAttribute` (the logical
+name of a String column listed under `attributes`), and both display names.
+Nothing is guessed: anything missing or invalid is listed in one run and
+nothing is sent. Activity, elastic and virtual tables aren't supported.
+Dataverse sets the primary name column's MaxLength to 850 whatever the file
+says (confirmed live with 100 sent).
+
+If the table already exists, the command says so ("already exists, nothing to
+create") and exits 0 without validating the file, so it's safe to run against
+every table in a solution. Like `table import`, it publishes the table it just
+created (ending with "Published."), unless `--no-publish` is passed; a table that
+already exists isn't published. It never rewrites the input file. See
+[`docs/yaml-conventions.md`](docs/yaml-conventions.md#creating-tables-table-create)
+for the create body, the live confirmations, and the recommended workflow for a
+new table (create, then `solution export`, then edit the views and forms).
 
 ### `view`
 
@@ -292,31 +433,75 @@ double-check that decomposition against.
 #### `view import`
 
 Writes a `*.view.yml` file's description/FetchXML/LayoutXML directly back
-into Dataverse. Needs sign-in.
+into Dataverse, or creates the view if it doesn't exist yet. Needs sign-in.
 
 ```
 d365architect view import --input active-accounts.view.yml
 ```
 
-| Option        | Description                                              | Required |
-|---------------|--------------------------------------------------------------|----------|
-| `-i, --input` | Path to the `*.view.yml` file to import                        | Yes      |
-| `-y, --yes`   | Skip the confirmation prompt and import immediately             | No       |
-| `--whatif`    | Only show the diff — never prompt and never write anything      | No       |
+| Option            | Description                                              | Required |
+|-------------------|--------------------------------------------------------------|----------|
+| `-i, --input`     | Path to the `*.view.yml` file to import                        | Yes      |
+| `-s, --solution`  | Unique name of a solution to add the view to as it is created or changed | No |
+| `-y, --yes`       | Skip the confirmation prompt and import immediately             | No       |
+| `--whatif`        | Only show the diff — never prompt and never write anything      | No       |
+| `--no-publish`    | Don't publish the view's table after importing                  | No       |
+
+Each exported file carries the view's `savedQueryId`. Import uses it to pick
+the target view, so two live views sharing a name no longer clash; an id that
+is not found live is an error (never a fallback to the name), and an id that
+belongs to a view on a different table is refused (a different name only warns,
+since renames are legitimate). Without `savedQueryId`, import
+matches on table and name and refuses an ambiguous match, listing the
+candidate ids to copy into the file.
+
+A view that matches nothing is created. A file with no `savedQueryId` whose
+table + name matches no live view is shown in the plan as `+ view '<name>'
+(create)`, and is confirmed like any other change. A stale `savedQueryId` is
+still an error and never creates a view. A new view must be public: leave
+`queryType` out (or set it to `MainApplicationView`), since Dataverse only
+accepts that type on create. A new view needs `columns` or a raw `layoutXml`;
+with a raw `layoutXml` it also needs `fetchXml`. Created views are published
+like changed ones (see below).
+
+A hand-written file can list `columns` instead of a raw `layoutXml`. Each
+entry is a column name, or a `name`/`width` mapping (width in pixels,
+default 150). The tool generates the grid, adds any listed column missing
+from the FetchXML, and fills in the grid's `object` type code from the live
+table, so the layout works without knowing that code. Giving both `columns`
+and `layoutXml` is refused. A new view with `columns` and no `fetchXml` gets a
+minimal FetchXML for its table:
+
+```yaml
+view: Active Accounts (Example)
+entity: account
+columns:
+  - name
+  - accountnumber
+  - name: telephone1
+    width: 200
+```
 
 Simpler than `form import`: since FetchXML/LayoutXML are kept verbatim
 (never decomposed and rebuilt), the diff compares the live values against
-the local YAML directly, with no canonicalization step needed first. Only
-`description`/`fetchXml`/`layoutXml` are ever written — a view's type,
-default status, and Quick Find flag are never changed by this command. Only
-ever updates a view that already exists; unless `--yes` is passed, you get
-a confirmation prompt (defaulting to "no") before anything actually changes
-in Dataverse. Pass `--whatif` to see the diff and stop there — no prompt,
-no write, regardless of `--yes`.
+the local YAML directly, with no canonicalization step needed first. Dataverse
+adds a `savedqueryid` attribute to the stored FetchXML on save; a file that
+leaves it out isn't shown as a change. Only `description`/`fetchXml`/`layoutXml`
+are ever written on an update — a view's type, default status, and Quick Find
+flag are never changed by this command. Unless `--yes` is passed, you get a
+confirmation prompt (defaulting to "no") before anything actually changes in
+Dataverse. Pass `--whatif` to see the diff and stop there — no prompt, no
+write, regardless of `--yes`.
 
-**What this doesn't do yet**: publish the change — same as `table import`.
-Unlike `view import`, `form import` now does publish automatically after
-writing (see below).
+`--solution` (sent as the `MSCRM.SolutionUniqueName` header) adds whatever is
+created or changed to that solution. A view created on a table that isn't in
+the solution yet still joins it.
+
+**Publishes what it changed.** A view's changes aren't visible until its table
+is published (Dataverse publishes a view with its table), so once a view is
+created or updated its table is published, with no second prompt. Nothing is
+published when nothing was applied (no changes, declined, `--whatif`). Pass
+`--no-publish` to skip it.
 
 ### `form`
 
@@ -495,9 +680,11 @@ d365architect form import --input account-main-form.form.yml
 | Option                       | Description                                              | Required |
 |------------------------------|--------------------------------------------------------------|----------|
 | `-i, --input`                | Path to the `*.form.yml` file to import                       | Yes      |
+| `-s, --solution`             | Unique name of a solution to add the form to as it is created or changed | No |
 | `-y, --yes`                  | Skip the confirmation prompt and import immediately            | No       |
 | `--whatif`                   | Only show the diff — never prompt and never write anything     | No       |
 | `--allow-schema-violations`  | Proceed even with a schema violation that isn't a confirmed-safe pattern | No |
+| `--no-publish`               | Don't publish the form's table after importing                 | No       |
 
 Before writing anything, this looks up the form — by the YAML's own
 `formId` when it has one (the ordinary case for anything exported since
@@ -508,14 +695,16 @@ the FormXML (the same patch-onto-the-live-document mechanism as
 prints a line-level diff between what's live now and what's about to
 replace it — the concrete answer to "must have a way to check differences
 between client and server". If the rebuild is identical to what's already
-live, nothing is written at all. Otherwise, unless `--yes` is passed, you
+live, nothing is written and validation is skipped. Otherwise, unless `--yes` is passed, you
 get a confirmation prompt (defaulting to "no") before anything actually
 changes in Dataverse. Pass `--whatif` to see the diff and stop there — no
 prompt, no write, regardless of `--yes`.
 
 **Unlike `build-xml`, a schema violation here can genuinely block the
-import.** Only the one specific, confirmed-safe pattern (`headerdensity`/
-`showinformselector`) is treated as informational; every other violation
+import.** Only confirmed-safe patterns are treated as informational (`headerdensity`/
+`showinformselector`, the Timeline control's activities/notes configuration,
+text inside a control's `<parameters>`, and a Quick View control's
+`HideQuickFormBorder`); every other violation
 refuses the import outright (before the confirmation prompt is even shown)
 unless `--allow-schema-violations` is passed. This isn't hypothetical
 caution — a different violation was once treated the same non-blocking way
@@ -535,13 +724,19 @@ not one of `StandardFormControls`' recognized names (a likely typo) and
 `control`/`customControlId` both set at once (mutually exclusive) — see
 below.
 
-Only ever updates a form that already exists — it refuses (rather than
-creating one) when nothing matches, and refuses outright for a dashboard,
-same as `build-xml`.
+A `formId` is authoritative: a stale one is an error and never creates a form.
+Without one, the form is matched by table + name + type, where an absent
+`type` means Main. A hand-written file that matches nothing that way is
+created, shown in the plan as `+ form '<name>' (main, create)` and confirmed
+like any other change. More than one match is refused, and the error lists
+the candidate ids to copy into the file as `formId`. A dashboard is refused
+outright, same as `build-xml`. `--solution` adds whatever is created or
+changed to that solution.
 
 **Publishes the change automatically** — the form's owning table is
-published right after the write, so there's no separate manual publish
-step (e.g. in the maker portal) before end users see it.
+published right after the write (a created form included), so there's no
+separate manual publish step (e.g. in the maker portal) before end users see
+it, as with every other import. Pass `--no-publish` to skip it.
 
 **What this doesn't do yet**: detect that the live form was changed by
 someone else since this YAML was last exported (it only compares the live
@@ -600,8 +795,12 @@ empty one.
 #### `solution import`
 
 Walks a folder previously written by `solution export` and imports every
-file found — `choices.yml` first, then, for each table sub-folder, its
-`*.table.yml`, then its `*.view.yml` file(s), then its `*.form.yml` file(s).
+file found, in stages. First, every `*.table.yml` is checked, the tables that
+don't exist live yet are listed, and after one "Create these N tables?" they
+are all created in one Dataverse transaction. Then `choices.yml`, then, for
+each table sub-folder, its `*.table.yml` (columns), then its `*.view.yml`
+file(s), then its `*.form.yml` file(s). Each stage reads live state afresh,
+so a table created in the first stage is visible to the rest.
 
 ```
 d365architect solution import --input ./examplesolution --solution examplesolution
@@ -615,26 +814,47 @@ d365architect solution import --input ./examplesolution --solution examplesoluti
 | `--whatif`                   | Only show each asset's diff/plan — never prompt and never write anything | No       |
 | `--no-transaction`           | For every table import: send column create/update one request at a time instead of as a single atomic Dataverse changeset | No |
 | `--allow-schema-violations`  | For every form import: proceed even if the rebuilt FormXML has a schema violation Dataverse might reject outright | No |
+| `--no-publish`               | For every table, choice, view and form import: don't publish after importing | No |
 
 This doesn't invent a new bulk-import behavior: every file found goes
 through the exact same preview → diff → confirm → apply flow as running
 `table import`/`view import`/`form import`/`choice import` on it directly —
 its own diff, its own column/choice plan, its own schema-violation gate.
-`--yes`/`--whatif`/`--no-transaction`/`--allow-schema-violations` are simply
+`--yes`/`--whatif`/`--no-transaction`/`--allow-schema-violations`/`--no-publish` are simply
 forwarded to every file they apply to, so `--yes` runs the whole solution
 unattended the same way it already does for a single asset. `--solution` is
-likewise forwarded to every table/choice import as their own `--solution`,
-so any brand-new column/lookup relationship/global choice this run creates
-actually joins the solution it came from, rather than landing wherever
-Dataverse's own default solution context puts it and silently not showing
-up in a later `solution export` of the same solution. One file
+likewise forwarded to every table create, table import, choice import, view
+import and form import as their own `--solution`,
+so any brand-new column/lookup relationship/global choice this run creates,
+and any view or form it creates or changes, actually joins the solution it
+came from, rather than landing wherever Dataverse's own default solution
+context puts it and silently not showing up in a later `solution export` of
+the same solution. Each file is applied and published exactly as its own
+import command would (`--no-publish` turns publishing off for all of them). One non-create file
 failing (a validation error, a live rejection, a missing counterpart)
 doesn't stop the rest — every remaining file is still attempted, with a
 final summary of how many succeeded/failed and a non-zero exit code if
 anything did. There's no cross-file rollback: each asset's own write is
 already atomic on its own terms (`table import`'s changeset, in
 particular), but nothing ties multiple files' writes together into one
-larger transaction.
+larger transaction. Recovery is to fix the file and rerun: existing tables are
+skipped, and each import applies only what still differs.
+
+Creating the tables is different. They are created together, in one
+transaction: if Dataverse rejects any of them, none is created, the error names
+the table that failed with Dataverse's own reason, and the run stops before any
+choice, column, view or form, since those (and other tables' lookups) can't
+succeed against a table that isn't there. A table file that can't be used
+(e.g. no `ownershipType`) stops the run the same way before anything is sent.
+Answering no to "Create these N tables?" creates nothing and stops the run;
+`--yes` skips the question. `--solution` reaches every create in the
+transaction. The create stage itself doesn't publish: a new table is published
+by the later step (its columns, a view or a form) that changes it.
+
+Under `--whatif` the tables that don't exist yet are listed as ones that would
+be created, nothing is asked or written, and each such table's own
+`*.table.yml` import, views and forms are skipped with a note (there's nothing
+live to preview them against) rather than counted as failures.
 
 ### `schema`
 
