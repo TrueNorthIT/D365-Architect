@@ -546,8 +546,9 @@ through `form export` since `FormId` was added. An id can't go stale or
 ambiguous the way table + name can (a rename, or two forms sharing a name —
 see `AmbiguousSystemFormException`), so once present it's what's actually
 imported onto; `Entity`/`Name` become purely informational at that point.
-Falls back to the old table + name lookup (`TryGetSystemFormAsync`) only
-for a `*.form.yml` exported before `FormId` existed. If the id resolves to
+Without a `formId` (a `*.form.yml` exported before `FormId` existed, or
+hand-written), the lookup is table + name + `type` (`IDataverseClient.
+FindSystemFormsAsync`; `type` absent = Main). If the id resolves to
 a form whose live table/name no longer match the YAML's own `Entity`/
 `Name` — copied into the wrong file, or renamed live since export — a
 warning is printed before the diff; it doesn't block, since the id is
@@ -556,12 +557,27 @@ longer resolves to anything (the form was deleted) throws
 `FormNotFoundException` with that id in the message, distinct from the
 table + name variant of the same exception.
 
-**Only ever updates a form that already exists.** Nothing matching throws
-`FormNotFoundException` rather than creating one — creating a brand-new
-form isn't supported yet (it would need a fair bit more: minimum required
-systemform properties beyond just `formxml`, and likely solution-context
-registration). Refuses a dashboard outright too, same as `build-xml`, for
-the same reason (`FormXmlWriter` itself refuses).
+**Creates a form that matches nothing.** Without a `formId`, the match is
+table + name + `type` (`type` absent = Main), not name alone: a new custom
+table's main, card and quick view forms are all named "Information"
+(confirmed live), so a name can't tell them apart. No match creates the
+form (`IDataverseClient.CreateSystemFormAsync`): `POST systemforms` with
+`name`, `objecttypecode`, `type` (the option-set integer), `formxml`, and
+`description` when the file gives one. `--solution` adds the
+`MSCRM.SolutionUniqueName` header. Learn gives no worked example for a form
+create, so the minimal body is confirmed only by live use: a `solution import`
+created three new main forms this way. The preview shows it as `+ form '<name>'
+(main, create)`, and the post-write message says "created" rather than
+"updated". Several matches are refused (`AmbiguousSystemFormException`, listing
+the candidate ids to use as `formId`). A `formId` that matches nothing is
+`FormNotFoundException` and never creates a form. A `type` that isn't one of
+Dataverse's is refused. A dashboard is refused outright, same as `build-xml`,
+for the same reason (`FormXmlWriter` itself refuses).
+
+**Matching by name + type can reach an auto-made form.** Because the match is
+name + type, a file for a new table that names "Information" with the type of
+one of the three auto-made forms updates that form rather than creating a new
+one. Setting `formId` is the way to say which one is meant.
 
 **"Must have a way to check differences between client and server"** (this
 feature's own originating requirement) is `TextDiff`, applied to the actual
@@ -604,6 +620,16 @@ would need tracking a version marker (e.g. `modifiedon`, or an ETag via
 still the concrete, useful half of "checking differences", just not the
 whole of it.
 
+**Labels a file leaves out aren't a change.** Dataverse fills in a cell's
+`<labels>` from its column's display name on save when the cell was written
+without one, so a file that leaves `label` out would diff on every run. The
+live side drops only those auto-labels, and only for cells the file leaves
+unlabelled (`FormImportService.WithoutLabelsTheFileLeftOut`). A label the file
+does give is still compared. The consequence: deleting a `label:` from an
+exported form reads as "no change", so the import writes nothing and the live
+label stays as it is. (Whether a label removed from a file should ever be
+removed live is not decided; it is not done.)
+
 **Confirmation is the default, not an afterthought.** Unless `--yes` is
 passed, `form import` shows the diff and every `FormXmlValidator` finding
 (same rendering as `build-xml`, factored into `FormXmlValidationConsole` so
@@ -625,7 +651,7 @@ the `headerdensity` case, which turned out only to hold for that one case.
 **Publishes after writing.** `UpdateSystemFormXmlAsync` only patches the
 `systemform` record's `formxml` column — Dataverse customizations still
 need publishing separately before end users see the change. `form import`
-does that itself: `FormImportService.ApplyAsync` follows the write with a
+does that itself, for a created form as well as an updated one: `FormImportService.ApplyAsync` follows the write with a
 call to `IDataverseClient.PublishEntityAsync`, the `PublishXml` action
 against the form's owning table. There's no finer-grained way to publish a
 single `systemform` on its own — confirmed against Microsoft's own docs for
@@ -660,24 +686,65 @@ and never falls back to the name. Without it, an ambiguous table + name still
 throws `AmbiguousSavedQueryException`, whose message tells the user to add
 `savedQueryId` and lists the candidate ids.
 
-**Only three fields are ever written**: `Description`, `FetchXml`,
+**Only three fields are ever written on an update**: `Description`, `FetchXml`,
 `LayoutXml`. `QueryType`/`IsDefault`/`IsQuickFindQuery`/`IsUserDefined`/
 `IsCustomizable` are all documented on `ViewDefinition` itself as fields
 applying a YAML file back doesn't change (setting the default view, for
 one, needs a dedicated qualifying action, not a plain field write) — import
 respects that boundary rather than attempting a guess at any of them.
 
-**Only updates a view that already exists** — `ViewNotFoundException`
-otherwise, same reasoning as `FormNotFoundException`. A local field that's
-null means "don't touch this", never "clear it" — confirmed in
+**Creates a view that matches nothing.** Without a `savedQueryId`, a table +
+name match that finds nothing is a create (`ViewImportService.ApplyAsync`,
+`IDataverseClient.CreateSavedQueryAsync`): `POST savedqueries` with `name`,
+`returnedtypecode` (the table), `fetchxml`, `layoutxml`, `querytype` 0 and
+`description` when given, per Microsoft's "Customize Views in Model-driven
+Apps" (Create views). `--solution` adds the `MSCRM.SolutionUniqueName`
+header. Only a public view can be created, so a `queryType` other than
+`MainApplicationView` is refused. A create needs `columns` or a raw
+`layoutXml`, and a raw `layoutXml` needs a `fetchXml`. A `savedQueryId` that
+matches nothing is `ViewNotFoundException` and never creates. Confirmed live:
+a `solution import` created nine views this way (All, Active and Inactive on
+each of three tables), and a view created on `account` with `--solution` was
+added to that solution as component type 26. Created views are not published
+by the import; see "Publishing" below.
+
+**`columns:` builds the layout.** Instead of a raw `layoutXml`, a hand-written
+file may list `columns`: plain names, or `{name, width}` entries (width defaults
+to 150, `ViewImportService`'s `DefaultColumnWidth`). `ViewColumn` and
+`ViewColumnYamlTypeConverter` read both shapes, and the schema marks the
+plain-string form with `SchemaPlainStringShorthandAttribute`. The generated
+`layoutXml` is a `resultset` grid whose `jump` is the table's primary name
+column and whose row `id` is its primary id column (`EntityIdentity`, from
+`IDataverseClient.TryGetEntityIdentityAsync`). The grid's `object` is the
+table's live type code, which is also corrected on a raw `layoutXml` that
+carries a different one (an export from another environment). A listed column
+the FetchXML doesn't query is added as an `<attribute>`, since a shown but
+unqueried column renders blank. With no `fetchXml` on create, a minimal
+`<fetch>` for the table is used. The file's own mistakes are refused before
+any call: `columns` with `layoutXml`, an empty list, and a name listed twice.
+If the table isn't live, the import stops and says to run `table create` first.
+
+**Comparison rules (re-import is quiet).** Dataverse changes two things on
+save, so the diff ignores them when the file leaves them out.
+`ComparableExistingFetchXml` drops the `savedqueryid` attribute from the live
+`<fetch>` root when the file's own `<fetch>` lacks it (an exported file keeps
+it and compares as written). Cell labels are the same case on a form (see
+the form section). Consequently a hand-written view re-imports as unchanged.
+
+A local field that's null means "don't touch this", never "clear it" — confirmed in
 `IDataverseClient.UpdateSavedQueryAsync`'s own contract, and mirrored in
 `ViewImportPreview.HasChanges`, which only compares a field when the local
 YAML actually has a value there.
 
-**What this doesn't do yet**: publish the change. Unlike `form import` (see
-above — it now calls `PublishEntityAsync` after writing), `view import`
-still only patches the `savedquery` record itself; Dataverse customizations
-still need publishing separately before end users see the change.
+**Publishing (`view import --publish`).** `view import` doesn't publish. Dataverse
+publishes a view with its table, so `--publish` runs `PublishEntityAsync` on
+`preview.Entity` and nothing else (`ImportRunner`'s publish mode). It refuses
+(exit 1) when the view doesn't exist yet ("run `view import` without
+--publish first") or when the preview still has changes to write ("the file
+has N unapplied change(s)"). A stale `savedQueryId` under `--publish` gets the
+same "doesn't exist yet" refusal as a create. A confirmed live publish
+succeeded; a just-written change isn't visible to `view export` until the table
+is published, which is the same behaviour as before this option existed.
 
 ## Importing tables (`table import`)
 
@@ -1144,14 +1211,17 @@ can appear "different" in the diff without anything being done about it
 (unsupported type, or a removal), and the plan is where that distinction
 actually shows up.
 
-**What this doesn't do yet**: publish the change. Unlike form/view
-import's still-open question about whether publishing turns out to be
-necessary, Microsoft's own docs are explicit here: *"When you update a
-table or column definition, use the PublishXml Action before the changes
-you make are applied to the model-driven applications."* `table import`
-doesn't call it yet — the change is real and stored the moment `apply`
-succeeds, but won't be visible in model-driven apps until published
-separately.
+**Publishing (`table import --publish`).** Microsoft's own docs are explicit
+that publishing is needed: *"When you update a table or column definition, use
+the PublishXml Action before the changes you make are applied to the
+model-driven applications."* `table import` doesn't publish: the change is real
+and stored the moment `apply` succeeds, but isn't visible in model-driven apps
+until published. A second run with `--publish` publishes the table (`PublishEntityAsync`,
+so its forms and views come with it) and nothing else. It refuses (exit 1) if the
+table doesn't exist yet, which `table import` never creates ("run `table create`
+without --publish first"), and if the file still has changes to apply ("the file
+has N unapplied change(s)"). Confirmed live: a file with one unapplied column
+was refused, and publishing three tables succeeded.
 
 ### Applying the plan: one changeset, or one request at a time
 
@@ -1223,8 +1293,16 @@ assumed.
 - **`--solution`** passes `MSCRM.SolutionUniqueName` on the create, so the
   new table joins that solution as it's created (the same gap `table import
   --solution` closes for columns).
-- **Doesn't publish**, same as `table import`, and never rewrites the input
-  file.
+- **Doesn't publish by default**, same as `table import`. `--publish` publishes
+  the table once it exists, and only that (its forms and views come with it);
+  the table's other columns don't need applying first. It refuses a table that
+  doesn't exist yet. It never rewrites the input file.
+- **The primary name column's `RequiredLevel` is ignored at create.** Dataverse
+  returned the column as not required even when the file asked for it
+  (confirmed live). The staged `solution import` corrects it in its column
+  stage, because `table import` then sees the difference. A standalone
+  `table create` leaves it as Dataverse created it until `table import` runs on
+  the same file.
 
 **Confirmed live** against a personal test environment (not a shared tenant):
 
@@ -1248,14 +1326,17 @@ Dataverse auto-creates seven views and three forms for a new table, and all
 three forms are named "Information" (main, card and quick view). That has two
 consequences for hand-written files:
 
-- A `*.form.yml` for a new table needs `formId` set, to say which of the three
-  it is. Without it the form is ambiguous by name.
-- A view's `layoutXml` needs the `object` attribute (the table's type code),
-  which only exists once the table has been created.
+- A `*.form.yml` for one of the three "Information" forms is told apart by its
+  `type` (absent = Main), and `formId` names it exactly. Without `formId`, a
+  name + type that still matches more than one form is refused, listing the ids.
+- A raw `layoutXml` needs the `object` attribute (the table's type code), which
+  only exists once the table has been created. `columns:` on a view fills it
+  in from the live table, so a view can be written before anything is exported.
 
 So the practical workflow is: `table create` → `solution export` → edit the
-exported views and forms → `table import`/`view import`/`form import` (or a
-`solution import` of the folder). Recovery from a partly-failed run is to fix
+exported views and forms (or hand-write new ones, with `columns:` for a view)
+→ `table import`/`view import`/`form import` (or a `solution import` of the
+folder), which creates any view or main form that doesn't exist yet. Recovery from a partly-failed run is to fix
 the file and rerun, since each stage is idempotent: an existing table is
 skipped, and an import applies only what still differs. There's no
 transaction across the whole `solution import`; each asset is its own write.
@@ -1364,11 +1445,18 @@ properties), a global choice's own `Options` has to be named directly in
 `$select` instead. See `IDataverseClient.TryGetGlobalOptionSetJsonAsync`/`GetGlobalOptionSetsJsonAsync`'s
 own doc comments for the exact confirmed URLs.
 
+**Publishing (`choice import --publish`).** `choice import` doesn't publish.
+`--publish` publishes every choice listed in the file, in file order, in one
+`PublishGlobalOptionSetsAsync` call, and nothing else. It refuses (exit 1) if a
+listed choice doesn't exist yet or the file has unapplied changes, same wording
+as `table import --publish`. Not confirmed live yet (the `<optionsets>` publish
+body is unverified against a real environment).
+
 **What this doesn't do yet**: deleting an option (`IDataverseClient.DeleteOptionValueAsync`
 exists but is never called automatically, same policy as a table column's
 options), reordering/renaming an option on a *managed* global choice this
 tool doesn't own the publisher of (Dataverse's own restriction, not this
-tool's), and publishing — same still-open gap `table import` has.
+tool's). Publishing is covered above.
 
 **`--solution` confirmed live** against a real solution on a real tenant:
 correctly narrowed the unscoped export down to just that solution's own

@@ -128,6 +128,19 @@ see its own doc comment for how. Domain-specific exceptions
 `AuthenticationRequiredException`, etc.) exist
 specifically to give that message something meaningful to say.
 
+### `--publish` is a second mode of the same flow
+
+`PublishableImportSettings` (`table create`, `table import`, `view import`,
+`choice import`) adds `--publish`. `ImportRunner` checks it before the normal
+flow, and `ImportFlowSpec` carries the publish delegates: `PublishPrecheckAsync`
+(runs before the preview, for a table that may not exist yet), `PublishRefusal`
+(on the preview), `PublishTargets` (the "would publish: …" names) and
+`PublishAsync`. The preview is still built, so a refusal reads the same plan an
+import would apply. The refusal wording lives in `ImportRunner.NotYetCreated`
+and `ImportRunner.UnappliedChanges`; keep it in step with the README. A command
+without `--publish` leaves the delegates at their defaults. Form import and
+`solution import` deliberately don't take `PublishableImportSettings`.
+
 ## Services/
 
 ### Authentication
@@ -233,7 +246,16 @@ bearer token is passed in per call. Worth knowing before extending it:
 - **Publishing** (`PublishEntityAsync`, `PublishXml`) always publishes a whole
   table (attributes/forms/views/ribbons together) — there's no documented way
   to publish a single `systemform` on its own; `<entities><entity>` only ever
-  takes a table's logical name.
+  takes a table's logical name. `PublishGlobalOptionSetsAsync` publishes a list
+  of global choices by name (`<optionsets>`, used by `choice import --publish`;
+  not yet confirmed live).
+- **Creating views and forms**: `CreateSavedQueryAsync` (`POST savedqueries`)
+  and `CreateSystemFormAsync` (`POST systemforms`) take a body as built by
+  `ViewImportService`/`FormImportService` and an optional solution name sent as
+  `MSCRM.SolutionUniqueName`. `FindSystemFormsAsync` looks a form up by table +
+  name + type (a list, so the caller decides about ambiguity), and
+  `TryGetEntityIdentityAsync` returns an `EntityIdentity` (type code, primary id
+  and name columns) that a `columns:` layout is built from.
 - `GetEntityDefinitionJsonAsync` deliberately omits `$select` on the expanded
   `Attributes` collection, since type-specific properties (MaxLength,
   Precision, Targets, ...) aren't selectable on the base `AttributeMetadata`
@@ -300,6 +322,18 @@ Shared plumbing worth knowing:
   the diff.
 - `AssetFileNaming.cs` — `Slugify`/`MakeUnique`, used by views/forms since,
   unlike tables/columns, they have no stable logical name to file under.
+- `ViewColumn` and `ViewColumnYamlTypeConverter` — the `columns:` shorthand on a
+  view (a plain name, or `{name, width}`). `ViewImportService` turns it into a
+  generated `resultset` grid (`BuildLayoutXml`), adds any listed column missing
+  from the FetchXML (`WithAttributes`) and sets the grid's `object` from the
+  live table (`WithObjectTypeCode`). `SchemaPlainStringShorthandAttribute` marks
+  a model whose YAML also takes a plain string, so `YamlSchemaGenerator` emits
+  `anyOf` for it.
+- Comparison exceptions for Dataverse's own save-time stamps:
+  `ViewImportService.ComparableExistingFetchXml` (the `savedqueryid` on the
+  stored `<fetch>` root) and `FormImportService.WithoutLabelsTheFileLeftOut`
+  (auto-labels on cells the file leaves unlabelled). Each applies only when the
+  file omits the value, so a real change still shows.
 
 `Conversion/Models/` holds the curated read models themselves
 (`EntityDefinition`, `ViewDefinition`, `FormDefinition`, ...) — these are what
@@ -561,8 +595,10 @@ is called out by name in its test's own doc comment or `[Fact]` name:
   `DefaultValueConventions.cs`'s existing helpers, or add a new one following
   the same confirmed-not-guessed standard, if you need another one.
 - **Destructive operations don't get silently automated**: `table import`
-  never deletes a column, `form import`/`view import` never create a
-  record that doesn't already exist. `table create` is the deliberate
+  never deletes a column. `form import`/`view import` create a record only when
+  a hand-written file matches nothing (never on a stale id), and the create is
+  shown in the plan and confirmed like any other change. `--publish` changes
+  no metadata; it refuses rather than publish something other than the file. `table create` is the deliberate
   exception: it creates a whole table, and only when none exists under that
   name. If you're adding a new import path,
   keep that bar — surface what *would* change and let the user opt in,

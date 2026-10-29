@@ -192,6 +192,7 @@ d365architect table import --input account.table.yml
 | `--whatif`          | Only show the diff/plan — never prompt and never write anything | No      |
 | `--no-transaction`  | Send every column create/update one request at a time instead of as a single atomic Dataverse changeset | No |
 | `-s, --solution`    | Unique name of a solution to add any brand-new column (or lookup relationship) to as it's created | No |
+| `--publish`         | Publish only what the file describes, writing nothing else. Refuses (exit 1) if the table doesn't exist yet or the file has unapplied changes | No |
 
 Pass `--solution` when a column in the file doesn't exist live yet, so the
 new column joins that solution as part of the same write — without it, a
@@ -252,9 +253,15 @@ time instead, same as this tool always did before batching existed — useful
 if an environment turns out to reject batched metadata writes, or if
 partial progress on failure is actually what you want.
 
-**What this doesn't do yet**: publish the change — Dataverse's own docs
-confirm this is required for a table/column change to take effect in
-model-driven apps, and this tool doesn't call it automatically. See
+**Publishing is a separate step.** Dataverse's own docs confirm a table/column
+change needs publishing before it takes effect in model-driven apps, so an
+import doesn't publish. Once the file is fully applied, run the same command
+with `--publish`: it publishes the table (its forms and views come with it)
+and nothing else. It shows "would publish: …", asks unless `--yes` is passed,
+and `--whatif` publishes nothing. It refuses (exit 1) if the table doesn't
+exist yet ("run `table create` without --publish first") or if the file still
+has unapplied changes ("run without --publish first"); `--yes` never overrides
+a refusal. See
 [`docs/yaml-conventions.md`](docs/yaml-conventions.md#importing-tables-table-import)
 for the full detail, including exactly why each excluded column type is
 excluded.
@@ -275,6 +282,7 @@ d365architect table create --input tn_project.table.yml --solution TNCore
 | `-s, --solution`  | Unique name of a solution to add the new table to as it's created            | No       |
 | `-y, --yes`       | Skip the confirmation prompt and create the table immediately                | No       |
 | `--whatif`        | Only show what would be created — never prompt and never write anything      | No       |
+| `--publish`       | Publish the table only, once it exists, writing nothing else. Refuses (exit 1) if it doesn't exist yet or the file has unapplied changes | No |
 
 The file must give `schemaName` (with its publisher prefix), `ownershipType`
 (`UserOwned` or `OrganizationOwned` only), `primaryNameAttribute` (the logical
@@ -287,7 +295,9 @@ says (confirmed live with 100 sent).
 If the table already exists, the command says so ("already exists, nothing to
 create") and exits 0 without validating the file, so it's safe to run against
 every table in a solution. Like `table import`, it doesn't publish the change
-and never rewrites the input file. See
+unless run with `--publish`, which publishes the table once it exists. Only the
+table has to exist for that: the rest of its columns don't need applying first.
+It never rewrites the input file. See
 [`docs/yaml-conventions.md`](docs/yaml-conventions.md#creating-tables-table-create)
 for the create body, the live confirmations, and the recommended workflow for a
 new table (create, then `solution export`, then edit the views and forms).
@@ -330,17 +340,19 @@ double-check that decomposition against.
 #### `view import`
 
 Writes a `*.view.yml` file's description/FetchXML/LayoutXML directly back
-into Dataverse. Needs sign-in.
+into Dataverse, or creates the view if it doesn't exist yet. Needs sign-in.
 
 ```
 d365architect view import --input active-accounts.view.yml
 ```
 
-| Option        | Description                                              | Required |
-|---------------|--------------------------------------------------------------|----------|
-| `-i, --input` | Path to the `*.view.yml` file to import                        | Yes      |
-| `-y, --yes`   | Skip the confirmation prompt and import immediately             | No       |
-| `--whatif`    | Only show the diff — never prompt and never write anything      | No       |
+| Option            | Description                                              | Required |
+|-------------------|--------------------------------------------------------------|----------|
+| `-i, --input`     | Path to the `*.view.yml` file to import                        | Yes      |
+| `-s, --solution`  | Unique name of a solution to add the view to as it is created or changed | No |
+| `-y, --yes`       | Skip the confirmation prompt and import immediately             | No       |
+| `--whatif`        | Only show the diff — never prompt and never write anything      | No       |
+| `--publish`       | Publish the view's table only, writing nothing else. Refuses (exit 1) if the view doesn't exist yet or the file has unapplied changes | No |
 
 Each exported file carries the view's `savedQueryId`. Import uses it to pick
 the target view, so two live views sharing a name no longer clash; an id that
@@ -350,19 +362,55 @@ since renames are legitimate). Without `savedQueryId`, import
 matches on table and name and refuses an ambiguous match, listing the
 candidate ids to copy into the file.
 
+A view that matches nothing is created. A file with no `savedQueryId` whose
+table + name matches no live view is shown in the plan as `+ view '<name>'
+(create)`, and is confirmed like any other change. A stale `savedQueryId` is
+still an error and never creates a view. A new view must be public: leave
+`queryType` out (or set it to `MainApplicationView`), since Dataverse only
+accepts that type on create. A new view needs `columns` or a raw `layoutXml`;
+with a raw `layoutXml` it also needs `fetchXml`. Created views aren't
+published automatically (see below).
+
+A hand-written file can list `columns` instead of a raw `layoutXml`. Each
+entry is a column name, or a `name`/`width` mapping (width in pixels,
+default 150). The tool generates the grid, adds any listed column missing
+from the FetchXML, and fills in the grid's `object` type code from the live
+table, so the layout works without knowing that code. Giving both `columns`
+and `layoutXml` is refused. A new view with `columns` and no `fetchXml` gets a
+minimal FetchXML for its table:
+
+```yaml
+view: Active Accounts (Example)
+entity: account
+columns:
+  - name
+  - accountnumber
+  - name: telephone1
+    width: 200
+```
+
 Simpler than `form import`: since FetchXML/LayoutXML are kept verbatim
 (never decomposed and rebuilt), the diff compares the live values against
-the local YAML directly, with no canonicalization step needed first. Only
-`description`/`fetchXml`/`layoutXml` are ever written — a view's type,
-default status, and Quick Find flag are never changed by this command. Only
-ever updates a view that already exists; unless `--yes` is passed, you get
-a confirmation prompt (defaulting to "no") before anything actually changes
-in Dataverse. Pass `--whatif` to see the diff and stop there — no prompt,
-no write, regardless of `--yes`.
+the local YAML directly, with no canonicalization step needed first. Dataverse
+adds a `savedqueryid` attribute to the stored FetchXML on save; a file that
+leaves it out isn't shown as a change. Only `description`/`fetchXml`/`layoutXml`
+are ever written on an update — a view's type, default status, and Quick Find
+flag are never changed by this command. Unless `--yes` is passed, you get a
+confirmation prompt (defaulting to "no") before anything actually changes in
+Dataverse. Pass `--whatif` to see the diff and stop there — no prompt, no
+write, regardless of `--yes`.
 
-**What this doesn't do yet**: publish the change — same as `table import`.
-Unlike `view import`, `form import` now does publish automatically after
-writing (see below).
+`--solution` (sent as the `MSCRM.SolutionUniqueName` header) adds whatever is
+created or changed to that solution. A view created on a table that isn't in
+the solution yet still joins it.
+
+**Publishing is a separate step.** An import doesn't publish the change, and a
+view's changes aren't visible until its table is published. Run the same file
+again with `--publish` once it's fully applied: that publishes the view's
+table (Dataverse publishes a view with its table) and nothing else. It refuses
+(exit 1) if the view doesn't exist yet ("run `view import` without --publish
+first") or the file has unapplied changes. Form import, by contrast, always
+publishes after writing (see below).
 
 ### `form`
 
@@ -541,6 +589,7 @@ d365architect form import --input account-main-form.form.yml
 | Option                       | Description                                              | Required |
 |------------------------------|--------------------------------------------------------------|----------|
 | `-i, --input`                | Path to the `*.form.yml` file to import                       | Yes      |
+| `-s, --solution`             | Unique name of a solution to add the form to as it is created or changed | No |
 | `-y, --yes`                  | Skip the confirmation prompt and import immediately            | No       |
 | `--whatif`                   | Only show the diff — never prompt and never write anything     | No       |
 | `--allow-schema-violations`  | Proceed even with a schema violation that isn't a confirmed-safe pattern | No |
@@ -583,13 +632,19 @@ not one of `StandardFormControls`' recognized names (a likely typo) and
 `control`/`customControlId` both set at once (mutually exclusive) — see
 below.
 
-Only ever updates a form that already exists — it refuses (rather than
-creating one) when nothing matches, and refuses outright for a dashboard,
-same as `build-xml`.
+A `formId` is authoritative: a stale one is an error and never creates a form.
+Without one, the form is matched by table + name + type, where an absent
+`type` means Main. A hand-written file that matches nothing that way is
+created, shown in the plan as `+ form '<name>' (main, create)` and confirmed
+like any other change. More than one match is refused, and the error lists
+the candidate ids to copy into the file as `formId`. A dashboard is refused
+outright, same as `build-xml`. `--solution` adds whatever is created or
+changed to that solution.
 
 **Publishes the change automatically** — the form's owning table is
-published right after the write, so there's no separate manual publish
-step (e.g. in the maker portal) before end users see it.
+published right after the write (a created form included), so there's no
+separate manual publish step (e.g. in the maker portal) before end users see
+it. `--publish` isn't needed or accepted here.
 
 **What this doesn't do yet**: detect that the live form was changed by
 someone else since this YAML was last exported (it only compares the live
@@ -674,12 +729,15 @@ its own diff, its own column/choice plan, its own schema-violation gate.
 `--yes`/`--whatif`/`--no-transaction`/`--allow-schema-violations` are simply
 forwarded to every file they apply to, so `--yes` runs the whole solution
 unattended the same way it already does for a single asset. `--solution` is
-likewise forwarded to every table create, table import and choice import as
-their own `--solution`,
-so any brand-new column/lookup relationship/global choice this run creates
-actually joins the solution it came from, rather than landing wherever
-Dataverse's own default solution context puts it and silently not showing
-up in a later `solution export` of the same solution. One non-create file
+likewise forwarded to every table create, table import, choice import, view
+import and form import as their own `--solution`,
+so any brand-new column/lookup relationship/global choice this run creates,
+and any view or form it creates or changes, actually joins the solution it
+came from, rather than landing wherever Dataverse's own default solution
+context puts it and silently not showing up in a later `solution export` of
+the same solution. `solution import` has no `--publish`: each file is applied
+exactly as its own import command would apply it, so a created view isn't
+published, while a form is (as `form import` always does). One non-create file
 failing (a validation error, a live rejection, a missing counterpart)
 doesn't stop the rest — every remaining file is still attempted, with a
 final summary of how many succeeded/failed and a non-zero exit code if
