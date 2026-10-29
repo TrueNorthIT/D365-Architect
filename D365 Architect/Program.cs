@@ -21,6 +21,7 @@ using Spectre.Console.Cli;
 var services = new ServiceCollection();
 services.AddSingleton<IEnvironmentService, EnvironmentService>();
 services.AddSingleton(AuthenticationOptions.FromEnvironment());
+services.AddSingleton<NonInteractiveAuthenticator>();
 services.AddSingleton<IAuthenticationService, MsalAuthenticationService>();
 services.AddHttpClient<IDataverseClient, DataverseClient>();
 
