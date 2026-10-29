@@ -714,13 +714,15 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         using var response = await SendAsync(request, TransactionTimeout, cancellationToken);
         var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
 
-        if (!response.IsSuccessStatusCode)
+        // A failed changeset comes back as a 400 whose body is still the multipart response naming the failing
+        // request (seen live), so only a 400 with no multipart body to read is thrown as it stands.
+        var responseBoundary = response.Content.Headers.ContentType?.Parameters
+            .FirstOrDefault(p => p.Name.Equals("boundary", StringComparison.OrdinalIgnoreCase))?.Value?.Trim('"');
+        if (!response.IsSuccessStatusCode && responseBoundary is null)
         {
             throw new HttpRequestException($"Dataverse transaction failed ({(int)response.StatusCode} {response.StatusCode}): {responseBody}");
         }
 
-        var responseBoundary = response.Content.Headers.ContentType?.Parameters
-            .FirstOrDefault(p => p.Name.Equals("boundary", StringComparison.OrdinalIgnoreCase))?.Value?.Trim('"');
         if (responseBoundary is null)
         {
             throw new HttpRequestException($"Dataverse's $batch response had no multipart boundary to parse: {responseBody}");
@@ -741,6 +743,11 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
             var failedContentId = failures.Select(f => int.TryParse(f.ContentId, out var id) ? id : (int?)null).FirstOrDefault(id => id is not null);
             throw new DataverseTransactionFailedException(
                 $"Dataverse transaction rolled back — nothing in this batch of {writes.Count} write(s) was applied. {details}", failedContentId);
+        }
+
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new HttpRequestException($"Dataverse transaction failed ({(int)response.StatusCode} {response.StatusCode}): {responseBody}");
         }
     }
 

@@ -27,18 +27,19 @@ public sealed class DataverseClientBatchCreateTests
         public string? RequestBody { get; private set; }
         public int RequestCount { get; private set; }
         public string ResponseBody { get; set; } = "";
+        public HttpStatusCode StatusCode { get; set; } = HttpStatusCode.OK;
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             RequestCount++;
             RequestBody = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
-            return BatchResponse(ResponseBody);
+            return BatchResponse(ResponseBody, StatusCode);
         }
     }
 
-    private static HttpResponseMessage BatchResponse(string body)
+    private static HttpResponseMessage BatchResponse(string body, HttpStatusCode statusCode = HttpStatusCode.OK)
     {
-        var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body) };
+        var response = new HttpResponseMessage(statusCode) { Content = new StringContent(body) };
         response.Content.Headers.ContentType = MediaTypeHeaderValue.Parse("multipart/mixed; boundary=batchresponse_test");
         return response;
     }
@@ -134,6 +135,44 @@ public sealed class DataverseClientBatchCreateTests
         Expect.Equal(2, failure!.FailedContentId, "REQ-8: the exception should carry the Content-ID of the request Dataverse said failed.");
         Expect.Contains("SchemaName tn_Task already in use", failure.Message, "REQ-8: the exception message should keep Dataverse's own error.");
         Expect.Contains("rolled back", failure.Message, "REQ-8: the exception message should say the transaction was rolled back (nothing was applied).");
+    }
+
+    // REQ-8, as live Dataverse actually answers (captured from a live test run): the whole $batch comes back 400, with the
+    // error part nested inside a changesetresponse. The Content-ID must still be read rather than the 400 thrown as-is.
+    [Fact]
+    [Trait("Requirement", "REQ-8")]
+    [Trait("Feature", "batch-table-create")]
+    public async Task ExecuteTransactionAsync_LiveShaped400WithNestedChangeset_ThrowsWithThatContentId()
+    {
+        var handler = new BatchHandler
+        {
+            StatusCode = HttpStatusCode.BadRequest,
+            ResponseBody = Join(
+                "--batchresponse_test",
+                "Content-Type: multipart/mixed; boundary=changesetresponse_test",
+                "",
+                "--changesetresponse_test",
+                "Content-Type: application/http",
+                "Content-Transfer-Encoding: binary",
+                "Content-ID: 3",
+                "",
+                "HTTP/1.1 400 Bad Request",
+                "REQ_ID: 69c86e66-3481-4f20-a650-e4acec0f1eab",
+                "Content-Type: application/json; odata.metadata=minimal",
+                "OData-Version: 4.0",
+                "",
+                "{\"error\":{\"code\":\"0x8009050d\",\"message\":\"Entities already exist: tn_project.\"}}",
+                "--changesetresponse_test--",
+                "--batchresponse_test--"),
+        };
+        var client = new DataverseClient(new HttpClient(handler));
+
+        var ex = await Capture(() => client.ExecuteTransactionAsync(EnvironmentUrl, "token", ThreeCreates(), CancellationToken.None));
+
+        var failure = ex as DataverseTransactionFailedException;
+        Expect.True(failure is not null, $"REQ-8: a 400 $batch response carrying a failed changeset should throw DataverseTransactionFailedException. Actual: <{ex?.GetType().Name ?? "nothing"}>.");
+        Expect.Equal(3, failure!.FailedContentId, "REQ-8: the Content-ID nested in the changeset response should be read.");
+        Expect.Contains("Entities already exist", failure.Message, "REQ-8: the exception message should keep Dataverse's own error.");
     }
 
     // REQ-8: when the failure carries no Content-ID, it is still reported as a rollback - the id is just unknown, never guessed.
