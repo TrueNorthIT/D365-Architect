@@ -753,9 +753,9 @@ d365architect solution export --solution examplesolution
 ```
 
 Which tables to export is discovered from the solution itself — unlike
-`table export`/`view export`/`form export`, there's no `--table` option
+`table export`/`view export`/`form export`, `--table` is optional
 here, since a solution's own Entity components already say which tables it
-touches. Everything is written under `<output>/<solution>/`:
+touches. To export only some tables, pass `--table` (repeatable). Everything is written under `<output>/<solution>/`:
 
 ```
 examplesolution/
@@ -783,6 +783,7 @@ empty one.
 |-------------------|------------------------------------------------------------------------------|----------|
 | `-s, --solution`  | Unique name of the solution to export                                        | Yes      |
 | `-o, --output`    | Directory to create the solution's own folder under. Defaults to the current directory | No |
+| `-t, --table`     | Limit the export to this table (logical name, case-insensitive; repeatable). Skips `choices.yml`. Errors on a name not in the solution | No |
 
 #### `solution import`
 
@@ -791,7 +792,7 @@ file found, in stages. First, every `*.table.yml` is checked, the tables that
 don't exist live yet are listed, and after one "Create these N tables?" they
 are all created in one Dataverse transaction. Then `choices.yml`, then, for
 each table sub-folder, its `*.table.yml` (columns), then its `*.view.yml`
-file(s), then its `*.form.yml` file(s). Each stage reads live state afresh,
+file(s), then its `*.form.yml` file(s). Each preview reads live state afresh,
 so a table created in the first stage is visible to the rest.
 
 ```
@@ -802,51 +803,58 @@ d365architect solution import --input ./examplesolution --solution examplesoluti
 |------------------------------|--------------------------------------------------------------------------|----------|
 | `-i, --input`                | Path to a solution folder previously written by `solution export`        | Yes      |
 | `-s, --solution`             | Unique name of the solution these files came from                        | Yes      |
-| `-y, --yes`                  | Skip the confirmation prompt for every asset and import immediately      | No       |
-| `--whatif`                   | Only show each asset's diff/plan — never prompt and never write anything | No       |
+| `-y, --yes`                  | Skip both confirmation prompts (create tables, import changes) and go ahead immediately | No |
+| `-t, --table`                | Limit the import to this table's table/view/form files (folder name, case-insensitive; repeatable). Skips `choices.yml`. Errors on a name with no folder | No |
+| `--verbose`                  | Also print "No changes" for every unchanged asset (silent by default)    | No       |
+| `--whatif`                   | Only show each changed asset's diff/plan — never prompt and never write anything | No       |
 | `--no-transaction`           | For every table import: send column create/update one request at a time instead of as a single atomic Dataverse changeset | No |
 | `--allow-schema-violations`  | For every form import: proceed even if the rebuilt FormXML has a schema violation Dataverse might reject outright | No |
 | `--no-publish`               | For every table, choice, view and form import: don't publish after importing | No |
 
-This doesn't invent a new bulk-import behavior: every file found goes
-through the exact same preview → diff → confirm → apply flow as running
-`table import`/`view import`/`form import`/`choice import` on it directly —
-its own diff, its own column/choice plan, its own schema-violation gate.
-`--yes`/`--whatif`/`--no-transaction`/`--allow-schema-violations`/`--no-publish` are simply
-forwarded to every file they apply to, so `--yes` runs the whole solution
-unattended the same way it already does for a single asset. `--solution` is
-likewise forwarded to every table create, table import, choice import, view
-import and form import as their own `--solution`,
-so any brand-new column/lookup relationship/global choice this run creates,
-and any view or form it creates or changes, actually joins the solution it
-came from, rather than landing wherever Dataverse's own default solution
-context puts it and silently not showing up in a later `solution export` of
-the same solution. Each file is applied and published exactly as its own
-import command would (`--no-publish` turns publishing off for all of them). One non-create file
-failing (a validation error, a live rejection, a missing counterpart)
-doesn't stop the rest — every remaining file is still attempted, with a
-final summary of how many succeeded/failed and a non-zero exit code if
-anything did. There's no cross-file rollback: each asset's own write is
-already atomic on its own terms (`table import`'s changeset, in
-particular), but nothing ties multiple files' writes together into one
-larger transaction. Recovery is to fix the file and rerun: existing tables are
-skipped, and each import applies only what still differs.
+After the create stage, every file is previewed, through the same logic as
+`table import`/`view import`/`form import`/`choice import` — its own diff, its
+own column/choice plan, its own schema-violation gate. Only the diffs of the
+files that changed are printed (unchanged ones are silent unless `--verbose`),
+then you're asked once — "Import N changes?" — and yes applies them all, in
+the order above. Each change is published as its own import command would
+(`--no-publish` turns publishing off for all of them). `--yes` skips both
+prompts; `--whatif` prints the diffs and never prompts or writes. The run ends
+with a summary, e.g. `5 changed, 55 unchanged, 0 failed`. `--solution` is
+forwarded to every table create, table import, choice import, view import and
+form import as their own `--solution`, so any brand-new column/lookup
+relationship/global choice this run creates, and any view or form it creates
+or changes, actually joins the solution it came from, rather than landing
+wherever Dataverse's own default solution context puts it and silently not
+showing up in a later `solution export` of the same solution.
+`--no-transaction`/`--allow-schema-violations` are forwarded to the table/form
+imports.
+
+A file that fails to preview (a validation error, a live rejection, a missing
+counterpart, a refused schema violation) is reported and never applied, but
+doesn't stop the others being previewed; the prompt notes how many failed and
+will be skipped, the rest are still applied, and the exit code is non-zero.
+There's no cross-file rollback: each asset's own write is atomic on its own
+terms (`table import`'s changeset, in particular), but nothing ties multiple
+files' writes together. Recovery is to fix the file and rerun: existing tables
+are skipped, and each import applies only what still differs.
 
 Creating the tables is different. They are created together, in one
-transaction: if Dataverse rejects any of them, none is created, the error names
-the table that failed with Dataverse's own reason, and the run stops before any
-choice, column, view or form, since those (and other tables' lookups) can't
-succeed against a table that isn't there. A table file that can't be used
-(e.g. no `ownershipType`) stops the run the same way before anything is sent.
-Answering no to "Create these N tables?" creates nothing and stops the run;
-`--yes` skips the question. `--solution` reaches every create in the
-transaction. The create stage itself doesn't publish: a new table is published
-by the later step (its columns, a view or a form) that changes it.
+transaction, before anything else is previewed (their columns, views and forms
+can't be previewed against a table that isn't there yet), so a run that
+creates tables asks twice. If Dataverse rejects any of them, none is created,
+the error names the table that failed with Dataverse's own reason, and the run
+stops before any choice, column, view or form, since those (and other tables'
+lookups) can't succeed against a table that isn't there. A table file that
+can't be used (e.g. no `ownershipType`) stops the run the same way before
+anything is sent. Answering no to "Create these N tables?" creates nothing and
+stops the run. `--solution` reaches every create in the transaction. The
+create stage itself doesn't publish: a new table is published by the later
+step (its columns, a view or a form) that changes it.
 
 Under `--whatif` the tables that don't exist yet are listed as ones that would
 be created, nothing is asked or written, and each such table's own
 `*.table.yml` import, views and forms are skipped with a note (there's nothing
-live to preview them against) rather than counted as failures.
+live to preview them against) and counted as skipped rather than failed.
 
 ### `schema`
 

@@ -84,37 +84,51 @@ layer: `Commands/DiffConsole.cs` (the shared diff renderer), `Commands/Table/Ent
 
 ### `solution import` reuses each asset's own command, not a new bulk path
 
-`solution import` doesn't reimplement diffing/confirmation for a folder of
-files — each of `ImportTableCommand`/`ImportViewCommand`/`ImportFormCommand`/
+`solution import` doesn't reimplement diffing for a folder of files — each of
+`ImportTableCommand`/`ImportViewCommand`/`ImportFormCommand`/
 `ImportChoiceCommand` exposes a public `RunAsync(Settings, CancellationToken)`
-(pulled out of `ExecuteAsync`, which now just calls it) specifically so
-`ImportSolutionCommand` can construct one directly (`new
-ImportTableCommand(tableImportService, importRunner)`) and call it per file
-it finds, with its own `Settings` built from the folder's own file paths.
-Every asset still gets its full preview → diff → confirm → apply flow; one
-file failing doesn't stop the rest (see `ImportSolutionCommand`'s own doc
-comment for why, and how it reports the count at the end).
+(preview + one prompt + apply + publish, what `ExecuteAsync` calls) and a
+public `PreviewAsync(Settings, printUnchanged, CancellationToken)` (preview
+only). `ImportRunner` is split the same way: `PreviewAsync` reads, previews,
+prints the diff and applies the per-asset gates (SkipBefore/SkipAfter/
+BlockReason) without prompting or writing, returning a `PreparedImport`
+(`Unchanged`, `Changed` with a deferred `ApplyAsync` that also publishes
+unless `--no-publish`, or `Failed`); `RunAsync` is preview + prompt + apply.
 
-The one exception is stage 1, creating the tables, which is one prompt and
-one transaction rather than a `table create` per file.
 `SolutionImportOrchestrator` owns the stage ordering (creates first, then
-choices, then each table's columns, views and forms) and hands every
-`*.table.yml` path to `ISolutionImportStepRunner.CreateTablesAsync` in one
-call. The production runner (`ImportSolutionCommand.StepRunner`) previews
-them all with `TableCreateService.PreviewAsync` (an unreadable or invalid file
-fails the stage, naming it, before anything is sent), lists the missing ones,
-asks "Create these N tables?" once (skipped under `--yes`; under `--whatif` it
-only lists them and returns their paths so the orchestrator skips their
-folders), then calls `ITableCreateService.ApplyAllAsync`: one
-`ExecuteTransactionAsync` of `DataverseWrite.CreateEntity` writes, each
-carrying `--solution`. A rollback keeps nothing; `ApplyAllAsync` maps the
-failing part's `Content-ID` (counted over the requests actually sent) back to
-the table, and the run stops before any later stage. A decline stops it the
-same way. Standalone `table create` is unchanged: one table, its own prompt,
-published afterwards. If you add a
-fifth `Import*Command`, keep this same `RunAsync` shape so it can join
-`solution import`'s loop the same way, rather than solution import needing
-its own special case per asset type.
+choices, then each table's columns, views and forms) and hands each step to an
+`ISolutionImportStepRunner`. The production runner
+(`ImportSolutionCommand.StepRunner`) previews each step through the matching
+command's `PreviewAsync` and hands it to `SolutionImportFlow`, which prints
+only the changed diffs (unchanged ones only with `--verbose`) and holds the
+changes. Once the orchestrator has finished, `StepRunner.ConfirmAndApplyAsync`
+asks once ("Import N changes?"), applies the changed ones in order, and prints
+"N changed, M unchanged, K failed". A failed preview is reported and never
+applied but doesn't stop the rest, which are still offered and applied. If you
+add a fifth `Import*Command`, give it the same `RunAsync`/`PreviewAsync` pair
+so it can join the loop without a special case.
+
+The one exception is stage 1, creating the tables, which has its own prompt
+and one transaction rather than a `table create` per file, and runs before
+anything else is previewed (a missing table's columns, views and forms can't
+be previewed until it exists). The orchestrator hands every `*.table.yml` path
+to `ISolutionImportStepRunner.CreateTablesAsync` in one call. The production
+runner previews them all with `TableCreateService.PreviewAsync` (an
+unreadable or invalid file fails the stage, naming it, before anything is
+sent), lists the missing ones, asks "Create these N tables?" once (skipped
+under `--yes`; under `--whatif` it only lists them and returns their paths so
+the orchestrator skips their folders), then calls
+`ITableCreateService.ApplyAllAsync`: one `ExecuteTransactionAsync` of
+`DataverseWrite.CreateEntity` writes, each carrying `--solution`. A rollback
+keeps nothing; `ApplyAllAsync` maps the failing part's `Content-ID` (counted
+over the requests actually sent) back to the table, and the run stops before
+any later stage. A decline stops it the same way. Standalone `table create` is
+unchanged: one table, its own prompt, published afterwards.
+
+`--table` (repeatable, on `solution export` and `solution import`) is resolved
+by `SolutionTableFilter` (case-insensitive; an unmatched name throws
+`UnknownTableException`); the orchestrator then only walks those folders and
+skips global choices.
 
 ### The diff-before-confirm pattern
 

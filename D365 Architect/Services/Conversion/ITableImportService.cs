@@ -41,6 +41,18 @@ namespace D365Architect.Services.Conversion;
 /// </summary>
 public interface ITableImportService : IImportService<EntityDefinition, TableImportPreview>
 {
+    /// <summary>
+    /// As <see cref="IImportService{TInput,TPreview}.PreviewAsync"/>, for
+    /// <c>solution import</c>, which previews every asset before applying any:
+    /// a picklist column bound to a global choice that doesn't exist live yet
+    /// is planned as a normal create (not <see cref="AttributeImportAction.Invalid"/>)
+    /// when that choice is named in <paramref name="pendingGlobalChoiceNames"/>
+    /// (the choices this run's <c>choices.yml</c> will create first). Names
+    /// are matched case-insensitively by the caller's set comparer; pass a
+    /// <see cref="StringComparer.OrdinalIgnoreCase"/> set.
+    /// </summary>
+    Task<TableImportPreview> PreviewAsync(Uri environmentUrl, string accessToken, EntityDefinition entity, IReadOnlySet<string> pendingGlobalChoiceNames, CancellationToken cancellationToken);
+
     /// <param name="environmentUrl">See <see cref="IImportService{TInput,TPreview}.ApplyAsync"/>.</param>
     /// <param name="accessToken">See <see cref="IImportService{TInput,TPreview}.ApplyAsync"/>.</param>
     /// <param name="preview">See <see cref="IImportService{TInput,TPreview}.ApplyAsync"/>.</param>
@@ -160,7 +172,17 @@ public enum AttributeImportAction
 /// plan: a seed on a column that already exists is never sent (re-importing
 /// must not reset a live counter) and shows as a warning instead.
 /// </param>
-public sealed record AttributeImportPlan(string LogicalName, AttributeImportAction Action, string? Reason, JsonObject? RequestBody, IReadOnlyList<string>? Warnings = null, IReadOnlyList<OptionChangePlan>? OptionChanges = null, int? AutoNumberSeed = null);
+public sealed record AttributeImportPlan(string LogicalName, AttributeImportAction Action, string? Reason, JsonObject? RequestBody, IReadOnlyList<string>? Warnings = null, IReadOnlyList<OptionChangePlan>? OptionChanges = null, int? AutoNumberSeed = null)
+{
+    /// <summary>
+    /// Set on a <see cref="AttributeImportAction.Create"/> whose global choice
+    /// doesn't exist live yet but will be created earlier in the same
+    /// <c>solution import</c> run: the request body carries a placeholder id
+    /// until <see cref="ITableImportService.ApplyAsync(Uri, string, TableImportPreview, bool, string?, CancellationToken)"/>
+    /// resolves the real one. Null for every ordinary plan.
+    /// </summary>
+    public string? PendingGlobalChoiceName { get; init; }
+}
 
 /// <summary>What kind of option-value action <see cref="OptionChangePlan"/> carries — see <see cref="AttributeMetadataJsonBuilder.BuildOptionChangePlans"/>.</summary>
 public enum OptionChangeAction

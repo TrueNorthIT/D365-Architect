@@ -47,8 +47,10 @@ public sealed record SolutionTableCreateResult(SolutionImportStepOutcome Outcome
 
 /// <summary>
 /// Does one file's worth of work for one stage - in production, the
-/// matching per-asset command's <c>RunAsync</c> (so each step keeps its own
-/// preview, diff, confirm and apply). An exception is treated as
+/// matching per-asset command's <c>PreviewAsync</c> (so each step keeps its
+/// own preview, diff and safety gates), holding any change until
+/// <c>solution import</c> asks once and applies them all after the last
+/// step. An exception is treated as
 /// <see cref="SolutionImportStepOutcome.Failed"/>, as <c>solution import</c>
 /// always has.
 /// </summary>
@@ -103,9 +105,20 @@ public sealed record SolutionImportResult(int Succeeded, int Failed, string? Sto
 /// </summary>
 public sealed class SolutionImportOrchestrator
 {
-    public async Task<SolutionImportResult> RunAsync(string inputDirectory, ISolutionImportStepRunner runner, CancellationToken cancellationToken)
+    public Task<SolutionImportResult> RunAsync(string inputDirectory, ISolutionImportStepRunner runner, CancellationToken cancellationToken) =>
+        RunAsync(inputDirectory, runner, onlyTables: null, cancellationToken);
+
+    /// <summary>
+    /// As above, limited by <c>--table</c>: when <paramref name="onlyTables"/>
+    /// is set, only those table folders (names matched case-insensitively,
+    /// already checked against the folder by <see cref="SolutionTableFilter"/>)
+    /// are created and imported, and <c>choices.yml</c> is skipped. Null runs
+    /// everything.
+    /// </summary>
+    public async Task<SolutionImportResult> RunAsync(string inputDirectory, ISolutionImportStepRunner runner, IReadOnlyCollection<string>? onlyTables, CancellationToken cancellationToken)
     {
-        var tableDirectories = Sorted(Directory.GetDirectories(inputDirectory));
+        var tableDirectories = Sorted(Directory.GetDirectories(inputDirectory)
+            .Where(d => onlyTables is null || onlyTables.Contains(Path.GetFileName(d), StringComparer.OrdinalIgnoreCase)));
         var succeeded = 0;
         var failed = 0;
         var skipped = 0;
@@ -124,7 +137,7 @@ public sealed class SolutionImportOrchestrator
 
         var steps = new List<(SolutionImportStage Stage, string Path)>();
         var choicesPath = Path.Combine(inputDirectory, "choices.yml");
-        if (File.Exists(choicesPath))
+        if (onlyTables is null && File.Exists(choicesPath))
         {
             steps.Add((SolutionImportStage.ImportChoices, choicesPath));
         }

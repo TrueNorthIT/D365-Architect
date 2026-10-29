@@ -315,7 +315,7 @@ public sealed class ImportSolutionCommandStepRunnerTests : IDisposable
         Expect.Empty(client.CreateEntityCalls, "no table should have been created.");
     }
 
-    // --whatif on a missing table: reported as would-be-created, its views/forms skipped with a note, and the run doesn't end "Done with errors".
+    // --whatif on a missing table: reported as would-be-created, its views/forms skipped with a note, and the summary counts them as skipped, not failed.
     [Fact]
     [Trait("Feature", "batch-table-create")]
     public async Task WhatIf_MissingTable_SkipsItsLaterAssetsWithoutFailures()
@@ -332,7 +332,7 @@ public sealed class ImportSolutionCommandStepRunnerTests : IDisposable
         Expect.Contains("'tn_project' would be created", console.Output, "The missing table should be reported as would-be-created.");
         Expect.Contains("Main.form.yml' skipped: 'tn_project' doesn't exist yet and would be created first.", console.Output, "Its form should be skipped with a note.");
         Expect.Contains("Active projects.view.yml' skipped: 'tn_project' doesn't exist yet", console.Output, "Its view should be skipped with a note.");
-        Expect.True(!console.Output.Contains("Done with errors", StringComparison.Ordinal), $"Skipped assets aren't failures. Output: <{console.Output}>");
+        Expect.Contains("0 failed, 3 skipped", console.Output, "Skipped assets aren't failures, and the summary should count them.");
         Expect.Empty(client.CreateEntityCalls, "--whatif writes nothing.");
     }
 

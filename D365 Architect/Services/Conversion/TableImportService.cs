@@ -6,7 +6,10 @@ namespace D365Architect.Services.Conversion;
 
 public sealed class TableImportService(IDataverseClient dataverseClient, EntityJsonDefinitionReader reader, AttributeOptionSetFetcher optionSetFetcher) : ITableImportService
 {
-    public async Task<TableImportPreview> PreviewAsync(Uri environmentUrl, string accessToken, EntityDefinition entity, CancellationToken cancellationToken)
+    public Task<TableImportPreview> PreviewAsync(Uri environmentUrl, string accessToken, EntityDefinition entity, CancellationToken cancellationToken) =>
+        PreviewAsync(environmentUrl, accessToken, entity, new HashSet<string>(), cancellationToken);
+
+    public async Task<TableImportPreview> PreviewAsync(Uri environmentUrl, string accessToken, EntityDefinition entity, IReadOnlySet<string> pendingGlobalChoiceNames, CancellationToken cancellationToken)
     {
         var existingJson = await dataverseClient.GetEntityDefinitionJsonAsync(environmentUrl, accessToken, entity.LogicalName, cancellationToken);
         var existingOptionSetJsonByAttribute = await optionSetFetcher.FetchAsync(environmentUrl, accessToken, entity.LogicalName, existingJson, cancellationToken);
@@ -21,7 +24,7 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
         var newYaml = EntityYamlSerializer.ToYaml(entity);
 
         var tableUpdateBody = await BuildTableUpdateBodyAsync(environmentUrl, accessToken, entity, existingEntity, cancellationToken);
-        var attributePlans = await BuildAttributePlansAsync(environmentUrl, accessToken, entity, existingEntity, cancellationToken);
+        var attributePlans = await BuildAttributePlansAsync(environmentUrl, accessToken, entity, existingEntity, pendingGlobalChoiceNames, cancellationToken);
 
         return new TableImportPreview(entity.LogicalName, existingYaml, newYaml, tableUpdateBody, attributePlans);
     }
@@ -34,6 +37,8 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
 
     public async Task ApplyAsync(Uri environmentUrl, string accessToken, TableImportPreview preview, bool useTransaction, string? solutionUniqueName, CancellationToken cancellationToken)
     {
+        preview = await ResolvePendingChoicesAsync(environmentUrl, accessToken, preview, cancellationToken);
+
         if (useTransaction)
         {
             var writes = BuildWrites(preview, solutionUniqueName);
@@ -191,7 +196,7 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
         return entityMetadata;
     }
 
-    private async Task<IReadOnlyList<AttributeImportPlan>> BuildAttributePlansAsync(Uri environmentUrl, string accessToken, EntityDefinition local, EntityDefinition existing, CancellationToken cancellationToken)
+    private async Task<IReadOnlyList<AttributeImportPlan>> BuildAttributePlansAsync(Uri environmentUrl, string accessToken, EntityDefinition local, EntityDefinition existing, IReadOnlySet<string> pendingGlobalChoiceNames, CancellationToken cancellationToken)
     {
         var plans = new List<AttributeImportPlan>();
         var existingByName = existing.Attributes.ToDictionary(a => a.Name);
@@ -246,7 +251,7 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
                     continue;
                 }
 
-                plans.Add(await BuildCreatePlanAsync(environmentUrl, accessToken, local.LogicalName, localAttribute, cancellationToken));
+                plans.Add(await BuildCreatePlanAsync(environmentUrl, accessToken, local.LogicalName, localAttribute, pendingGlobalChoiceNames, cancellationToken));
                 continue;
             }
 
@@ -367,7 +372,7 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
     /// <c>globalOptionSetMetadataId</c> for why a Name-based bind doesn't
     /// work here.
     /// </summary>
-    private async Task<AttributeImportPlan> BuildCreatePlanAsync(Uri environmentUrl, string accessToken, string entityLogicalName, AttributeDefinition local, CancellationToken cancellationToken)
+    private async Task<AttributeImportPlan> BuildCreatePlanAsync(Uri environmentUrl, string accessToken, string entityLogicalName, AttributeDefinition local, IReadOnlySet<string> pendingGlobalChoiceNames, CancellationToken cancellationToken)
     {
         if (local.Type is "Owner" or "State" or "Status")
         {
@@ -416,16 +421,30 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
         // genuine, surfaced error rather than something left for Dataverse's
         // own opaque bind failure to explain.
         Guid? globalOptionSetMetadataId = null;
+        string? pendingGlobalChoiceName = null;
         if (local.Type is "Picklist" or "MultiSelectPicklist" && local.GlobalOptionSetName is not null)
         {
             var globalChoiceJson = await dataverseClient.TryGetGlobalOptionSetJsonAsync(environmentUrl, accessToken, local.GlobalOptionSetName, cancellationToken);
-            if (globalChoiceJson is null)
+            if (globalChoiceJson is not null)
+            {
+                globalOptionSetMetadataId = JsonNode.Parse(globalChoiceJson)!["MetadataId"]!.GetValue<Guid>();
+            }
+            else if (pendingGlobalChoiceNames.Contains(local.GlobalOptionSetName))
+            {
+                // `solution import` previews everything before applying
+                // anything, so a choice that choices.yml will create in this
+                // same run isn't live yet. The bind needs its MetadataId,
+                // which only exists once it has been created, so a
+                // placeholder goes in the body now and ApplyAsync swaps in
+                // the real id (see ResolvePendingChoicesAsync).
+                globalOptionSetMetadataId = Guid.Empty;
+                pendingGlobalChoiceName = local.GlobalOptionSetName;
+            }
+            else
             {
                 return new AttributeImportPlan(local.Name, AttributeImportAction.Invalid,
                     $"Global choice '{local.GlobalOptionSetName}' doesn't exist — create it first via `choice import`.", null);
             }
-
-            globalOptionSetMetadataId = JsonNode.Parse(globalChoiceJson)!["MetadataId"]!.GetValue<Guid>();
         }
 
         JsonObject body;
@@ -442,7 +461,42 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
             return new AttributeImportPlan(local.Name, AttributeImportAction.Invalid, ex.Message, null);
         }
 
-        return new AttributeImportPlan(local.Name, AttributeImportAction.Create, null, body, AutoNumberSeed: local.AutoNumberSeed);
+        return new AttributeImportPlan(local.Name, AttributeImportAction.Create, null, body, AutoNumberSeed: local.AutoNumberSeed) { PendingGlobalChoiceName = pendingGlobalChoiceName };
+    }
+
+    /// <summary>
+    /// Swaps the placeholder id in each plan that binds to a global choice
+    /// created earlier in the same <c>solution import</c> run for that
+    /// choice's real MetadataId. A no-op (the same preview back) for every
+    /// ordinary import. Fails loudly, rather than sending a bind to an empty
+    /// id, if the choice still doesn't exist (e.g. its own import failed).
+    /// </summary>
+    private async Task<TableImportPreview> ResolvePendingChoicesAsync(Uri environmentUrl, string accessToken, TableImportPreview preview, CancellationToken cancellationToken)
+    {
+        if (preview.AttributePlans.All(p => p.PendingGlobalChoiceName is null))
+        {
+            return preview;
+        }
+
+        var resolved = new List<AttributeImportPlan>();
+        foreach (var plan in preview.AttributePlans)
+        {
+            if (plan.PendingGlobalChoiceName is not { } choiceName)
+            {
+                resolved.Add(plan);
+                continue;
+            }
+
+            var json = await dataverseClient.TryGetGlobalOptionSetJsonAsync(environmentUrl, accessToken, choiceName, cancellationToken)
+                ?? throw new InvalidOperationException($"Column '{plan.LogicalName}' uses the global choice '{choiceName}', which still doesn't exist — it was meant to be created by this run's choices.yml, so check whether that import failed.");
+            var id = JsonNode.Parse(json)!["MetadataId"]!.GetValue<Guid>();
+
+            var body = (JsonObject)plan.RequestBody!.DeepClone();
+            body["GlobalOptionSet@odata.bind"] = $"/GlobalOptionSetDefinitions({id:D})";
+            resolved.Add(plan with { RequestBody = body, PendingGlobalChoiceName = null });
+        }
+
+        return preview with { AttributePlans = resolved };
     }
 
     private async Task<AttributeImportPlan> BuildUpdatePlanAsync(Uri environmentUrl, string accessToken, string entityLogicalName, AttributeDefinition local, AttributeDefinition existing, CancellationToken cancellationToken)

@@ -12,7 +12,7 @@ using Spectre.Console.Cli;
 namespace D365Architect.Commands.Solution;
 
 /// <summary>
-/// `d365architect solution import --input ./examplesolution --solution examplesolution [--yes] [--whatif] [--no-transaction] [--allow-schema-violations] [--no-publish]`
+/// `d365architect solution import --input ./examplesolution --solution examplesolution [--table account] [--yes] [--whatif] [--verbose] [--no-transaction] [--allow-schema-violations] [--no-publish]`
 /// Walks a folder previously written by <c>solution export</c> — a
 /// <c>choices.yml</c> at its root, plus one sub-folder per table holding
 /// that table's own <c>*.table.yml</c>/<c>*.view.yml</c>/<c>*.form.yml</c>
@@ -22,46 +22,51 @@ namespace D365Architect.Commands.Solution;
 /// don't exist live yet are listed, and after one "Create these N tables?"
 /// they're all created (primary name column only) in one Dataverse
 /// transaction — see <see cref="StepRunner.CreateTablesAsync"/>. Then
-/// everything is imported in the same order
-/// `solution export` would have written it (choices first, then each table
-/// folder's own table, then its views, then its forms). Each of those
-/// previews reads live state afresh, so it sees the tables just created.
+/// everything is previewed in the same order `solution export` would have
+/// written it (choices first, then each table folder's own table, then its
+/// views, then its forms). Each of those previews reads live state afresh,
+/// so it sees the tables just created.
 ///
-/// Deliberately doesn't invent a new bulk-import mechanism: each file is run
-/// through the exact same <c>RunAsync</c> entry point `choice import`/`table
-/// import`/`view import`/`form import` already expose (pulled out of each
-/// command's own <c>ExecuteAsync</c> specifically for this), so every asset
-/// still gets its own preview → diff → confirm → apply flow, its own column/
-/// choice plan, and its own schema-violation gate — nothing here bypasses
-/// any of that per-asset safety. <c>--yes</c>/<c>--whatif</c>/
-/// <c>--no-transaction</c>/<c>--allow-schema-violations</c>/<c>--no-publish</c> are forwarded to
-/// every file they apply to, so `--yes` runs the whole solution unattended
-/// the same way it does for a single asset today. <c>--solution</c> is
-/// required (not optional the way it is on the individual `table create`/
-/// `table import`/`choice import` commands) and is likewise forwarded to
-/// every table create/import and choice import, so any brand-new table/
-/// column/lookup relationship/global choice
-/// this run creates actually joins the solution it came from — see
-/// <see cref="Services.Dataverse.IDataverseClient.CreateAttributeAsync"/>'s
-/// own doc comment for the gap this closes; without it, a new asset would
-/// exist live but silently not show up in a later `solution export` of the
-/// same solution.
+/// The diffs of the files that changed are printed, then it asks once
+/// ("Import N changes?") and applies them all, in that same order; see
+/// <see cref="SolutionImportFlow"/>. Unchanged files print nothing unless
+/// <c>--verbose</c>. The run ends with "N changed, M unchanged, K failed".
+/// So a run that creates tables asks twice: once to create them (their
+/// columns, views and forms can't be previewed until they exist), once for
+/// everything else.
+///
+/// Deliberately doesn't invent a new bulk-import mechanism: each file goes
+/// through the same preview as `choice import`/`table import`/`view
+/// import`/`form import` (<c>PreviewAsync</c>, the first half of each
+/// command's <c>RunAsync</c>), so every asset still gets its own diff,
+/// column/choice plan and safety gate (e.g. the form schema-violation
+/// gate); only the prompt is shared. Applying a change publishes it as its
+/// own import command would, unless <c>--no-publish</c>. <c>--yes</c> skips
+/// both prompts; <c>--whatif</c> prints the diffs and never prompts or
+/// writes. <c>--solution</c> is required (not optional the way it is on the
+/// individual `table create`/`table import`/`choice import` commands) and is
+/// forwarded to every table create/import, choice import, view import and
+/// form import, so any brand-new table/column/lookup relationship/global
+/// choice this run creates, and any view or form it creates or changes,
+/// actually joins the solution it came from — see
+/// <see cref="Services.Dataverse.IDataverseClient.CreateAttributeAsync"/>.
+///
+/// <c>--table</c> (repeatable) limits the run to those tables' files
+/// (folder names matched case-insensitively; a name with no folder is an
+/// error) and skips <c>choices.yml</c>.
 ///
 /// A table that can't be created stops the whole run: the transaction is
 /// rolled back so none is created, no later stage runs, and the table
 /// Dataverse reported is named — see <see cref="SolutionImportOrchestrator"/>
-/// for why. Declining the create prompt stops the run the same way. Under <c>--whatif</c> a table that
-/// would be created is reported as such, and its own table import, views
-/// and forms are skipped (there's nothing live to preview them against)
-/// rather than counted as failures. Past the create stage,
-/// one file failing (a validation error, a Dataverse rejection, a missing
-/// live counterpart) doesn't stop the rest — this keeps going through every
-/// remaining file so one bad form doesn't block importing everything else,
-/// then reports how many succeeded/failed at the end and exits non-zero if
-/// anything did. There's no cross-file rollback: each asset's own write is
-/// already atomic on its own terms (`table import`'s changeset, in
-/// particular), but nothing ties multiple files' writes together into one
-/// larger transaction.
+/// for why. Declining the create prompt stops the run the same way. Under
+/// <c>--whatif</c> a table that would be created is reported as such, and
+/// its own table import, views and forms are skipped (there's nothing live
+/// to preview them against) rather than counted as failures. Past the
+/// create stage, one file failing (a validation error, a Dataverse
+/// rejection, a missing live counterpart) doesn't stop the rest: it's
+/// reported, never applied, and the remaining changes are still offered and
+/// applied. The exit code is non-zero if anything failed. There's no
+/// cross-file rollback.
 /// </summary>
 public sealed class ImportSolutionCommand(
     ITableCreateService tableCreateService,
@@ -81,13 +86,21 @@ public sealed class ImportSolutionCommand(
         [Description("Unique name of the solution these files came from. Forwarded to every table/choice/view/form import so any brand-new column/lookup relationship/global choice this run creates, and any view or form it creates or changes, actually joins the solution, rather than silently landing outside it.")]
         public required string Solution { get; init; }
 
+        [CommandOption("-t|--table <LOGICAL_NAME>")]
+        [Description("Limit the import to this table's table/view/form files (folder name, case-insensitive). Repeat for several. Global choices are skipped. Errors if a name matches no table folder.")]
+        public string[] Tables { get; init; } = [];
+
         [CommandOption("-y|--yes")]
-        [Description("Skip the confirmation prompt for every asset and import immediately.")]
+        [Description("Skip the confirmation prompts and create/import every changed asset immediately.")]
         public bool Yes { get; init; }
 
         [CommandOption("--whatif")]
-        [Description("Only show each asset's diff/plan — never prompt and never write anything to Dataverse.")]
+        [Description("Only show each changed asset's diff/plan — never prompt and never write anything to Dataverse.")]
         public bool WhatIf { get; init; }
+
+        [CommandOption("--verbose")]
+        [Description("Also print a 'No changes' line for every asset that already matches what's live. Unchanged assets are silent by default.")]
+        public bool Verbose { get; init; }
 
         [CommandOption("--no-transaction")]
         [Description("For every table import: send column create/update one request at a time instead of as a single atomic Dataverse changeset.")]
@@ -114,7 +127,23 @@ public sealed class ImportSolutionCommand(
             return 1;
         }
 
-        var result = await new SolutionImportOrchestrator().RunAsync(settings.Input, new StepRunner(this, settings), cancellationToken);
+        var limitedToTables = settings.Tables.Length > 0;
+        IReadOnlyList<string>? onlyTables = null;
+        if (limitedToTables)
+        {
+            try
+            {
+                onlyTables = SolutionTableFilter.Select(Directory.GetDirectories(settings.Input).Select(Path.GetFileName)!, settings.Tables, $"under '{settings.Input}'");
+            }
+            catch (UnknownTableException ex)
+            {
+                ErrorConsole.Print($"{ex.Message}");
+                return 1;
+            }
+        }
+
+        var runner = new StepRunner(this, settings);
+        var result = await new SolutionImportOrchestrator().RunAsync(settings.Input, runner, onlyTables, cancellationToken);
 
         if (result.StopWasDeclined)
         {
@@ -128,35 +157,39 @@ public sealed class ImportSolutionCommand(
             return 1;
         }
 
-        if (result.Succeeded == 0 && result.Failed == 0)
+        if (result.Succeeded == 0 && result.Failed == 0 && result.Skipped == 0)
         {
-            ErrorConsole.Warn($"No choices.yml or table sub-folders found under '{settings.Input}' — nothing to import.");
+            if (limitedToTables)
+            {
+                ErrorConsole.Warn($"The selected table folder(s) under '{settings.Input}' contain no *.table.yml, *.view.yml or *.form.yml files — nothing to import.");
+            }
+            else
+            {
+                ErrorConsole.Warn($"No choices.yml, or table sub-folders containing *.table.yml/*.view.yml/*.form.yml files, found under '{settings.Input}' — nothing to import.");
+            }
+
             return 0;
         }
 
-        AnsiConsole.MarkupLine(result.Failed == 0
-            ? $"[green]Done.[/] {result.Succeeded} asset(s) processed{(result.Skipped > 0 ? $", {result.Skipped} skipped" : "")}."
-            : $"[yellow]Done with errors.[/] {result.Succeeded} succeeded, {result.Failed} failed — see above.");
-
-        return result.Failed == 0 ? 0 : 1;
+        return await runner.ConfirmAndApplyAsync(cancellationToken);
     }
 
     /// <summary>
-    /// Runs one import stage for one file through that asset's own command, with
+    /// Previews one import stage for one file through that asset's own command, with
     /// this command's options forwarded to every one they apply to. Kept as
     /// the single place a stage maps to a command so the orchestrator (the
     /// ordering) and the per-asset commands (the safety) stay separate.
     /// </summary>
-    private Task<int> RunImportStepAsync(Settings settings, SolutionImportStage stage, string assetPath, CancellationToken cancellationToken) => stage switch
+    private Task<PreparedImport> PreviewStepAsync(Settings settings, SolutionImportStage stage, string assetPath, bool printUnchanged, IReadOnlySet<string> pendingChoiceNames, CancellationToken cancellationToken) => stage switch
     {
-        SolutionImportStage.ImportChoices => new ImportChoiceCommand(globalChoiceImportService, importRunner).RunAsync(
-            new ImportChoiceCommand.Settings { Input = assetPath, Yes = settings.Yes, WhatIf = settings.WhatIf, NoPublish = settings.NoPublish, Solution = settings.Solution }, cancellationToken),
-        SolutionImportStage.ImportTable => new ImportTableCommand(tableImportService, importRunner).RunAsync(
-            new ImportTableCommand.Settings { Input = assetPath, Yes = settings.Yes, WhatIf = settings.WhatIf, NoPublish = settings.NoPublish, NoTransaction = settings.NoTransaction, Solution = settings.Solution }, cancellationToken),
-        SolutionImportStage.ImportView => new ImportViewCommand(viewImportService, importRunner).RunAsync(
-            new ImportViewCommand.Settings { Input = assetPath, Yes = settings.Yes, WhatIf = settings.WhatIf, NoPublish = settings.NoPublish, Solution = settings.Solution }, cancellationToken),
-        SolutionImportStage.ImportForm => new ImportFormCommand(formImportService, importRunner).RunAsync(
-            new ImportFormCommand.Settings { Input = assetPath, Yes = settings.Yes, WhatIf = settings.WhatIf, NoPublish = settings.NoPublish, Solution = settings.Solution, AllowSchemaViolations = settings.AllowSchemaViolations }, cancellationToken),
+        SolutionImportStage.ImportChoices => new ImportChoiceCommand(globalChoiceImportService, importRunner).PreviewAsync(
+            new ImportChoiceCommand.Settings { Input = assetPath, Yes = settings.Yes, WhatIf = settings.WhatIf, NoPublish = settings.NoPublish, Solution = settings.Solution }, printUnchanged, cancellationToken),
+        SolutionImportStage.ImportTable => new ImportTableCommand(tableImportService, importRunner).PreviewAsync(
+            new ImportTableCommand.Settings { Input = assetPath, Yes = settings.Yes, WhatIf = settings.WhatIf, NoPublish = settings.NoPublish, NoTransaction = settings.NoTransaction, Solution = settings.Solution }, printUnchanged, pendingChoiceNames, cancellationToken),
+        SolutionImportStage.ImportView => new ImportViewCommand(viewImportService, importRunner).PreviewAsync(
+            new ImportViewCommand.Settings { Input = assetPath, Yes = settings.Yes, WhatIf = settings.WhatIf, NoPublish = settings.NoPublish, Solution = settings.Solution }, printUnchanged, cancellationToken),
+        SolutionImportStage.ImportForm => new ImportFormCommand(formImportService, importRunner).PreviewAsync(
+            new ImportFormCommand.Settings { Input = assetPath, Yes = settings.Yes, WhatIf = settings.WhatIf, NoPublish = settings.NoPublish, Solution = settings.Solution, AllowSchemaViolations = settings.AllowSchemaViolations }, printUnchanged, cancellationToken),
         _ => throw new ArgumentOutOfRangeException(nameof(stage), stage, null),
     };
 
@@ -203,8 +236,12 @@ public sealed class ImportSolutionCommand(
         var toCreate = previews.Where(p => !p.Preview.AlreadyExists).ToList();
         if (toCreate.Count == 0)
         {
-            AnsiConsole.MarkupLine("[green]No tables to create[/] — every table already exists.");
-            AnsiConsole.WriteLine();
+            if (settings.Verbose)
+            {
+                AnsiConsole.MarkupLine("[green]No tables to create[/] — every table already exists.");
+                AnsiConsole.WriteLine();
+            }
+
             return new SolutionTableCreateResult(SolutionImportStepOutcome.Succeeded, []);
         }
 
@@ -257,44 +294,79 @@ public sealed class ImportSolutionCommand(
         static SolutionTableCreateResult Failed(string path) => new(SolutionImportStepOutcome.Failed, [], path);
     }
 
-    /// <summary>The production <see cref="ISolutionImportStepRunner"/>: <see cref="RunImportStepAsync"/> behind <see cref="TryRunAsync"/> and <see cref="CreateTablesAsync"/>, plus the blank line between assets this command always printed. Internal so tests can check the wiring.</summary>
-    internal sealed class StepRunner(ImportSolutionCommand command, Settings settings) : ISolutionImportStepRunner
+    /// <summary>
+    /// The production <see cref="ISolutionImportStepRunner"/>. <see cref="RunAsync"/> only previews (via
+    /// <see cref="PreviewStepAsync"/> and <see cref="SolutionImportFlow.PreviewAsync"/>), holding every change;
+    /// <see cref="ConfirmAndApplyAsync"/>, called once the orchestrator has finished, asks once and applies them.
+    /// Internal so tests can check the wiring.
+    /// </summary>
+    internal sealed class StepRunner : ISolutionImportStepRunner
     {
+        private readonly ImportSolutionCommand _command;
+        private readonly Settings _settings;
+        private readonly SolutionImportFlow _flow;
+        private readonly IReadOnlySet<string> _pendingChoiceNames;
+
+        public StepRunner(ImportSolutionCommand command, Settings settings)
+        {
+            _command = command;
+            _settings = settings;
+            _flow = new SolutionImportFlow(settings.Verbose);
+            _pendingChoiceNames = ReadPendingChoiceNames(settings);
+        }
+
         public async Task<SolutionImportStepOutcome> RunAsync(SolutionImportStage stage, string assetPath, CancellationToken cancellationToken)
         {
-            var outcome = await TryRunAsync(assetPath, async () =>
-                await command.RunImportStepAsync(settings, stage, assetPath, cancellationToken) == 0 ? SolutionImportStepOutcome.Succeeded : SolutionImportStepOutcome.Failed);
-            AnsiConsole.WriteLine();
-            return outcome;
+            var item = new SolutionImportItem(assetPath, (printUnchanged, ct) =>
+                _command.PreviewStepAsync(_settings, stage, assetPath, printUnchanged, _pendingChoiceNames, ct));
+            return await _flow.PreviewAsync(item, cancellationToken) == ImportOutcome.Failed
+                ? SolutionImportStepOutcome.Failed
+                : SolutionImportStepOutcome.Succeeded;
         }
+
+        /// <summary>Asks once (unless <c>--yes</c>; never under <c>--whatif</c>) and applies every change <see cref="RunAsync"/> previewed. Returns the exit code.</summary>
+        public Task<int> ConfirmAndApplyAsync(CancellationToken cancellationToken) =>
+            _flow.ConfirmAndApplyAsync(_settings.Yes, _settings.WhatIf, confirm: null, cancellationToken);
 
         public Task<SolutionTableCreateResult> CreateTablesAsync(IReadOnlyList<string> tableAssetPaths, CancellationToken cancellationToken) =>
-            command.CreateTablesAsync(settings, tableAssetPaths, cancellationToken);
+            _command.CreateTablesAsync(_settings, tableAssetPaths, cancellationToken);
 
-        public void ReportSkipped(SolutionImportStage stage, string assetPath, string tableLogicalName) =>
+        public void ReportSkipped(SolutionImportStage stage, string assetPath, string tableLogicalName)
+        {
             AnsiConsole.MarkupLine($"[grey]'{assetPath.EscapeMarkup()}' skipped: '{tableLogicalName.EscapeMarkup()}' doesn't exist yet and would be created first.[/]");
-    }
-
-    /// <summary>
-    /// Runs one file's import, catching anything it throws so one bad file
-    /// genuinely can't stop the rest — the resilience this class's own doc
-    /// comment already claimed, but that nothing here actually enforced
-    /// until now: <see cref="ImportRunner.RunAsync{TSettings,TInput,TPreview}"/>
-    /// only ever translates a small, per-command allowlist of exception
-    /// types into a clean exit code (e.g. table/choice import only recognize
-    /// <see cref="InvalidDataException"/>) — anything else used to propagate
-    /// straight out of this whole command, aborting every remaining file.
-    /// </summary>
-    private static async Task<SolutionImportStepOutcome> TryRunAsync(string assetPath, Func<Task<SolutionImportStepOutcome>> run)
-    {
-        try
-        {
-            return await run();
+            _flow.CountSkipped();
         }
-        catch (Exception ex)
+
+        /// <summary>
+        /// Previews all run before anything is applied, so a column bound to a
+        /// global choice that choices.yml creates in this same run can't see
+        /// that choice live yet. Every table preview gets the names in
+        /// choices.yml so it plans the column as a create; the apply order
+        /// (choices first) makes that true by the time the table is written.
+        /// Empty under <c>--table</c>, which skips choices.yml.
+        /// </summary>
+        private static IReadOnlySet<string> ReadPendingChoiceNames(Settings settings)
         {
-            ErrorConsole.Print($"'{assetPath}' failed: {ex.Message}");
-            return SolutionImportStepOutcome.Failed;
+            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var choicesPath = Path.Combine(settings.Input, "choices.yml");
+            if (settings.Tables.Length > 0 || !File.Exists(choicesPath))
+            {
+                return names;
+            }
+
+            try
+            {
+                foreach (var choice in GlobalChoiceYamlDeserializer.FromYaml(File.ReadAllText(choicesPath)))
+                {
+                    names.Add(choice.Name);
+                }
+            }
+            catch (YamlDotNet.Core.YamlException)
+            {
+                // The choices step reports the unparseable file itself.
+            }
+
+            return names;
         }
     }
 }

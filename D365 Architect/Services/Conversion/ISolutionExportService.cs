@@ -21,7 +21,9 @@ public interface ISolutionExportService
     /// <param name="cancellationToken"></param>
     /// <exception cref="InvalidDataException">Dataverse returned metadata this tool doesn't understand yet.</exception>
     /// <exception cref="Dataverse.SolutionNotFoundException"><paramref name="solutionUniqueName"/> doesn't match any solution in the environment.</exception>
-    Task<SolutionExportResult> ExportSolutionAsync(Uri environmentUrl, string accessToken, string solutionUniqueName, CancellationToken cancellationToken);
+    /// <param name="tables">When non-null and non-empty, limits the export to these tables (logical names, matched case-insensitively) and skips global choices entirely (<see cref="SolutionExportResult.ChoicesYaml"/> is null). Null or empty means no filter: the whole solution is exported.</param>
+    /// <exception cref="UnknownTableException">A name in <paramref name="tables"/> matches no table in the solution.</exception>
+    Task<SolutionExportResult> ExportSolutionAsync(Uri environmentUrl, string accessToken, string solutionUniqueName, CancellationToken cancellationToken, IReadOnlyCollection<string>? tables = null);
 }
 
 /// <param name="EntityLogicalName">The table's logical name — also the sub-folder it's exported under.</param>

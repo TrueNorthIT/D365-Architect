@@ -68,10 +68,18 @@ public sealed class ImportSolutionCommandViewFormCreateTests : IDisposable
     private static ImportSolutionCommand.StepRunner CreateRunner(FakeDataverseClient client, bool noPublish = false) =>
         new(CreateCommand(client), new ImportSolutionCommand.Settings { Input = "unused", Solution = Solution, Yes = true, NoPublish = noPublish });
 
+    /// <summary>Previews one stage, then applies it as <c>solution import</c> does once every stage has been previewed.</summary>
+    private static async Task<SolutionImportStepOutcome> RunAndApply(ImportSolutionCommand.StepRunner runner, SolutionImportStage stage, string path)
+    {
+        var outcome = await runner.RunAsync(stage, path, CancellationToken.None);
+        await runner.ConfirmAndApplyAsync(CancellationToken.None);
+        return outcome;
+    }
+
     // ---- the view stage creates, in the solution, without prompting ----
 
     // "Stories' folders with hand-written views ... import in one run" - the view stage creates a view that matches nothing.
-    // Code path: ImportSolutionCommand.RunImportStepAsync(ImportView) -> ImportViewCommand.RunAsync with Solution forwarded.
+    // Code path: ImportSolutionCommand.PreviewStepAsync(ImportView) -> ImportViewCommand.PreviewAsync with Solution forwarded, applied by StepRunner.ConfirmAndApplyAsync.
     [Fact]
     public async Task ImportViewStage_NewView_CreatesItInTheSolutionWithoutPrompting()
     {
@@ -79,7 +87,7 @@ public sealed class ImportSolutionCommandViewFormCreateTests : IDisposable
         WriteView();
         var client = ClientWithProject();
 
-        var outcome = await CreateRunner(client).RunAsync(SolutionImportStage.ImportView, ViewPath, CancellationToken.None);
+        var outcome = await RunAndApply(CreateRunner(client), SolutionImportStage.ImportView, ViewPath);
 
         Expect.Equal(SolutionImportStepOutcome.Succeeded, outcome, $"the view stage should succeed for a new view. Output: <{console.Output}>");
         var call = Assert.Single(client.CreateSavedQueryCalls);
@@ -96,7 +104,7 @@ public sealed class ImportSolutionCommandViewFormCreateTests : IDisposable
         var client = ClientWithProject();
         client.SavedQuery = new ExistingSavedQuery(Guid.NewGuid(), null, "<fetch>old</fetch>", null);
 
-        var outcome = await CreateRunner(client).RunAsync(SolutionImportStage.ImportView, ViewPath, CancellationToken.None);
+        var outcome = await RunAndApply(CreateRunner(client), SolutionImportStage.ImportView, ViewPath);
 
         Expect.Equal(SolutionImportStepOutcome.Succeeded, outcome, $"The view stage should succeed for an existing view. Output: <{console.Output}>");
         Expect.Equal(Solution, Assert.Single(client.UpdateSavedQueryCalls).SolutionUniqueName, "solution import's --solution should reach the view update.");
@@ -111,7 +119,7 @@ public sealed class ImportSolutionCommandViewFormCreateTests : IDisposable
         WriteForm();
         var client = ClientWithProject();
 
-        var outcome = await CreateRunner(client).RunAsync(SolutionImportStage.ImportForm, FormPath, CancellationToken.None);
+        var outcome = await RunAndApply(CreateRunner(client), SolutionImportStage.ImportForm, FormPath);
 
         Expect.Equal(SolutionImportStepOutcome.Succeeded, outcome, $"the form stage should succeed for a new form. Output: <{console.Output}>");
         Expect.Equal(Solution, Assert.Single(client.CreateSystemFormCalls).SolutionUniqueName, "solution import's --solution should reach the form create.");
@@ -133,9 +141,11 @@ public sealed class ImportSolutionCommandViewFormCreateTests : IDisposable
         WriteForm();
         var client = new FakeDataverseClient();
         client.EntityExists = _ => client.CreateEntityCalls.Count > 0;
-        var runner = new TableThenViewAndFormRunner(CreateRunner(client), client);
+        var inner = CreateRunner(client);
+        var runner = new TableThenViewAndFormRunner(inner, client);
 
         var result = await new SolutionImportOrchestrator().RunAsync(_root, runner, CancellationToken.None);
+        await inner.ConfirmAndApplyAsync(CancellationToken.None);
 
         Expect.Equal(0, result.Failed, $"nothing in the run should fail. Output: <{console.Output}>");
         Expect.Sequence(["create-table:tn_Project", "create-view:All projects", "create-form:Project"], client.WriteOrder, $"the table should be created first, then its view, then its form. Output: <{console.Output}>");
@@ -156,9 +166,11 @@ public sealed class ImportSolutionCommandViewFormCreateTests : IDisposable
         WriteForm();
         var client = new FakeDataverseClient();
         client.EntityExists = _ => client.CreateEntityCalls.Count > 0;
-        var runner = new TableThenViewAndFormRunner(CreateRunner(client, noPublish: true), client);
+        var inner = CreateRunner(client, noPublish: true);
+        var runner = new TableThenViewAndFormRunner(inner, client);
 
         var result = await new SolutionImportOrchestrator().RunAsync(_root, runner, CancellationToken.None);
+        await inner.ConfirmAndApplyAsync(CancellationToken.None);
 
         Expect.Equal(0, result.Failed, $"nothing in the run should fail. Output: <{console.Output}>");
         Expect.Sequence(["create-table:tn_Project", "create-view:All projects", "create-form:Project"], client.WriteOrder, $"--no-publish must not stop the table, view and form being created. Output: <{console.Output}>");

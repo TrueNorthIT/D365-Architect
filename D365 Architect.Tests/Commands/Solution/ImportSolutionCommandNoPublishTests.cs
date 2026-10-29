@@ -56,7 +56,7 @@ public sealed class ImportSolutionCommandNoPublishTests : IDisposable
         return path;
     }
 
-    // Code path: StepRunner.RunImportStepAsync(ImportView) -> ImportViewCommand.Settings with NoPublish forwarded.
+    // Code path: StepRunner -> ImportSolutionCommand.PreviewStepAsync(ImportView) -> ImportViewCommand.Settings with NoPublish forwarded.
     [Theory]
     [Trait("Feature", "publish-by-default")]
     [InlineData(true)]
@@ -72,7 +72,9 @@ public sealed class ImportSolutionCommandNoPublishTests : IDisposable
         var client = new FakeDataverseClient();
         client.EntityIdentities["tn_project"] = ProjectIdentity;
 
-        var outcome = await CreateRunner(client, noPublish).RunAsync(SolutionImportStage.ImportView, path, CancellationToken.None);
+        var runner = CreateRunner(client, noPublish);
+        var outcome = await runner.RunAsync(SolutionImportStage.ImportView, path, CancellationToken.None);
+        await runner.ConfirmAndApplyAsync(CancellationToken.None);
 
         Expect.Equal(SolutionImportStepOutcome.Succeeded, outcome, $"the view stage should succeed. Output: <{console.Output}>");
         Expect.Equal(1, client.CreateSavedQueryCalls.Count, "the view should still be created whether or not publishing is switched off.");
@@ -86,7 +88,7 @@ public sealed class ImportSolutionCommandNoPublishTests : IDisposable
         }
     }
 
-    // Code path: StepRunner.RunImportStepAsync(ImportForm) -> ImportFormCommand.Settings with NoPublish forwarded (form import always published before).
+    // Code path: StepRunner -> ImportSolutionCommand.PreviewStepAsync(ImportForm) -> ImportFormCommand.Settings with NoPublish forwarded (form import always published before).
     [Theory]
     [Trait("Feature", "publish-by-default")]
     [InlineData(true)]
@@ -98,7 +100,9 @@ public sealed class ImportSolutionCommandNoPublishTests : IDisposable
         var client = new FakeDataverseClient();
         client.EntityIdentities["tn_project"] = ProjectIdentity;
 
-        var outcome = await CreateRunner(client, noPublish).RunAsync(SolutionImportStage.ImportForm, path, CancellationToken.None);
+        var runner = CreateRunner(client, noPublish);
+        var outcome = await runner.RunAsync(SolutionImportStage.ImportForm, path, CancellationToken.None);
+        await runner.ConfirmAndApplyAsync(CancellationToken.None);
 
         Expect.Equal(SolutionImportStepOutcome.Succeeded, outcome, $"the form stage should succeed. Output: <{console.Output}>");
         Expect.Equal(1, client.CreateSystemFormCalls.Count, "the form should still be created whether or not publishing is switched off.");
@@ -112,7 +116,7 @@ public sealed class ImportSolutionCommandNoPublishTests : IDisposable
         }
     }
 
-    // Code path: StepRunner.RunImportStepAsync(ImportTable) -> ImportTableCommand.Settings with NoPublish forwarded.
+    // Code path: StepRunner -> ImportSolutionCommand.PreviewStepAsync(ImportTable) -> ImportTableCommand.Settings with NoPublish forwarded.
     [Theory]
     [Trait("Feature", "publish-by-default")]
     [InlineData(true)]
@@ -128,7 +132,9 @@ public sealed class ImportSolutionCommandNoPublishTests : IDisposable
         var path = Write("tn_test.table.yml", EntityYamlSerializer.ToYaml(new EntityDefinition { LogicalName = "tn_test", Attributes = [column] }));
         var client = new FakeDataverseClient { EntityDefinitionJson = Entity(), EntityMetadataJson = "{}" }; // live table lacks the column: the import adds it
 
-        var outcome = await CreateRunner(client, noPublish).RunAsync(SolutionImportStage.ImportTable, path, CancellationToken.None);
+        var runner = CreateRunner(client, noPublish);
+        var outcome = await runner.RunAsync(SolutionImportStage.ImportTable, path, CancellationToken.None);
+        await runner.ConfirmAndApplyAsync(CancellationToken.None);
 
         Expect.Equal(SolutionImportStepOutcome.Succeeded, outcome, $"the table stage should succeed. Output: <{console.Output}>");
         Expect.Equal(1, client.CreateAttributeCalls.Count, "the new column should still be created whether or not publishing is switched off.");
@@ -142,7 +148,7 @@ public sealed class ImportSolutionCommandNoPublishTests : IDisposable
         }
     }
 
-    // Code path: StepRunner.RunImportStepAsync(ImportChoices) -> ImportChoiceCommand.Settings with NoPublish forwarded.
+    // Code path: StepRunner -> ImportSolutionCommand.PreviewStepAsync(ImportChoices) -> ImportChoiceCommand.Settings with NoPublish forwarded.
     [Theory]
     [Trait("Feature", "publish-by-default")]
     [InlineData(true)]
@@ -154,7 +160,9 @@ public sealed class ImportSolutionCommandNoPublishTests : IDisposable
         var path = Write("choices.yml", GlobalChoiceYamlSerializer.ToYaml([choice]));
         var client = new FakeDataverseClient { GlobalOptionSetJsonByName = _ => null }; // not live: the import creates it
 
-        var outcome = await CreateRunner(client, noPublish).RunAsync(SolutionImportStage.ImportChoices, path, CancellationToken.None);
+        var runner = CreateRunner(client, noPublish);
+        var outcome = await runner.RunAsync(SolutionImportStage.ImportChoices, path, CancellationToken.None);
+        await runner.ConfirmAndApplyAsync(CancellationToken.None);
 
         Expect.Equal(SolutionImportStepOutcome.Succeeded, outcome, $"the choices stage should succeed. Output: <{console.Output}>");
         Expect.Equal(1, client.CreateGlobalOptionSetCalls.Count, "the choice should still be created whether or not publishing is switched off.");

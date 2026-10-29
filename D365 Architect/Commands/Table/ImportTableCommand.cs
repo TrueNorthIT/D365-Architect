@@ -84,12 +84,11 @@ public sealed class ImportTableCommand(ITableImportService tableImportService, I
         RunAsync(settings, cancellationToken);
 
     /// <summary>
-    /// The command's own logic, independent of Spectre's <see cref="CommandContext"/> —
-    /// pulled out of <see cref="ExecuteAsync"/> so <c>solution import</c> can
-    /// run this exact same preview → diff → confirm → apply flow for every
-    /// <c>*.table.yml</c> it finds, without duplicating any of it.
+    /// Builds this command's <see cref="ImportFlowSpec{TSettings,TInput,TPreview}"/>: the parts of the shared
+    /// preview → diff → confirm → apply flow that differ for this asset type. Shared by
+    /// <see cref="RunAsync"/> and <see cref="PreviewAsync(Settings, bool, CancellationToken)"/> (used by <c>solution import</c>).
     /// </summary>
-    public async Task<int> RunAsync(Settings settings, CancellationToken cancellationToken)
+    private ImportFlowSpec<Settings, EntityDefinition, TableImportPreview> BuildSpec(Settings settings)
     {
         var spec = new ImportFlowSpec<Settings, EntityDefinition, TableImportPreview>
         {
@@ -165,7 +164,37 @@ public sealed class ImportTableCommand(ITableImportService tableImportService, I
             PublishAsync = (auth, preview, ct) => tableImportService.PublishAsync(auth.EnvironmentUrl, auth.AccessToken, preview, ct),
         };
 
-        return await importRunner.RunAsync(settings, tableImportService, spec, cancellationToken);
+        return spec;
+    }
+
+    public Task<int> RunAsync(Settings settings, CancellationToken cancellationToken) =>
+        importRunner.RunAsync(settings, tableImportService, BuildSpec(settings), cancellationToken);
+
+    /// <summary>
+    /// Previews without prompting or writing: the first half of
+    /// <see cref="RunAsync"/>, for callers (<c>solution import</c>) that
+    /// collect several previews and confirm once.
+    /// </summary>
+    public Task<PreparedImport> PreviewAsync(Settings settings, bool printUnchanged, CancellationToken cancellationToken) =>
+        PreviewAsync(settings, printUnchanged, pendingGlobalChoiceNames: new HashSet<string>(), cancellationToken);
+
+    /// <summary>
+    /// As above, for <c>solution import</c>: <paramref name="pendingGlobalChoiceNames"/>
+    /// are the global choices this run's <c>choices.yml</c> will create before
+    /// any table is applied, so a new column bound to one is planned as a
+    /// create rather than flagged as bound to a missing choice.
+    /// </summary>
+    public Task<PreparedImport> PreviewAsync(Settings settings, bool printUnchanged, IReadOnlySet<string> pendingGlobalChoiceNames, CancellationToken cancellationToken) =>
+        importRunner.PreviewAsync(settings, new PendingChoicePreviewService(tableImportService, pendingGlobalChoiceNames), BuildSpec(settings), printUnchanged, cancellationToken);
+
+    /// <summary>Hands <see cref="ImportRunner"/> the preview-with-pending-choices overload through the shared <see cref="IImportService{TInput,TPreview}"/> shape; apply is never called through it (the spec applies via the real service).</summary>
+    private sealed class PendingChoicePreviewService(ITableImportService inner, IReadOnlySet<string> pendingGlobalChoiceNames) : IImportService<EntityDefinition, TableImportPreview>
+    {
+        public Task<TableImportPreview> PreviewAsync(Uri environmentUrl, string accessToken, EntityDefinition input, CancellationToken cancellationToken) =>
+            inner.PreviewAsync(environmentUrl, accessToken, input, pendingGlobalChoiceNames, cancellationToken);
+
+        public Task ApplyAsync(Uri environmentUrl, string accessToken, TableImportPreview preview, CancellationToken cancellationToken) =>
+            inner.ApplyAsync(environmentUrl, accessToken, preview, cancellationToken);
     }
 
     /// <summary>
