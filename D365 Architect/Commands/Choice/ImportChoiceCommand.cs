@@ -30,14 +30,13 @@ namespace D365Architect.Commands.Choice;
 /// to see just the diff/plan and never be prompted or write anything at
 /// all.
 ///
-/// What this doesn't do yet: publish the change — Dataverse customizations
-/// still need publishing separately before end users see it, same as
-/// `table import`.
+/// Once the change is applied the file's choices are published, unless
+/// <c>--no-publish</c>, same as `table import`.
 /// </summary>
 public sealed class ImportChoiceCommand(IGlobalChoiceImportService globalChoiceImportService, ImportRunner importRunner)
     : AsyncCommand<ImportChoiceCommand.Settings>
 {
-    public sealed class Settings : ImportSettingsBase
+    public sealed class Settings : PublishableImportSettings
     {
         [CommandOption("-s|--solution <UNIQUE_NAME>")]
         [Description("Unique name of a solution to add any brand-new global choice to as it's created. Never affects updates to an existing choice. Omit to leave a new choice wherever Dataverse's own default solution context puts it, same as before this option existed.")]
@@ -98,7 +97,10 @@ public sealed class ImportChoiceCommand(IGlobalChoiceImportService globalChoiceI
                 var created = preview.ChoicePlans.Count(p => p.Action == GlobalChoiceImportAction.Create);
                 var updated = preview.ChoicePlans.Count(p => p.Action == GlobalChoiceImportAction.Update);
                 AnsiConsole.MarkupLine($"[green]Imported.[/] {created} created, {updated} updated in Dataverse.");
-                AnsiConsole.MarkupLine("[grey]Note: this only updates Dataverse's metadata — publish customizations separately (e.g. in the maker portal) before end users see the change; this tool doesn't publish yet.[/]");
+                if (settings.NoPublish)
+                {
+                    AnsiConsole.MarkupLine("[grey]Note: --no-publish — publish customizations separately (e.g. in the maker portal) before end users see the change.[/]");
+                }
             },
 
             FormatDomainException = (ex, choices) => ex switch
@@ -106,6 +108,8 @@ public sealed class ImportChoiceCommand(IGlobalChoiceImportService globalChoiceI
                 InvalidDataException => $"[red]Couldn't parse the live metadata:[/] {ex.Message.EscapeMarkup()}",
                 _ => null,
             },
+
+            PublishAsync = (auth, preview, ct) => globalChoiceImportService.PublishAsync(auth.EnvironmentUrl, auth.AccessToken, preview, ct),
         };
 
         return await importRunner.RunAsync(settings, globalChoiceImportService, spec, cancellationToken);

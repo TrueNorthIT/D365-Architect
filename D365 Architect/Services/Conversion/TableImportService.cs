@@ -29,6 +29,9 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
     public Task ApplyAsync(Uri environmentUrl, string accessToken, TableImportPreview preview, CancellationToken cancellationToken) =>
         ApplyAsync(environmentUrl, accessToken, preview, useTransaction: true, solutionUniqueName: null, cancellationToken);
 
+    public Task PublishAsync(Uri environmentUrl, string accessToken, TableImportPreview preview, CancellationToken cancellationToken) =>
+        dataverseClient.PublishEntityAsync(environmentUrl, accessToken, preview.EntityLogicalName, cancellationToken);
+
     public async Task ApplyAsync(Uri environmentUrl, string accessToken, TableImportPreview preview, bool useTransaction, string? solutionUniqueName, CancellationToken cancellationToken)
     {
         if (useTransaction)
@@ -53,6 +56,11 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
             {
                 case AttributeImportAction.Create:
                     await dataverseClient.CreateAttributeAsync(environmentUrl, accessToken, preview.EntityLogicalName, plan.RequestBody!, solutionUniqueName, cancellationToken);
+                    if (plan.AutoNumberSeed is not null)
+                    {
+                        await dataverseClient.SetAutoNumberSeedAsync(environmentUrl, accessToken, preview.EntityLogicalName, plan.LogicalName, plan.AutoNumberSeed.Value, cancellationToken);
+                    }
+
                     break;
 
                 case AttributeImportAction.Update:
@@ -104,6 +112,17 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
             {
                 case AttributeImportAction.Create:
                     writes.Add(new DataverseWrite.CreateAttribute(preview.EntityLogicalName, plan.RequestBody!, solutionUniqueName));
+
+                    // Straight after its own create, in the same changeset,
+                    // so a rollback drops the seed along with the column.
+                    // Not confirmed live that Dataverse accepts the seed in
+                    // the same changeset as the create; --no-transaction
+                    // sends it as its own request after the create instead.
+                    if (plan.AutoNumberSeed is not null)
+                    {
+                        writes.Add(new DataverseWrite.SetAutoNumberSeed(preview.EntityLogicalName, plan.LogicalName, plan.AutoNumberSeed.Value));
+                    }
+
                     break;
 
                 case AttributeImportAction.Update:
@@ -231,48 +250,7 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
                 continue;
             }
 
-            // Checked before AttributesMatch, and before AttributeChangeValidator,
-            // deliberately: Type/SchemaName aren't in AttributesMatch's own
-            // field list at all (this tool never writes either one back for
-            // an existing column, so they'd otherwise never be compared) —
-            // without this, a type or schema-name change alongside no other
-            // difference would be silently reported as "Unchanged" instead
-            // of the invalid, would-fail change it actually is.
-            if (localAttribute.Type != existingAttribute.Type)
-            {
-                plans.Add(new AttributeImportPlan(localAttribute.Name, AttributeImportAction.Invalid,
-                    $"Can't change type from '{existingAttribute.Type}' to '{localAttribute.Type}' — Dataverse doesn't support changing a column's data type after creation.", null));
-                continue;
-            }
-
-            if (localAttribute.SchemaName is not null && localAttribute.SchemaName != existingAttribute.SchemaName)
-            {
-                plans.Add(new AttributeImportPlan(localAttribute.Name, AttributeImportAction.Invalid,
-                    $"Can't change SchemaName from '{existingAttribute.SchemaName}' to '{localAttribute.SchemaName}' — immutable after creation.", null));
-                continue;
-            }
-
-            // Same reasoning as the Type/SchemaName checks above: Targets
-            // isn't in AttributesMatch's field list either (this tool never
-            // writes it back for an existing Lookup/Customer/Owner column),
-            // so a changed Targets would otherwise be silently ignored
-            // rather than caught as the invalid, would-fail change it is.
-            if (localAttribute.Type is "Lookup" or "Customer" or "Owner"
-                && localAttribute.Targets is not null
-                && !TargetsMatch(localAttribute.Targets, existingAttribute.Targets))
-            {
-                plans.Add(new AttributeImportPlan(localAttribute.Name, AttributeImportAction.Invalid,
-                    $"Can't change Targets on an existing {localAttribute.Type} column — immutable after creation.", null));
-                continue;
-            }
-
-            if (AttributesMatch(localAttribute, existingAttribute))
-            {
-                plans.Add(new AttributeImportPlan(localAttribute.Name, AttributeImportAction.Unchanged, null, null));
-                continue;
-            }
-
-            plans.Add(await BuildUpdatePlanAsync(environmentUrl, accessToken, local.LogicalName, localAttribute, existingAttribute, cancellationToken));
+            plans.Add(WithIgnoredSeedNote(await BuildExistingColumnPlanAsync(environmentUrl, accessToken, local.LogicalName, localAttribute, existingAttribute, cancellationToken), localAttribute));
         }
 
         foreach (var existingAttribute in existing.Attributes)
@@ -285,6 +263,61 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
         }
 
         return plans;
+    }
+
+    /// <summary>
+    /// An <c>autoNumberSeed</c> is only ever sent in the run that creates its
+    /// column (see <see cref="BuildCreatePlanAsync"/>): calling
+    /// <c>SetAutoNumberSeed</c> again would reset a live counter and risk
+    /// duplicate numbers, so re-importing the same file must never do it.
+    /// For a column that already exists the seed is dropped, but said so on
+    /// the plan — even an otherwise Unchanged one — rather than silently.
+    /// </summary>
+    private static AttributeImportPlan WithIgnoredSeedNote(AttributeImportPlan plan, AttributeDefinition local) =>
+        local.AutoNumberSeed is null || plan.Action is not (AttributeImportAction.Unchanged or AttributeImportAction.Update)
+            ? plan
+            : plan with { Warnings = [.. plan.Warnings ?? [], $"autoNumberSeed {local.AutoNumberSeed}: seed ignored — column already exists (a seed is only set in the run that creates the column, so re-importing never resets its counter)."] };
+
+    private async Task<AttributeImportPlan> BuildExistingColumnPlanAsync(Uri environmentUrl, string accessToken, string entityLogicalName, AttributeDefinition localAttribute, AttributeDefinition existingAttribute, CancellationToken cancellationToken)
+    {
+        // Checked before AttributesMatch, and before AttributeChangeValidator,
+        // deliberately: Type/SchemaName aren't in AttributesMatch's own
+        // field list at all (this tool never writes either one back for
+        // an existing column, so they'd otherwise never be compared) —
+        // without this, a type or schema-name change alongside no other
+        // difference would be silently reported as "Unchanged" instead
+        // of the invalid, would-fail change it actually is.
+        if (localAttribute.Type != existingAttribute.Type)
+        {
+            return new AttributeImportPlan(localAttribute.Name, AttributeImportAction.Invalid,
+                $"Can't change type from '{existingAttribute.Type}' to '{localAttribute.Type}' — Dataverse doesn't support changing a column's data type after creation.", null);
+        }
+
+        if (localAttribute.SchemaName is not null && localAttribute.SchemaName != existingAttribute.SchemaName)
+        {
+            return new AttributeImportPlan(localAttribute.Name, AttributeImportAction.Invalid,
+                $"Can't change SchemaName from '{existingAttribute.SchemaName}' to '{localAttribute.SchemaName}' — immutable after creation.", null);
+        }
+
+        // Same reasoning as the Type/SchemaName checks above: Targets
+        // isn't in AttributesMatch's field list either (this tool never
+        // writes it back for an existing Lookup/Customer/Owner column),
+        // so a changed Targets would otherwise be silently ignored
+        // rather than caught as the invalid, would-fail change it is.
+        if (localAttribute.Type is "Lookup" or "Customer" or "Owner"
+            && localAttribute.Targets is not null
+            && !TargetsMatch(localAttribute.Targets, existingAttribute.Targets))
+        {
+            return new AttributeImportPlan(localAttribute.Name, AttributeImportAction.Invalid,
+                $"Can't change Targets on an existing {localAttribute.Type} column — immutable after creation.", null);
+        }
+
+        if (AttributesMatch(localAttribute, existingAttribute))
+        {
+            return new AttributeImportPlan(localAttribute.Name, AttributeImportAction.Unchanged, null, null);
+        }
+
+        return await BuildUpdatePlanAsync(environmentUrl, accessToken, entityLogicalName, localAttribute, existingAttribute, cancellationToken);
     }
 
     private static bool TargetsMatch(IReadOnlyList<string> local, IReadOnlyList<string>? existing) =>
@@ -409,7 +442,7 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
             return new AttributeImportPlan(local.Name, AttributeImportAction.Invalid, ex.Message, null);
         }
 
-        return new AttributeImportPlan(local.Name, AttributeImportAction.Create, null, body);
+        return new AttributeImportPlan(local.Name, AttributeImportAction.Create, null, body, AutoNumberSeed: local.AutoNumberSeed);
     }
 
     private async Task<AttributeImportPlan> BuildUpdatePlanAsync(Uri environmentUrl, string accessToken, string entityLogicalName, AttributeDefinition local, AttributeDefinition existing, CancellationToken cancellationToken)
@@ -453,6 +486,7 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
         && FieldMatches(local.MinValue, existing.MinValue)
         && FieldMatches(local.MaxValue, existing.MaxValue)
         && FieldMatches(local.Format, existing.Format)
+        && FieldMatches(local.AutoNumberFormat, existing.AutoNumberFormat)
         && FieldMatches(local.DefaultValue, existing.DefaultValue)
         && FieldMatches(local.TrueOptionLabel, existing.TrueOptionLabel)
         && FieldMatches(local.FalseOptionLabel, existing.FalseOptionLabel)

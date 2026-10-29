@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Xml.Linq;
 using D365Architect.Services.Conversion.Models;
 using D365Architect.Services.Dataverse;
@@ -9,11 +10,36 @@ public sealed class FormImportService(IDataverseClient dataverseClient, FormJson
 {
     public async Task<FormImportPreview> PreviewAsync(Uri environmentUrl, string accessToken, FormDefinition form, CancellationToken cancellationToken)
     {
-        var existing = form.FormId is { } formId
-            ? await dataverseClient.TryGetSystemFormByIdAsync(environmentUrl, accessToken, formId, cancellationToken)
-                ?? throw new FormNotFoundException(form.Entity, form.Name, formId)
-            : await dataverseClient.TryGetSystemFormAsync(environmentUrl, accessToken, form.Entity, form.Name, cancellationToken)
-                ?? throw new FormNotFoundException(form.Entity, form.Name);
+        var formType = FormJsonDefinitionReader.TryGetFormTypeCode(form.Type)
+            ?? throw new InvalidDataException($"Form '{form.Name}' has type '{form.Type}', which isn't a Dataverse form type. Use one of the labels 'form export' writes (e.g. 'Main', 'Quick View Form', 'Quick Create', 'Card'), or leave 'type' out for a main form.");
+
+        // A formId is authoritative and never falls back to a name match or a
+        // create (see FormNotFoundException). Without one, name + type is the
+        // identity: a fresh custom table's main, card and quick view
+        // forms are all named "Information" (confirmed live), so name alone
+        // can't tell them apart. No match is a create; several is refused,
+        // listing the ids to pick from.
+        ExistingSystemForm? existing;
+        if (form.FormId is { } formId)
+        {
+            existing = await dataverseClient.TryGetSystemFormByIdAsync(environmentUrl, accessToken, formId, cancellationToken)
+                ?? throw new FormNotFoundException(form.Entity, form.Name, formId);
+        }
+        else
+        {
+            var matches = await dataverseClient.FindSystemFormsAsync(environmentUrl, accessToken, form.Entity, form.Name, formType, cancellationToken);
+            existing = matches.Count switch
+            {
+                0 => null,
+                1 => matches[0],
+                _ => throw new AmbiguousSystemFormException(form.Entity, form.Name, matches.Select(m => m.FormId).ToList()),
+            };
+        }
+
+        if (existing is null)
+        {
+            return PreviewCreate(form, formType);
+        }
 
         var identityMismatchWarning = existing.BuildIdentityMismatchWarning(form);
 
@@ -37,7 +63,7 @@ public sealed class FormImportService(IDataverseClient dataverseClient, FormJson
         // to write, so validating would only block a no-op import over
         // content Dataverse already holds.
         var existingForm = DecomposeExisting(form, existing.FormXml);
-        var existingComparableFormXml = FormXmlWriter.Write(existingForm, existingRoot);
+        var existingComparableFormXml = WithoutLabelsTheFileLeftOut(FormXmlWriter.Write(existingForm, existingRoot), newFormXml);
 
         // Rebuilt through the exact same writer, base document, and
         // deterministic id rules as newFormXml — see
@@ -52,14 +78,102 @@ public sealed class FormImportService(IDataverseClient dataverseClient, FormJson
 
         var entity = existing.EntityLogicalName ?? form.Entity;
 
-        return new FormImportPreview(existing.FormId, entity, existing.FormXml, newFormXml, existingComparableFormXml, violations, identityMismatchWarning);
+        return new FormImportPreview(existing.FormId, entity, existing.FormXml, newFormXml, existingComparableFormXml, violations, identityMismatchWarning)
+        {
+            Name = form.Name,
+            FormType = formType,
+        };
+    }
+
+    /// <summary>
+    /// A form that matches nothing: built from scratch (no live document to
+    /// patch onto), validated in full, and compared against nothing, so the
+    /// whole document is the change.
+    /// </summary>
+    private static FormImportPreview PreviewCreate(FormDefinition form, int formType)
+    {
+        var newFormXml = FormXmlWriter.Write(form);
+        var violations = FormControlValidator.Validate(form, new XElement("form"))
+            .Concat(FormXmlValidator.Validate(newFormXml))
+            .ToList();
+
+        return new FormImportPreview(Guid.Empty, form.Entity, "", newFormXml, "", violations)
+        {
+            IsCreate = true,
+            Name = form.Name,
+            FormType = formType,
+            Description = form.Description,
+        };
     }
 
     public Task ApplyAsync(Uri environmentUrl, string accessToken, FormImportPreview preview, CancellationToken cancellationToken)
-        => dataverseClient.UpdateSystemFormXmlAsync(environmentUrl, accessToken, preview.FormId, preview.NewFormXml, cancellationToken);
+        => ApplyAsync(environmentUrl, accessToken, preview, solutionUniqueName: null, cancellationToken);
+
+    public Task ApplyAsync(Uri environmentUrl, string accessToken, FormImportPreview preview, string? solutionUniqueName, CancellationToken cancellationToken)
+    {
+        if (!preview.IsCreate)
+        {
+            return dataverseClient.UpdateSystemFormXmlAsync(environmentUrl, accessToken, preview.FormId, preview.NewFormXml, solutionUniqueName, cancellationToken);
+        }
+
+        // The writable SystemForm columns Learn lists (no worked create
+        // example exists there, so the minimum accepted set is unconfirmed
+        // until run live): objecttypecode is the table's logical name, type
+        // the option-set integer.
+        var body = new JsonObject
+        {
+            ["name"] = preview.Name,
+            ["objecttypecode"] = preview.Entity,
+            ["type"] = preview.FormType,
+            ["formxml"] = preview.NewFormXml,
+        };
+
+        if (preview.Description is not null)
+        {
+            body["description"] = preview.Description;
+        }
+
+        return dataverseClient.CreateSystemFormAsync(environmentUrl, accessToken, body, solutionUniqueName, cancellationToken);
+    }
 
     public Task PublishAsync(Uri environmentUrl, string accessToken, FormImportPreview preview, CancellationToken cancellationToken)
         => dataverseClient.PublishEntityAsync(environmentUrl, accessToken, preview.Entity, cancellationToken);
+
+    /// <summary>
+    /// <paramref name="existingComparableFormXml"/> without the cell
+    /// <c>&lt;labels&gt;</c> of any cell that has none in
+    /// <paramref name="newFormXml"/>. Dataverse fills a bound control's cell
+    /// label from the column's display name when it saves a form (confirmed
+    /// live: a control written without <c>label</c> reads back with
+    /// <c>&lt;labels&gt;&lt;label description="Invoice Centre Name" languagecode="1033" /&gt;&lt;/labels&gt;</c>),
+    /// so a file that leaves <c>label</c> out would otherwise diff — and
+    /// re-PATCH and republish — on every run. Cells pair up by id, which is
+    /// deterministic on both sides (scope + control id). A label the file
+    /// does give is still compared, so a real label change still shows; an
+    /// exported file carries every live label, so nothing is dropped for it.
+    /// </summary>
+    private static string WithoutLabelsTheFileLeftOut(string existingComparableFormXml, string newFormXml)
+    {
+        var unlabelledCellIds = XElement.Parse(newFormXml).Descendants("cell")
+            .Where(cell => cell.Element("labels") is null)
+            .Select(cell => (string?)cell.Attribute("id"))
+            .ToHashSet();
+
+        var existing = XElement.Parse(existingComparableFormXml);
+        var autoLabels = existing.Descendants("cell")
+            .Where(cell => unlabelledCellIds.Contains((string?)cell.Attribute("id")))
+            .Select(cell => cell.Element("labels"))
+            .OfType<XElement>()
+            .ToList();
+
+        if (autoLabels.Count == 0)
+        {
+            return existingComparableFormXml;
+        }
+
+        autoLabels.ForEach(labels => labels.Remove());
+        return existing.ToString(SaveOptions.DisableFormatting);
+    }
 
     /// <summary>
     /// Decomposes the form's current live FormXML the same way `form

@@ -18,7 +18,7 @@ covers the code around that YAML, not the YAML's own design rules.
 | `Program.cs` | Composition root — see below. |
 | `Commands/` | One subfolder per CLI branch (`Auth`, `Environments`, `Table`, `View`, `Form`, `Choice`, `Solution`, `Schema`), each a thin Spectre.Console.Cli layer over `Services/`. |
 | `Services/Authentication/` | MSAL-based sign-in, token cache, current-session tracking. |
-| `Services/Dataverse/` | The Web API client and its supporting validators/exceptions/DTOs. |
+| `Services/Dataverse/` | The Web API client and its supporting validators/exceptions/DTOs, and `MemoFormats`. |
 | `Services/Conversion/` (+ `Models/`) | Table/view/form ↔ YAML readers, writers, and the curated models themselves. The biggest folder by far. |
 | `Services/Schema/` | Generates `schema/*.schema.json` from the curated models via reflection. |
 | `Services/EnvironmentService.cs` | **Placeholder scaffolding** — see below, don't mistake it for real config. |
@@ -37,7 +37,9 @@ composition root, in three explicit steps:
 1. **Register services** into a plain `ServiceCollection` — `IEnvironmentService`,
    `AuthenticationOptions.FromEnvironment()`, `IAuthenticationService` →
    `MsalAuthenticationService`, `IDataverseClient` → `DataverseClient` (via
-   `services.AddHttpClient<IDataverseClient, DataverseClient>()`), and one
+   `services.AddHttpClient<IDataverseClient, DataverseClient>()`, with the
+   `HttpClient`'s own timeout switched off — see "Timeouts" under Dataverse
+   below), and one
    reader/converter/export/import service per asset type.
 2. **Bridge to Spectre.Console.Cli** via `Infrastructure/TypeRegistrar.cs` +
    `TypeResolver.cs` — a small `ITypeRegistrar`/`ITypeResolver` adapter pair so
@@ -68,7 +70,7 @@ injection, and defines a nested `Settings : CommandSettings` with
 | `auth` | `login` | `Commands/Auth/LoginCommand.cs` |
 | *(top-level)* | `whoami` | `Commands/WhoAmICommand.cs` |
 | `environment` | `list`, `sync` | `Commands/Environments/ListEnvironmentsCommand.cs`, `SyncEnvironmentCommand.cs` |
-| `table` | `export`, `import` | `Commands/Table/ExportTableCommand.cs`, `ImportTableCommand.cs` |
+| `table` | `export`, `import`, `create` | `Commands/Table/ExportTableCommand.cs`, `ImportTableCommand.cs`, `CreateTableCommand.cs` |
 | `view` | `export`, `import` | `Commands/View/ExportViewCommand.cs`, `ImportViewCommand.cs` |
 | `form` | `export`, `build-xml`, `import` | `Commands/Form/ExportFormCommand.cs`, `BuildFormXmlCommand.cs`, `ImportFormCommand.cs` |
 | `choice` | `export`, `import` | `Commands/Choice/ExportChoiceCommand.cs`, `ImportChoiceCommand.cs` |
@@ -91,7 +93,25 @@ ImportTableCommand(tableImportService, importRunner)`) and call it per file
 it finds, with its own `Settings` built from the folder's own file paths.
 Every asset still gets its full preview → diff → confirm → apply flow; one
 file failing doesn't stop the rest (see `ImportSolutionCommand`'s own doc
-comment for why, and how it reports the count at the end). If you add a
+comment for why, and how it reports the count at the end).
+
+The one exception is stage 1, creating the tables, which is one prompt and
+one transaction rather than a `table create` per file.
+`SolutionImportOrchestrator` owns the stage ordering (creates first, then
+choices, then each table's columns, views and forms) and hands every
+`*.table.yml` path to `ISolutionImportStepRunner.CreateTablesAsync` in one
+call. The production runner (`ImportSolutionCommand.StepRunner`) previews
+them all with `TableCreateService.PreviewAsync` (an unreadable or invalid file
+fails the stage, naming it, before anything is sent), lists the missing ones,
+asks "Create these N tables?" once (skipped under `--yes`; under `--whatif` it
+only lists them and returns their paths so the orchestrator skips their
+folders), then calls `ITableCreateService.ApplyAllAsync`: one
+`ExecuteTransactionAsync` of `DataverseWrite.CreateEntity` writes, each
+carrying `--solution`. A rollback keeps nothing; `ApplyAllAsync` maps the
+failing part's `Content-ID` (counted over the requests actually sent) back to
+the table, and the run stops before any later stage. A decline stops it the
+same way. Standalone `table create` is unchanged: one table, its own prompt,
+published afterwards. If you add a
 fifth `Import*Command`, keep this same `RunAsync` shape so it can join
 `solution import`'s loop the same way, rather than solution import needing
 its own special case per asset type.
@@ -127,6 +147,20 @@ see its own doc comment for how. Domain-specific exceptions
 (`FormNotFoundException`, `AmbiguousSystemFormException`,
 `AuthenticationRequiredException`, etc.) exist
 specifically to give that message something meaningful to say.
+
+### Publishing follows the apply
+
+`PublishableImportSettings` (`table create`, `table import`, `view import`,
+`choice import`, `form import`) adds `--no-publish`. When a command's
+`ImportFlowSpec` sets `PublishAsync`, `ImportRunner` calls it right after a
+successful `ApplyAsync` and `PrintSuccess`, then prints "Published." — unless
+`--no-publish`. There is no second prompt: confirming the import is the
+decision. Every path that applies nothing (no changes, declined, `--whatif`,
+a block) returns before it, so nothing is published either. `solution import`
+has its own `--no-publish` and forwards it to every step's settings. The old
+publish-only `--publish` mode is gone, and `CommandAppConfiguration` turns on
+Spectre's `StrictParsing`, so `--publish` (like any undeclared option) is now
+a parse error rather than silently ignored.
 
 ## Services/
 
@@ -169,6 +203,29 @@ bearer token is passed in per call. Worth knowing before extending it:
   don't intend to change"). `MSCRM.MergeLabels: true` is sent on every such
   PUT so an edited display name doesn't wipe out other languages' labels this
   tool never touched.
+- **Creating a table** is one `POST EntityDefinitions`, built by
+  `EntityMetadataJsonBuilder` and checked first by `TableCreateValidator`. It
+  is the only write that makes a new table; see "Creating tables" in
+  [`yaml-conventions.md`](yaml-conventions.md) for the confirmed behaviour.
+  `solution import` sends several of them as one `$batch` changeset
+  (`DataverseWrite.CreateEntity` through `ExecuteTransactionAsync`); a
+  rolled-back changeset throws `DataverseTransactionFailedException`, whose
+  `FailedContentId` is the `Content-ID` of the part Dataverse reported
+  (`ODataBatchResponseParser.Part.ContentId`), or null when it didn't say.
+- **Timeouts** are enforced per request by `DataverseClient` itself (a linked
+  `CancellationTokenSource`), not by `HttpClient.Timeout`, which can't be
+  lengthened for one request — so the DI-registered `HttpClient` has
+  `Timeout = InfiniteTimeSpan`. Ordinary requests get `RequestTimeout`
+  (100 s, `HttpClient`'s own default); `ExecuteTransactionAsync` gets
+  `TransactionTimeout` (10 minutes by default), because each table create in a
+  changeset takes 14–40 s. A timeout surfaces as a `TimeoutException`. A new
+  request must go through the private `SendAsync(request, timeout, ct)`, not
+  `httpClient.SendAsync`, or it loses its timeout.
+- **Auto-number seeds** are one unbound `POST SetAutoNumberSeed`
+  (`DataverseWrite.SetAutoNumberSeed`, `IDataverseClient.SetAutoNumberSeedAsync`).
+  `TableImportService` sends it only straight after a column's own create,
+  never for an existing column, because a second call resets the counter. See
+  "Rich text and auto-number columns" in [`yaml-conventions.md`](yaml-conventions.md).
 - **Solution-scoping** (the `--solution` option on export commands) goes
   through `solutioncomponents`, filtered by `componenttype` (1=Entity,
   2=Attribute, 9=Option Set, 26=View/SavedQuery, 60=SystemForm) plus
@@ -212,10 +269,11 @@ bearer token is passed in per call. Worth knowing before extending it:
   it travels on the write itself (`DataverseWrite.CreateAttribute.SolutionUniqueName`
   and friends) and `ToHttpRequest` turns it into the header on that one
   request; `CreateGlobalOptionSetAsync` isn't part of that batching system,
-  so it sets the header directly. `table import --solution`/`choice import
-  --solution` (both optional) and `solution import`'s own `--solution`
-  (required, and forwarded to every table/choice import it runs) are the
-  only callers that ever pass a non-null value — an update to a column/
+  so it sets the header directly. `table create`/`table import`/`choice
+  import`/`view import`/`form import --solution` (all optional) and
+  `solution import`'s own `--solution` (required, and forwarded to every
+  import it runs) are the only callers that ever pass a non-null value. View
+  and form import send it on updates too; an update to a column/
   choice that already exists never needs this, since it's already scoped
   (or not) however it originally was. See `DataverseClientSolutionHeaderTests`
   for the header itself on both the individual and batched paths, and
@@ -224,7 +282,16 @@ bearer token is passed in per call. Worth knowing before extending it:
 - **Publishing** (`PublishEntityAsync`, `PublishXml`) always publishes a whole
   table (attributes/forms/views/ribbons together) — there's no documented way
   to publish a single `systemform` on its own; `<entities><entity>` only ever
-  takes a table's logical name.
+  takes a table's logical name. `PublishGlobalOptionSetsAsync` publishes a list
+  of global choices by name (`<optionsets>`, used by `choice import` after it
+  applies; not yet confirmed live).
+- **Creating views and forms**: `CreateSavedQueryAsync` (`POST savedqueries`)
+  and `CreateSystemFormAsync` (`POST systemforms`) take a body as built by
+  `ViewImportService`/`FormImportService` and an optional solution name sent as
+  `MSCRM.SolutionUniqueName`. `FindSystemFormsAsync` looks a form up by table +
+  name + type (a list, so the caller decides about ambiguity), and
+  `TryGetEntityIdentityAsync` returns an `EntityIdentity` (type code, primary id
+  and name columns) that a `columns:` layout is built from.
 - `GetEntityDefinitionJsonAsync` deliberately omits `$select` on the expanded
   `Attributes` collection, since type-specific properties (MaxLength,
   Precision, Targets, ...) aren't selectable on the base `AttributeMetadata`
@@ -236,8 +303,10 @@ where it was confirmed, e.g. Microsoft Learn vs. "corroborated across
 multiple sources, not a single canonical page"), `AttributeMetadataJsonBuilder`
 (builds/mutates column JSON; `SupportedTypes` = `String`, `Memo`, `Integer`,
 `BigInt`, `Decimal`, `Money`, `DateTime` only — see its own doc comment for
-exactly why each excluded type is excluded), plus the not-found/ambiguous
-exceptions and `Existing*`/`WhoAmIResult` DTOs.
+exactly why each excluded type is excluded), `MemoFormats` (the Memo formats
+this tool can create: `TextArea` and `RichText`, the latter carried by
+`FormatName`, not `Format`), plus the not-found/ambiguous exceptions and
+`Existing*`/`WhoAmIResult` DTOs.
 
 ### Conversion (the biggest folder)
 
@@ -289,6 +358,18 @@ Shared plumbing worth knowing:
   the diff.
 - `AssetFileNaming.cs` — `Slugify`/`MakeUnique`, used by views/forms since,
   unlike tables/columns, they have no stable logical name to file under.
+- `ViewColumn` and `ViewColumnYamlTypeConverter` — the `columns:` shorthand on a
+  view (a plain name, or `{name, width}`). `ViewImportService` turns it into a
+  generated `resultset` grid (`BuildLayoutXml`), adds any listed column missing
+  from the FetchXML (`WithAttributes`) and sets the grid's `object` from the
+  live table (`WithObjectTypeCode`). `SchemaPlainStringShorthandAttribute` marks
+  a model whose YAML also takes a plain string, so `YamlSchemaGenerator` emits
+  `anyOf` for it.
+- Comparison exceptions for Dataverse's own save-time stamps:
+  `ViewImportService.ComparableExistingFetchXml` (the `savedqueryid` on the
+  stored `<fetch>` root) and `FormImportService.WithoutLabelsTheFileLeftOut`
+  (auto-labels on cells the file leaves unlabelled). Each applies only when the
+  file omits the value, so a real change still shows.
 
 `Conversion/Models/` holds the curated read models themselves
 (`EntityDefinition`, `ViewDefinition`, `FormDefinition`, ...) — these are what
@@ -528,6 +609,36 @@ is called out by name in its test's own doc comment or `[Fact]` name:
   `SkipBeforePrinting` is where that "even when nothing else differs" case
   actually gets exercised end to end).
 
+### Live tests
+
+A few tests run against a real Dataverse environment, to prove what the fakes
+can't (`TableCreateServiceLiveTests`: that `solution import`'s one-transaction
+table create really rolls back as one, names the failing table, and adds each
+table to the solution). They're marked `[LiveFact]` and
+`[Trait("Category", "Live")]`, and are **off by default**: unless both
+environment variables below are set, a plain `dotnet test` reports them as
+skipped, so CI and everyone else stay green.
+
+- `D365ARCHITECT_LIVE_ENV` — your environment's URL, e.g. `https://yourorg.crm11.dynamics.com`.
+- `D365ARCHITECT_LIVE_PREFIX` — your publisher's customisation prefix, e.g. `bogdan`.
+
+They use your existing sign-in (the same MSAL cache and
+`d365architect_AUTHORITY` as the CLI), so sign in to that environment first:
+
+```
+d365architect auth login --url https://yourorg.crm11.dynamics.com
+dotnet test "D365 Architect.Tests" --filter Category=Live --logger "trx;LogFileName=live.trx"
+```
+
+Each test creates uniquely named `<prefix>_lt*` tables (and a temporary
+solution) and deletes them afterwards, pass or fail. Use **your own throwaway
+environment only**, never a shared one. A table create takes 14-40 s, so
+expect a few minutes. When a change touches what they cover, attach the result
+summary (or the `live.trx` from `D365 Architect.Tests/TestResults/`) to the PR.
+
+They'll move into a GitHub workflow once there's a shared test environment and
+a non-user login (#49).
+
 ## Conventions to follow
 
 - **`Nullable`/`ImplicitUsings` are both enabled**, and
@@ -550,7 +661,11 @@ is called out by name in its test's own doc comment or `[Fact]` name:
   `DefaultValueConventions.cs`'s existing helpers, or add a new one following
   the same confirmed-not-guessed standard, if you need another one.
 - **Destructive operations don't get silently automated**: `table import`
-  never deletes a column, `form import`/`view import` never create a
-  record that doesn't already exist. If you're adding a new import path,
+  never deletes a column. `form import`/`view import` create a record only when
+  a hand-written file matches nothing (never on a stale id), and the create is
+  shown in the plan and confirmed like any other change. Publishing only ever
+  follows a change the user confirmed. `table create` is the deliberate
+  exception: it creates a whole table, and only when none exists under that
+  name. If you're adding a new import path,
   keep that bar — surface what *would* change and let the user opt in,
   rather than making the tool more automatically destructive by default.

@@ -48,6 +48,34 @@
     "layoutXml": {
       "description": "The view's column layout, as LayoutXML. Null for views that don't render a grid (e.g. some Quick Find configurations).",
       "type": "string"
+    },
+    "columns": {
+      "description": "A friendlier alternative to LayoutXml for hand-written views: the columns to show, in order. Each entry is a plain string (the column's logical name, default width 150) or { name, width }. On import the tool builds the layout from this, adds any listed column missing from FetchXml and always includes the table's id column there, and fills in the table's type code. With no FetchXml, an existing view's live FetchXML is the base, and a new view queries just these columns. Giving both this and LayoutXml is refused. Never written by view export, which keeps writing the raw LayoutXml.",
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "name": {
+                "description": "The column's logical name, e.g. \"bogdan_name\".",
+                "type": "string"
+              },
+              "width": {
+                "description": "Width in pixels. Omit for the default of 150.",
+                "type": "integer"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "name"
+            ]
+          }
+        ]
+      }
     }
   },
   "additionalProperties": false,

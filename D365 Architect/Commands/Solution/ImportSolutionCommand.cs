@@ -3,20 +3,29 @@ using D365Architect.Commands.Choice;
 using D365Architect.Commands.Form;
 using D365Architect.Commands.Table;
 using D365Architect.Commands.View;
+using D365Architect.Services.Authentication;
 using D365Architect.Services.Conversion;
+using D365Architect.Services.Dataverse;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
 namespace D365Architect.Commands.Solution;
 
 /// <summary>
-/// `d365architect solution import --input ./examplesolution --solution examplesolution [--yes] [--whatif] [--no-transaction] [--allow-schema-violations]`
+/// `d365architect solution import --input ./examplesolution --solution examplesolution [--yes] [--whatif] [--no-transaction] [--allow-schema-violations] [--no-publish]`
 /// Walks a folder previously written by <c>solution export</c> — a
 /// <c>choices.yml</c> at its root, plus one sub-folder per table holding
 /// that table's own <c>*.table.yml</c>/<c>*.view.yml</c>/<c>*.form.yml</c>
-/// files — and imports every file found, in the same order `solution
-/// export` would have written them (choices first, then each table folder's
-/// own table, then its views, then its forms).
+/// files — and imports every file found, in two stages (the order itself
+/// lives in <see cref="SolutionImportOrchestrator"/>): first every
+/// <c>*.table.yml</c> is previewed as `table create` would, the tables that
+/// don't exist live yet are listed, and after one "Create these N tables?"
+/// they're all created (primary name column only) in one Dataverse
+/// transaction — see <see cref="StepRunner.CreateTablesAsync"/>. Then
+/// everything is imported in the same order
+/// `solution export` would have written it (choices first, then each table
+/// folder's own table, then its views, then its forms). Each of those
+/// previews reads live state afresh, so it sees the tables just created.
 ///
 /// Deliberately doesn't invent a new bulk-import mechanism: each file is run
 /// through the exact same <c>RunAsync</c> entry point `choice import`/`table
@@ -25,19 +34,27 @@ namespace D365Architect.Commands.Solution;
 /// still gets its own preview → diff → confirm → apply flow, its own column/
 /// choice plan, and its own schema-violation gate — nothing here bypasses
 /// any of that per-asset safety. <c>--yes</c>/<c>--whatif</c>/
-/// <c>--no-transaction</c>/<c>--allow-schema-violations</c> are forwarded to
+/// <c>--no-transaction</c>/<c>--allow-schema-violations</c>/<c>--no-publish</c> are forwarded to
 /// every file they apply to, so `--yes` runs the whole solution unattended
 /// the same way it does for a single asset today. <c>--solution</c> is
-/// required (not optional the way it is on the individual `table import`/
-/// `choice import` commands) and is likewise forwarded to every table/
-/// choice import, so any brand-new column/lookup relationship/global choice
+/// required (not optional the way it is on the individual `table create`/
+/// `table import`/`choice import` commands) and is likewise forwarded to
+/// every table create/import and choice import, so any brand-new table/
+/// column/lookup relationship/global choice
 /// this run creates actually joins the solution it came from — see
 /// <see cref="Services.Dataverse.IDataverseClient.CreateAttributeAsync"/>'s
 /// own doc comment for the gap this closes; without it, a new asset would
 /// exist live but silently not show up in a later `solution export` of the
 /// same solution.
 ///
-/// One file failing (a validation error, a Dataverse rejection, a missing
+/// A table that can't be created stops the whole run: the transaction is
+/// rolled back so none is created, no later stage runs, and the table
+/// Dataverse reported is named — see <see cref="SolutionImportOrchestrator"/>
+/// for why. Declining the create prompt stops the run the same way. Under <c>--whatif</c> a table that
+/// would be created is reported as such, and its own table import, views
+/// and forms are skipped (there's nothing live to preview them against)
+/// rather than counted as failures. Past the create stage,
+/// one file failing (a validation error, a Dataverse rejection, a missing
 /// live counterpart) doesn't stop the rest — this keeps going through every
 /// remaining file so one bad form doesn't block importing everything else,
 /// then reports how many succeeded/failed at the end and exits non-zero if
@@ -47,6 +64,7 @@ namespace D365Architect.Commands.Solution;
 /// larger transaction.
 /// </summary>
 public sealed class ImportSolutionCommand(
+    ITableCreateService tableCreateService,
     ITableImportService tableImportService,
     IViewImportService viewImportService,
     IFormImportService formImportService,
@@ -60,7 +78,7 @@ public sealed class ImportSolutionCommand(
         public required string Input { get; init; }
 
         [CommandOption("-s|--solution <UNIQUE_NAME>")]
-        [Description("Unique name of the solution these files came from. Forwarded to every table/choice import so any brand-new column/lookup relationship/global choice this run creates actually joins the solution, rather than silently landing outside it.")]
+        [Description("Unique name of the solution these files came from. Forwarded to every table/choice/view/form import so any brand-new column/lookup relationship/global choice this run creates, and any view or form it creates or changes, actually joins the solution, rather than silently landing outside it.")]
         public required string Solution { get; init; }
 
         [CommandOption("-y|--yes")]
@@ -78,9 +96,17 @@ public sealed class ImportSolutionCommand(
         [CommandOption("--allow-schema-violations")]
         [Description("For every form import: proceed even if the rebuilt FormXML has a schema violation Dataverse might reject outright.")]
         public bool AllowSchemaViolations { get; init; }
+
+        [CommandOption("--no-publish")]
+        [Description("For every table/choice/view/form import: don't publish after importing.")]
+        public bool NoPublish { get; init; }
     }
 
-    protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
+    protected override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken) =>
+        RunAsync(settings, cancellationToken);
+
+    /// <summary>The command's own logic, independent of Spectre's <see cref="CommandContext"/>. Internal so tests can run it end to end.</summary>
+    internal async Task<int> RunAsync(Settings settings, CancellationToken cancellationToken)
     {
         if (!Directory.Exists(settings.Input))
         {
@@ -88,84 +114,165 @@ public sealed class ImportSolutionCommand(
             return 1;
         }
 
-        var succeeded = 0;
-        var failed = 0;
+        var result = await new SolutionImportOrchestrator().RunAsync(settings.Input, new StepRunner(this, settings), cancellationToken);
 
-        var choicesPath = Path.Combine(settings.Input, "choices.yml");
-        if (File.Exists(choicesPath))
+        if (result.StopWasDeclined)
         {
-            if (await TryRunAsync(choicesPath, () => new ImportChoiceCommand(globalChoiceImportService, importRunner).RunAsync(
-                new ImportChoiceCommand.Settings { Input = choicesPath, Yes = settings.Yes, WhatIf = settings.WhatIf, Solution = settings.Solution }, cancellationToken)))
-            {
-                succeeded++;
-            }
-            else
-            {
-                failed++;
-            }
-
-            AnsiConsole.WriteLine();
+            ErrorConsole.Print($"Stopped: creating the tables was declined, so nothing was imported.");
+            return 1;
         }
 
-        foreach (var entityDirectory in Directory.GetDirectories(settings.Input).OrderBy(d => d, StringComparer.OrdinalIgnoreCase))
+        if (result.StoppedAtAssetPath is { } stoppedAt)
         {
-            foreach (var tablePath in Directory.GetFiles(entityDirectory, "*.table.yml").OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
-            {
-                if (await TryRunAsync(tablePath, () => new ImportTableCommand(tableImportService, importRunner).RunAsync(
-                    new ImportTableCommand.Settings { Input = tablePath, Yes = settings.Yes, WhatIf = settings.WhatIf, NoTransaction = settings.NoTransaction, Solution = settings.Solution }, cancellationToken)))
-                {
-                    succeeded++;
-                }
-                else
-                {
-                    failed++;
-                }
-
-                AnsiConsole.WriteLine();
-            }
-
-            foreach (var viewPath in Directory.GetFiles(entityDirectory, "*.view.yml").OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
-            {
-                if (await TryRunAsync(viewPath, () => new ImportViewCommand(viewImportService, importRunner).RunAsync(
-                    new ImportViewCommand.Settings { Input = viewPath, Yes = settings.Yes, WhatIf = settings.WhatIf }, cancellationToken)))
-                {
-                    succeeded++;
-                }
-                else
-                {
-                    failed++;
-                }
-
-                AnsiConsole.WriteLine();
-            }
-
-            foreach (var formPath in Directory.GetFiles(entityDirectory, "*.form.yml").OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
-            {
-                if (await TryRunAsync(formPath, () => new ImportFormCommand(formImportService, importRunner).RunAsync(
-                    new ImportFormCommand.Settings { Input = formPath, Yes = settings.Yes, WhatIf = settings.WhatIf, AllowSchemaViolations = settings.AllowSchemaViolations }, cancellationToken)))
-                {
-                    succeeded++;
-                }
-                else
-                {
-                    failed++;
-                }
-
-                AnsiConsole.WriteLine();
-            }
+            ErrorConsole.Print($"Stopped: creating the tables failed at '{stoppedAt}', so none was created and no choices, columns, views or forms were imported.");
+            return 1;
         }
 
-        if (succeeded == 0 && failed == 0)
+        if (result.Succeeded == 0 && result.Failed == 0)
         {
             ErrorConsole.Warn($"No choices.yml or table sub-folders found under '{settings.Input}' — nothing to import.");
             return 0;
         }
 
-        AnsiConsole.MarkupLine(failed == 0
-            ? $"[green]Done.[/] {succeeded} asset(s) processed."
-            : $"[yellow]Done with errors.[/] {succeeded} succeeded, {failed} failed — see above.");
+        AnsiConsole.MarkupLine(result.Failed == 0
+            ? $"[green]Done.[/] {result.Succeeded} asset(s) processed{(result.Skipped > 0 ? $", {result.Skipped} skipped" : "")}."
+            : $"[yellow]Done with errors.[/] {result.Succeeded} succeeded, {result.Failed} failed — see above.");
 
-        return failed == 0 ? 0 : 1;
+        return result.Failed == 0 ? 0 : 1;
+    }
+
+    /// <summary>
+    /// Runs one import stage for one file through that asset's own command, with
+    /// this command's options forwarded to every one they apply to. Kept as
+    /// the single place a stage maps to a command so the orchestrator (the
+    /// ordering) and the per-asset commands (the safety) stay separate.
+    /// </summary>
+    private Task<int> RunImportStepAsync(Settings settings, SolutionImportStage stage, string assetPath, CancellationToken cancellationToken) => stage switch
+    {
+        SolutionImportStage.ImportChoices => new ImportChoiceCommand(globalChoiceImportService, importRunner).RunAsync(
+            new ImportChoiceCommand.Settings { Input = assetPath, Yes = settings.Yes, WhatIf = settings.WhatIf, NoPublish = settings.NoPublish, Solution = settings.Solution }, cancellationToken),
+        SolutionImportStage.ImportTable => new ImportTableCommand(tableImportService, importRunner).RunAsync(
+            new ImportTableCommand.Settings { Input = assetPath, Yes = settings.Yes, WhatIf = settings.WhatIf, NoPublish = settings.NoPublish, NoTransaction = settings.NoTransaction, Solution = settings.Solution }, cancellationToken),
+        SolutionImportStage.ImportView => new ImportViewCommand(viewImportService, importRunner).RunAsync(
+            new ImportViewCommand.Settings { Input = assetPath, Yes = settings.Yes, WhatIf = settings.WhatIf, NoPublish = settings.NoPublish, Solution = settings.Solution }, cancellationToken),
+        SolutionImportStage.ImportForm => new ImportFormCommand(formImportService, importRunner).RunAsync(
+            new ImportFormCommand.Settings { Input = assetPath, Yes = settings.Yes, WhatIf = settings.WhatIf, NoPublish = settings.NoPublish, Solution = settings.Solution, AllowSchemaViolations = settings.AllowSchemaViolations }, cancellationToken),
+        _ => throw new ArgumentOutOfRangeException(nameof(stage), stage, null),
+    };
+
+    /// <summary>
+    /// The create stage (see <see cref="StepRunner.CreateTablesAsync"/>): previews every table, refusing the whole stage - nothing sent - if
+    /// any file can't be read or used; lists the missing ones; asks once (unless <c>--yes</c>; under <c>--whatif</c> it only lists them);
+    /// then creates them all in one transaction, where one failure keeps none.
+    /// </summary>
+    private async Task<SolutionTableCreateResult> CreateTablesAsync(Settings settings, IReadOnlyList<string> tableAssetPaths, CancellationToken cancellationToken)
+    {
+        AuthenticatedContext auth;
+        try
+        {
+            auth = await importRunner.GetContextAsync(cancellationToken);
+        }
+        catch (AuthenticationRequiredException ex)
+        {
+            ErrorConsole.Print(ex);
+            return new SolutionTableCreateResult(SolutionImportStepOutcome.Failed, []);
+        }
+
+        var previews = new List<(string Path, TableCreatePreview Preview)>();
+        foreach (var path in tableAssetPaths)
+        {
+            var entity = await YamlFileReader.TryReadAsync(path, "table", EntityYamlDeserializer.FromYaml, cancellationToken);
+            if (entity is null)
+            {
+                return Failed(path);
+            }
+
+            try
+            {
+                var preview = await AnsiConsole.Status().StartAsync($"Checking whether '{entity.LogicalName}' exists...",
+                    async _ => await tableCreateService.PreviewAsync(auth.EnvironmentUrl, auth.AccessToken, entity, cancellationToken));
+                previews.Add((path, preview));
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                ErrorConsole.Print($"'{path}' can't be created: {ex.Message}");
+                return Failed(path);
+            }
+        }
+
+        var toCreate = previews.Where(p => !p.Preview.AlreadyExists).ToList();
+        if (toCreate.Count == 0)
+        {
+            AnsiConsole.MarkupLine("[green]No tables to create[/] — every table already exists.");
+            AnsiConsole.WriteLine();
+            return new SolutionTableCreateResult(SolutionImportStepOutcome.Succeeded, []);
+        }
+
+        AnsiConsole.MarkupLine("[bold]Tables to create:[/]");
+        foreach (var (_, preview) in toCreate)
+        {
+            AnsiConsole.MarkupLine($"[green]  + table {preview.EntityLogicalName.EscapeMarkup()} (create, with its primary name column {preview.PrimaryNameColumn?.EscapeMarkup()})[/]");
+        }
+
+        AnsiConsole.WriteLine();
+
+        if (settings.WhatIf)
+        {
+            foreach (var (_, preview) in toCreate)
+            {
+                AnsiConsole.MarkupLine($"[grey]--whatif: '{preview.EntityLogicalName.EscapeMarkup()}' would be created; its columns, views and forms are skipped below.[/]");
+            }
+
+            AnsiConsole.WriteLine();
+            return new SolutionTableCreateResult(SolutionImportStepOutcome.Succeeded, toCreate.Select(p => p.Path).ToList());
+        }
+
+        var question = toCreate.Count == 1 ? "Create this table?" : $"Create these {toCreate.Count} tables?";
+        if (!settings.Yes && !AnsiConsole.Confirm(question, defaultValue: false))
+        {
+            AnsiConsole.MarkupLine("[yellow]Aborted.[/] No table was created.");
+            return new SolutionTableCreateResult(SolutionImportStepOutcome.Declined, []);
+        }
+
+        try
+        {
+            await AnsiConsole.Status().StartAsync($"Creating {toCreate.Count} table(s) in one transaction...",
+                async _ => await tableCreateService.ApplyAllAsync(auth.EnvironmentUrl, auth.AccessToken, toCreate.Select(p => p.Preview).ToList(), settings.Solution, cancellationToken));
+        }
+        catch (TableCreateFailedException ex)
+        {
+            ErrorConsole.Print($"{ex.Message} No table was created.");
+            return Failed(toCreate.First(p => p.Preview.EntityLogicalName == ex.EntityLogicalName).Path);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            ErrorConsole.Print($"Creating the tables failed: {ex.Message} No table was created.");
+            return new SolutionTableCreateResult(SolutionImportStepOutcome.Failed, []);
+        }
+
+        AnsiConsole.MarkupLine($"[green]Created.[/] {string.Join(", ", toCreate.Select(p => p.Preview.EntityLogicalName)).EscapeMarkup()}.");
+        AnsiConsole.WriteLine();
+        return new SolutionTableCreateResult(SolutionImportStepOutcome.Succeeded, []);
+
+        static SolutionTableCreateResult Failed(string path) => new(SolutionImportStepOutcome.Failed, [], path);
+    }
+
+    /// <summary>The production <see cref="ISolutionImportStepRunner"/>: <see cref="RunImportStepAsync"/> behind <see cref="TryRunAsync"/> and <see cref="CreateTablesAsync"/>, plus the blank line between assets this command always printed. Internal so tests can check the wiring.</summary>
+    internal sealed class StepRunner(ImportSolutionCommand command, Settings settings) : ISolutionImportStepRunner
+    {
+        public async Task<SolutionImportStepOutcome> RunAsync(SolutionImportStage stage, string assetPath, CancellationToken cancellationToken)
+        {
+            var outcome = await TryRunAsync(assetPath, async () =>
+                await command.RunImportStepAsync(settings, stage, assetPath, cancellationToken) == 0 ? SolutionImportStepOutcome.Succeeded : SolutionImportStepOutcome.Failed);
+            AnsiConsole.WriteLine();
+            return outcome;
+        }
+
+        public Task<SolutionTableCreateResult> CreateTablesAsync(IReadOnlyList<string> tableAssetPaths, CancellationToken cancellationToken) =>
+            command.CreateTablesAsync(settings, tableAssetPaths, cancellationToken);
+
+        public void ReportSkipped(SolutionImportStage stage, string assetPath, string tableLogicalName) =>
+            AnsiConsole.MarkupLine($"[grey]'{assetPath.EscapeMarkup()}' skipped: '{tableLogicalName.EscapeMarkup()}' doesn't exist yet and would be created first.[/]");
     }
 
     /// <summary>
@@ -178,16 +285,16 @@ public sealed class ImportSolutionCommand(
     /// <see cref="InvalidDataException"/>) — anything else used to propagate
     /// straight out of this whole command, aborting every remaining file.
     /// </summary>
-    private static async Task<bool> TryRunAsync(string assetPath, Func<Task<int>> run)
+    private static async Task<SolutionImportStepOutcome> TryRunAsync(string assetPath, Func<Task<SolutionImportStepOutcome>> run)
     {
         try
         {
-            return await run() == 0;
+            return await run();
         }
         catch (Exception ex)
         {
             ErrorConsole.Print($"'{assetPath}' failed: {ex.Message}");
-            return false;
+            return SolutionImportStepOutcome.Failed;
         }
     }
 }

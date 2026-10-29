@@ -11,33 +11,45 @@ namespace D365Architect.Services.Conversion;
 /// <see cref="FormXmlWriter"/> and <see cref="FormXmlValidator"/> are used
 /// there, but never shares state or a call path with it.
 ///
-/// Only ever updates a form that already exists — by its <c>FormId</c> when
-/// the YAML has one (the ordinary case, and immune to a rename or a shared
-/// name — see <see cref="FormDefinition.FormId"/>'s own doc comment), or by
-/// table + name as a fallback for a file exported before that field
-/// existed; creating a brand-new form isn't supported yet.
+/// Matches the live form by its <c>FormId</c> when the YAML has one (the
+/// ordinary case for an exported file, and immune to a rename or a shared
+/// name — see <see cref="FormDefinition.FormId"/>'s own doc comment), or
+/// otherwise by table + name + type (<c>type</c> absent means Main,
+/// which is what tells apart the three forms named "Information" every new
+/// custom table gets). A hand-written file that matches nothing that way is
+/// created (<see cref="FormImportPreview.IsCreate"/>); a stale <c>FormId</c>
+/// never is.
 ///
 /// <see cref="IImportService{TInput,TPreview}.PreviewAsync"/> throws
-/// <see cref="Dataverse.FormNotFoundException"/> when nothing matches
-/// <c>form.FormId</c> (or, lacking one, <c>form.Entity</c>/<c>form.Name</c>),
-/// <see cref="Dataverse.AmbiguousSystemFormException"/> when <c>form.FormId</c>
-/// is absent and more than one form matches that table + name, and
-/// <see cref="NotSupportedException"/> when the form is a dashboard.
+/// <see cref="Dataverse.FormNotFoundException"/> when <c>form.FormId</c>
+/// matches nothing, <see cref="Dataverse.AmbiguousSystemFormException"/>
+/// (listing the candidate ids) when <c>form.FormId</c> is absent and
+/// more than one form matches that table + name + type,
+/// <see cref="InvalidDataException"/> for a <c>type</c> that isn't one of
+/// Dataverse's, and <see cref="NotSupportedException"/> when the form is a
+/// dashboard.
 ///
 /// <see cref="IImportService{TInput,TPreview}.ApplyAsync"/> only writes the
 /// rebuilt FormXML (see
-/// <see cref="Dataverse.IDataverseClient.UpdateSystemFormXmlAsync"/>) — it
+/// <see cref="Dataverse.IDataverseClient.UpdateSystemFormXmlAsync(Uri, string, Guid, string, CancellationToken)"/>) — it
 /// deliberately doesn't publish. Publishing the form's owning table is
-/// <see cref="PublishAsync"/>'s own, separate step instead: it doesn't fit
-/// <see cref="IImportService{TInput,TPreview}"/>'s shared shape (table/view
-/// import never publish at all), so `form import` calls it explicitly right
-/// after <c>ApplyAsync</c> rather than it happening as a hidden side effect
-/// of the write.
+/// <see cref="PublishAsync"/>'s own, separate step instead, as for every
+/// other import: `form import` calls it right after <c>ApplyAsync</c>
+/// (unless <c>--no-publish</c>) rather than it happening as a hidden side
+/// effect of the write.
 /// </summary>
 public interface IFormImportService : IImportService<FormDefinition, FormImportPreview>
 {
     /// <summary>Publishes <paramref name="preview"/>'s owning table, making a just-applied change visible to end users without a separate manual publish step.</summary>
     Task PublishAsync(Uri environmentUrl, string accessToken, FormImportPreview preview, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// As <see cref="IImportService{TInput,TPreview}.ApplyAsync"/>, adding whatever it creates or changes
+    /// to <paramref name="solutionUniqueName"/> (null = no solution, sent as <c>MSCRM.SolutionUniqueName</c>),
+    /// and creating the form when <paramref name="preview"/> is <see cref="FormImportPreview.IsCreate"/>
+    /// — see <see cref="Dataverse.IDataverseClient.CreateSystemFormAsync"/> for the body.
+    /// </summary>
+    Task ApplyAsync(Uri environmentUrl, string accessToken, FormImportPreview preview, string? solutionUniqueName, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -94,5 +106,21 @@ public interface IFormImportService : IImportService<FormDefinition, FormImportP
 public sealed record FormImportPreview(Guid FormId, string Entity, string ExistingFormXml, string NewFormXml, string ExistingComparableFormXml, IReadOnlyList<FormXmlValidationMessage> Violations, string? IdentityMismatchWarning = null)
 {
     /// <summary>False when <see cref="ExistingComparableFormXml"/> and <see cref="NewFormXml"/> are identical — see that parameter's own doc comment for why comparing those two, not the raw live document, is what makes this accurate rather than "true" almost every time.</summary>
-    public bool HasChanges => ExistingComparableFormXml != NewFormXml;
+    public bool HasChanges => IsCreate || ExistingComparableFormXml != NewFormXml;
+
+    /// <summary>
+    /// True when no existing form matched the YAML (no <c>FormId</c>, and no form of that name and type on that
+    /// table), so <c>ApplyAsync</c> creates one. Then <see cref="FormId"/> is <see cref="Guid.Empty"/>,
+    /// <see cref="Entity"/> is the YAML's own table, the existing XML is empty and <see cref="HasChanges"/> is true.
+    /// </summary>
+    public bool IsCreate { get; init; }
+
+    /// <summary>The YAML's form name — the create's <c>name</c>.</summary>
+    public string Name { get; init; } = "";
+
+    /// <summary>The systemform <c>type</c> option-set value matched on (and, for a create, sent): 2 Main, 6 Quick View Form, 7 Quick Create, 11 Card, ...</summary>
+    public int FormType { get; init; } = 2;
+
+    /// <summary>The YAML's description — sent on a create only (null = left out of the body); an update writes FormXML alone, as before.</summary>
+    public string? Description { get; init; }
 }

@@ -19,6 +19,10 @@ internal static class TableCommands
                 .WithDescription("Fetches a table's live definition and saves it as YAML.")
                 .WithExample("table", "export", "--table", "account");
 
+            branch.AddCommand<CreateTableCommand>("create")
+                .WithDescription("Creates the table in a *.table.yml file (with only its primary name column) when it doesn't exist yet, after showing the plan and asking for confirmation. Use 'table import' afterwards for its other columns.")
+                .WithExample("table", "create", "--input", "tn_project.table.yml", "--solution", "TNCore");
+
             branch.AddCommand<ImportTableCommand>("import")
                 .WithDescription("Writes a *.table.yml file's table-level properties and columns back into Dataverse, after showing a diff and asking for confirmation.")
                 .WithExample("table", "import", "--input", "account.table.yml");

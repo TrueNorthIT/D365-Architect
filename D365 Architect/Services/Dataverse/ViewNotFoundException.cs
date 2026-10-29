@@ -1,31 +1,17 @@
 namespace D365Architect.Services.Dataverse;
 
 /// <summary>
-/// Thrown when <c>view import</c> can't find the live view a `*.view.yml`
-/// file points at: by table + name when the file has no <c>savedQueryId</c>,
-/// or by that id when it does (never falling back to the name - a stale id
-/// is an error, as for forms; see <see cref="FormNotFoundException"/>).
-/// Creating a brand-new view isn't supported yet - import only updates one
-/// that already exists.
+/// Thrown when a `*.view.yml` file's <c>savedQueryId</c> resolves to no live
+/// view. A stale id is an error, never a fallback to the name or a create
+/// (as for forms; see <see cref="FormNotFoundException"/>): it most likely
+/// means the view was deleted, and silently creating a second one would hide
+/// that. A file with no <c>savedQueryId</c> that matches no view by table +
+/// name is created instead, so it never gets here.
 /// </summary>
-public sealed class ViewNotFoundException : Exception
+public sealed class ViewNotFoundException(string entityLogicalName, string viewName, Guid savedQueryId)
+    : Exception($"No view with id '{savedQueryId}' was found (this YAML's own record of '{viewName}' on '{entityLogicalName}'). It may have been deleted since this file was last exported — re-export to get its current id, restore the deleted view, or remove 'savedQueryId' from the file to create it as a new view.")
 {
-    public ViewNotFoundException(string entityLogicalName, string viewName)
-        : base($"No view named '{viewName}' was found on '{entityLogicalName}'. Creating a new view isn't supported yet — view import only updates one that already exists in Dataverse.")
-    {
-        EntityLogicalName = entityLogicalName;
-        ViewName = viewName;
-    }
-
-    public ViewNotFoundException(string entityLogicalName, string viewName, Guid savedQueryId)
-        : base($"No view with id '{savedQueryId}' was found (this YAML's own record of '{viewName}' on '{entityLogicalName}'). It may have been deleted since this file was last exported — re-export to get its current id, or restore the deleted view first. Creating a new view isn't supported yet.")
-    {
-        EntityLogicalName = entityLogicalName;
-        ViewName = viewName;
-        SavedQueryId = savedQueryId;
-    }
-
-    public string EntityLogicalName { get; }
-    public string ViewName { get; }
-    public Guid? SavedQueryId { get; }
+    public string EntityLogicalName { get; } = entityLogicalName;
+    public string ViewName { get; } = viewName;
+    public Guid? SavedQueryId { get; } = savedQueryId;
 }
