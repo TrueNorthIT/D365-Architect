@@ -42,10 +42,80 @@ public sealed record SolutionImportResult(int Succeeded, int Failed, string? Sto
 /// console: create every missing table first, then (each stage reading live
 /// state afresh, because no preview is built before creation finishes) the
 /// same sequence as before - choices, then per table folder its table, views
-/// and forms. Never writes to the input folder. Stub added by the
-/// test-first pass; behaviour pinned by <c>SolutionImportOrchestratorTests</c>.
+/// and forms. Never writes to the input folder. Behaviour pinned by
+/// <c>SolutionImportOrchestratorTests</c>.
+///
+/// Failure handling differs by stage on purpose. A failed view or form (or
+/// choice/column import) doesn't stop the rest, as always. A failed create
+/// stops the whole run at that table - no further creates and no later
+/// stages: every later stage of that table would fail against a table that
+/// isn't there, and a later table's lookups may target it, so carrying on
+/// only buries the one error that matters under a cascade of 404s.
 /// </summary>
 public sealed class SolutionImportOrchestrator
 {
-    public Task<SolutionImportResult> RunAsync(string inputDirectory, ISolutionImportStepRunner runner, CancellationToken cancellationToken) => throw new NotImplementedException();
+    public async Task<SolutionImportResult> RunAsync(string inputDirectory, ISolutionImportStepRunner runner, CancellationToken cancellationToken)
+    {
+        var tableDirectories = Sorted(Directory.GetDirectories(inputDirectory));
+        var succeeded = 0;
+        var failed = 0;
+
+        foreach (var tablePath in tableDirectories.SelectMany(d => Sorted(Directory.GetFiles(d, "*.table.yml"))))
+        {
+            if (!await TryRunAsync(runner, SolutionImportStage.CreateTable, tablePath, cancellationToken))
+            {
+                return new SolutionImportResult(succeeded, failed + 1, StoppedAtAssetPath: tablePath);
+            }
+
+            succeeded++;
+        }
+
+        var steps = new List<(SolutionImportStage Stage, string Path)>();
+        var choicesPath = Path.Combine(inputDirectory, "choices.yml");
+        if (File.Exists(choicesPath))
+        {
+            steps.Add((SolutionImportStage.ImportChoices, choicesPath));
+        }
+
+        foreach (var directory in tableDirectories)
+        {
+            steps.AddRange(Sorted(Directory.GetFiles(directory, "*.table.yml")).Select(p => (SolutionImportStage.ImportTable, p)));
+            steps.AddRange(Sorted(Directory.GetFiles(directory, "*.view.yml")).Select(p => (SolutionImportStage.ImportView, p)));
+            steps.AddRange(Sorted(Directory.GetFiles(directory, "*.form.yml")).Select(p => (SolutionImportStage.ImportForm, p)));
+        }
+
+        foreach (var (stage, path) in steps)
+        {
+            if (await TryRunAsync(runner, stage, path, cancellationToken))
+            {
+                succeeded++;
+            }
+            else
+            {
+                failed++;
+            }
+        }
+
+        return new SolutionImportResult(succeeded, failed, StoppedAtAssetPath: null);
+    }
+
+    private static IEnumerable<string> Sorted(IEnumerable<string> paths) => paths.OrderBy(p => p, StringComparer.OrdinalIgnoreCase).ToList();
+
+    /// <summary>
+    /// A step that throws is a failure, not a crash. The production runner
+    /// already catches and prints its own exceptions (this layer never
+    /// writes to the console); this is the backstop that keeps one throwing
+    /// step from aborting the run regardless.
+    /// </summary>
+    private static async Task<bool> TryRunAsync(ISolutionImportStepRunner runner, SolutionImportStage stage, string path, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await runner.RunAsync(stage, path, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return false;
+        }
+    }
 }

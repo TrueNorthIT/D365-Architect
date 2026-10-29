@@ -187,6 +187,7 @@ public sealed class EntityJsonDefinitionReader : IEntityDefinitionReader
                 IsActivity = DefaultValueConventions.TrueOrNull(GetBool(root, "IsActivity")),
                 HasActivities = DefaultValueConventions.TrueOrNull(GetBool(root, "HasActivities")),
                 HasNotes = DefaultValueConventions.TrueOrNull(GetBool(root, "HasNotes")),
+                PrimaryNameAttribute = GetString(root, "PrimaryNameAttribute"),
                 Attributes = attributes,
             };
         }

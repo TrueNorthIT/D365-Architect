@@ -14,9 +14,14 @@ namespace D365Architect.Commands.Solution;
 /// Walks a folder previously written by <c>solution export</c> — a
 /// <c>choices.yml</c> at its root, plus one sub-folder per table holding
 /// that table's own <c>*.table.yml</c>/<c>*.view.yml</c>/<c>*.form.yml</c>
-/// files — and imports every file found, in the same order `solution
-/// export` would have written them (choices first, then each table folder's
-/// own table, then its views, then its forms).
+/// files — and imports every file found, in two stages (the order itself
+/// lives in <see cref="SolutionImportOrchestrator"/>): first every
+/// <c>*.table.yml</c> goes through `table create`, so a table that doesn't
+/// exist live yet is created (primary name column only; one that already
+/// exists is just reported), then everything is imported in the same order
+/// `solution export` would have written it (choices first, then each table
+/// folder's own table, then its views, then its forms). Each of those
+/// previews reads live state afresh, so it sees the tables just created.
 ///
 /// Deliberately doesn't invent a new bulk-import mechanism: each file is run
 /// through the exact same <c>RunAsync</c> entry point `choice import`/`table
@@ -28,16 +33,20 @@ namespace D365Architect.Commands.Solution;
 /// <c>--no-transaction</c>/<c>--allow-schema-violations</c> are forwarded to
 /// every file they apply to, so `--yes` runs the whole solution unattended
 /// the same way it does for a single asset today. <c>--solution</c> is
-/// required (not optional the way it is on the individual `table import`/
-/// `choice import` commands) and is likewise forwarded to every table/
-/// choice import, so any brand-new column/lookup relationship/global choice
+/// required (not optional the way it is on the individual `table create`/
+/// `table import`/`choice import` commands) and is likewise forwarded to
+/// every table create/import and choice import, so any brand-new table/
+/// column/lookup relationship/global choice
 /// this run creates actually joins the solution it came from — see
 /// <see cref="Services.Dataverse.IDataverseClient.CreateAttributeAsync"/>'s
 /// own doc comment for the gap this closes; without it, a new asset would
 /// exist live but silently not show up in a later `solution export` of the
 /// same solution.
 ///
-/// One file failing (a validation error, a Dataverse rejection, a missing
+/// A table that can't be created stops the whole run there: no further
+/// creates and no later stages, with the table named — see
+/// <see cref="SolutionImportOrchestrator"/> for why. Past the create stage,
+/// one file failing (a validation error, a Dataverse rejection, a missing
 /// live counterpart) doesn't stop the rest — this keeps going through every
 /// remaining file so one bad form doesn't block importing everything else,
 /// then reports how many succeeded/failed at the end and exits non-zero if
@@ -47,6 +56,7 @@ namespace D365Architect.Commands.Solution;
 /// larger transaction.
 /// </summary>
 public sealed class ImportSolutionCommand(
+    ITableCreateService tableCreateService,
     ITableImportService tableImportService,
     IViewImportService viewImportService,
     IFormImportService formImportService,
@@ -88,84 +98,57 @@ public sealed class ImportSolutionCommand(
             return 1;
         }
 
-        var succeeded = 0;
-        var failed = 0;
+        var result = await new SolutionImportOrchestrator().RunAsync(settings.Input, new StepRunner(this, settings), cancellationToken);
 
-        var choicesPath = Path.Combine(settings.Input, "choices.yml");
-        if (File.Exists(choicesPath))
+        if (result.StoppedAtAssetPath is { } stoppedAt)
         {
-            if (await TryRunAsync(choicesPath, () => new ImportChoiceCommand(globalChoiceImportService, importRunner).RunAsync(
-                new ImportChoiceCommand.Settings { Input = choicesPath, Yes = settings.Yes, WhatIf = settings.WhatIf, Solution = settings.Solution }, cancellationToken)))
-            {
-                succeeded++;
-            }
-            else
-            {
-                failed++;
-            }
-
-            AnsiConsole.WriteLine();
+            ErrorConsole.Print($"Stopped: the table in '{stoppedAt}' couldn't be created, so no later tables were created and no choices, columns, views or forms were imported. {result.Succeeded} succeeded before it.");
+            return 1;
         }
 
-        foreach (var entityDirectory in Directory.GetDirectories(settings.Input).OrderBy(d => d, StringComparer.OrdinalIgnoreCase))
-        {
-            foreach (var tablePath in Directory.GetFiles(entityDirectory, "*.table.yml").OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
-            {
-                if (await TryRunAsync(tablePath, () => new ImportTableCommand(tableImportService, importRunner).RunAsync(
-                    new ImportTableCommand.Settings { Input = tablePath, Yes = settings.Yes, WhatIf = settings.WhatIf, NoTransaction = settings.NoTransaction, Solution = settings.Solution }, cancellationToken)))
-                {
-                    succeeded++;
-                }
-                else
-                {
-                    failed++;
-                }
-
-                AnsiConsole.WriteLine();
-            }
-
-            foreach (var viewPath in Directory.GetFiles(entityDirectory, "*.view.yml").OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
-            {
-                if (await TryRunAsync(viewPath, () => new ImportViewCommand(viewImportService, importRunner).RunAsync(
-                    new ImportViewCommand.Settings { Input = viewPath, Yes = settings.Yes, WhatIf = settings.WhatIf }, cancellationToken)))
-                {
-                    succeeded++;
-                }
-                else
-                {
-                    failed++;
-                }
-
-                AnsiConsole.WriteLine();
-            }
-
-            foreach (var formPath in Directory.GetFiles(entityDirectory, "*.form.yml").OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
-            {
-                if (await TryRunAsync(formPath, () => new ImportFormCommand(formImportService, importRunner).RunAsync(
-                    new ImportFormCommand.Settings { Input = formPath, Yes = settings.Yes, WhatIf = settings.WhatIf, AllowSchemaViolations = settings.AllowSchemaViolations }, cancellationToken)))
-                {
-                    succeeded++;
-                }
-                else
-                {
-                    failed++;
-                }
-
-                AnsiConsole.WriteLine();
-            }
-        }
-
-        if (succeeded == 0 && failed == 0)
+        if (result.Succeeded == 0 && result.Failed == 0)
         {
             ErrorConsole.Warn($"No choices.yml or table sub-folders found under '{settings.Input}' — nothing to import.");
             return 0;
         }
 
-        AnsiConsole.MarkupLine(failed == 0
-            ? $"[green]Done.[/] {succeeded} asset(s) processed."
-            : $"[yellow]Done with errors.[/] {succeeded} succeeded, {failed} failed — see above.");
+        AnsiConsole.MarkupLine(result.Failed == 0
+            ? $"[green]Done.[/] {result.Succeeded} asset(s) processed."
+            : $"[yellow]Done with errors.[/] {result.Succeeded} succeeded, {result.Failed} failed — see above.");
 
-        return failed == 0 ? 0 : 1;
+        return result.Failed == 0 ? 0 : 1;
+    }
+
+    /// <summary>
+    /// Runs one stage for one file through that asset's own command, with
+    /// this command's options forwarded to every one they apply to. Kept as
+    /// the single place a stage maps to a command so the orchestrator (the
+    /// ordering) and the per-asset commands (the safety) stay separate.
+    /// </summary>
+    private Task<int> RunStepAsync(Settings settings, SolutionImportStage stage, string assetPath, CancellationToken cancellationToken) => stage switch
+    {
+        SolutionImportStage.CreateTable => new CreateTableCommand(tableCreateService, importRunner).RunAsync(
+            new CreateTableCommand.Settings { Input = assetPath, Yes = settings.Yes, WhatIf = settings.WhatIf, Solution = settings.Solution }, cancellationToken),
+        SolutionImportStage.ImportChoices => new ImportChoiceCommand(globalChoiceImportService, importRunner).RunAsync(
+            new ImportChoiceCommand.Settings { Input = assetPath, Yes = settings.Yes, WhatIf = settings.WhatIf, Solution = settings.Solution }, cancellationToken),
+        SolutionImportStage.ImportTable => new ImportTableCommand(tableImportService, importRunner).RunAsync(
+            new ImportTableCommand.Settings { Input = assetPath, Yes = settings.Yes, WhatIf = settings.WhatIf, NoTransaction = settings.NoTransaction, Solution = settings.Solution }, cancellationToken),
+        SolutionImportStage.ImportView => new ImportViewCommand(viewImportService, importRunner).RunAsync(
+            new ImportViewCommand.Settings { Input = assetPath, Yes = settings.Yes, WhatIf = settings.WhatIf }, cancellationToken),
+        SolutionImportStage.ImportForm => new ImportFormCommand(formImportService, importRunner).RunAsync(
+            new ImportFormCommand.Settings { Input = assetPath, Yes = settings.Yes, WhatIf = settings.WhatIf, AllowSchemaViolations = settings.AllowSchemaViolations }, cancellationToken),
+        _ => throw new ArgumentOutOfRangeException(nameof(stage), stage, null),
+    };
+
+    /// <summary>The production <see cref="ISolutionImportStepRunner"/>: <see cref="RunStepAsync"/> behind <see cref="TryRunAsync"/>, plus the blank line between assets this command always printed. Internal so tests can check the wiring.</summary>
+    internal sealed class StepRunner(ImportSolutionCommand command, Settings settings) : ISolutionImportStepRunner
+    {
+        public async Task<bool> RunAsync(SolutionImportStage stage, string assetPath, CancellationToken cancellationToken)
+        {
+            var succeeded = await TryRunAsync(assetPath, () => command.RunStepAsync(settings, stage, assetPath, cancellationToken));
+            AnsiConsole.WriteLine();
+            return succeeded;
+        }
     }
 
     /// <summary>

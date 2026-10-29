@@ -61,7 +61,7 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         // get at those without knowing each attribute's concrete type upfront.
         var relativePath = $"EntityDefinitions(LogicalName='{Uri.EscapeDataString(entityLogicalName)}')" +
             "?$select=LogicalName,SchemaName,DisplayName,DisplayCollectionName,Description," +
-            "OwnershipType,IsActivity,HasActivities,HasNotes" +
+            "OwnershipType,IsActivity,HasActivities,HasNotes,PrimaryNameAttribute" +
             "&$expand=Attributes";
 
         using var request = CreateRequest(environmentUrl, relativePath, accessToken);
@@ -72,10 +72,27 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         return await response.Content.ReadAsStringAsync(cancellationToken);
     }
 
-    // Stubs added by the test-first pass for `table create` - the developer implements these.
-    public Task<bool> EntityExistsAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken) => throw new NotImplementedException();
+    // Unlike TryGetEntityMetadataIdAsync below, only a 404 means "not
+    // there": any other failure (401, 500, throttling) throws, because
+    // reading it as "doesn't exist" would send `table create`'s POST at a
+    // table that may well be live.
+    public async Task<bool> EntityExistsAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken)
+    {
+        var relativePath = $"EntityDefinitions(LogicalName='{Uri.EscapeDataString(entityLogicalName)}')?$select=MetadataId";
 
-    public Task CreateEntityAsync(Uri environmentUrl, string accessToken, JsonObject entityMetadata, string? solutionUniqueName, CancellationToken cancellationToken) => throw new NotImplementedException();
+        using var request = CreateRequest(environmentUrl, relativePath, accessToken);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            return false;
+        }
+
+        await EnsureSuccessAsync(response, cancellationToken);
+        return true;
+    }
+
+    public async Task CreateEntityAsync(Uri environmentUrl, string accessToken, JsonObject entityMetadata, string? solutionUniqueName, CancellationToken cancellationToken) =>
+        await SendWriteAsync(environmentUrl, accessToken, new DataverseWrite.CreateEntity(entityMetadata, solutionUniqueName), cancellationToken);
 
     public async Task<IReadOnlySet<Guid>?> TryGetSolutionAttributeMetadataIdsAsync(Uri environmentUrl, string accessToken, string solutionUniqueName, CancellationToken cancellationToken)
     {
@@ -626,6 +643,9 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
     private static (HttpMethod Method, string RelativeUrl, JsonObject Body, IReadOnlyList<(string Name, string Value)> Headers) ToHttpRequest(DataverseWrite write) => write switch
     {
         DataverseWrite.UpdateEntity w => (HttpMethod.Put, $"EntityDefinitions(LogicalName='{Uri.EscapeDataString(w.EntityLogicalName)}')", w.Metadata, MergeLabelsHeader),
+        // POST to the collection itself, no key segment - Microsoft Learn, "Create table definitions":
+        // https://learn.microsoft.com/power-apps/developer/data-platform/webapi/create-update-entity-definitions-using-web-api
+        DataverseWrite.CreateEntity w => (HttpMethod.Post, "EntityDefinitions", w.Metadata, SolutionHeader(w.SolutionUniqueName)),
         DataverseWrite.CreateAttribute w => (HttpMethod.Post, $"EntityDefinitions(LogicalName='{Uri.EscapeDataString(w.EntityLogicalName)}')/Attributes", w.Metadata, SolutionHeader(w.SolutionUniqueName)),
         DataverseWrite.UpdateAttribute w => (HttpMethod.Put, $"EntityDefinitions(LogicalName='{Uri.EscapeDataString(w.EntityLogicalName)}')/Attributes(LogicalName='{Uri.EscapeDataString(w.AttributeLogicalName)}')", w.Metadata, MergeLabelsHeader),
         DataverseWrite.CreateOneToManyRelationship w => (HttpMethod.Post, "RelationshipDefinitions", w.Metadata, SolutionHeader(w.SolutionUniqueName)),

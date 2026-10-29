@@ -83,6 +83,10 @@ services.AddSingleton<IFormImportService, FormImportService>();
 services.AddSingleton<IViewImportService, ViewImportService>();
 services.AddSingleton<ITableImportService, TableImportService>();
 
+// `table create` creates a missing table (primary name column only) — the
+// one thing `table import` deliberately never does. See ITableCreateService.
+services.AddSingleton<ITableCreateService, TableCreateService>();
+
 // The preview -> diff -> confirm -> apply flow shared by `form import`/
 // `table import`/`view import` (see ImportRunner's own doc comment) —
 // injected into each command like every other service here, rather than
