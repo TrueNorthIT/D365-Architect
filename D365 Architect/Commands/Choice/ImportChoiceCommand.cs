@@ -37,7 +37,7 @@ namespace D365Architect.Commands.Choice;
 public sealed class ImportChoiceCommand(IGlobalChoiceImportService globalChoiceImportService, ImportRunner importRunner)
     : AsyncCommand<ImportChoiceCommand.Settings>
 {
-    public sealed class Settings : ImportSettingsBase
+    public sealed class Settings : PublishableImportSettings
     {
         [CommandOption("-s|--solution <UNIQUE_NAME>")]
         [Description("Unique name of a solution to add any brand-new global choice to as it's created. Never affects updates to an existing choice. Omit to leave a new choice wherever Dataverse's own default solution context puts it, same as before this option existed.")]

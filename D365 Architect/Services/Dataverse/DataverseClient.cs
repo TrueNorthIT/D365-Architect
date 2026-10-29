@@ -464,6 +464,9 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         await EnsureSuccessAsync(response, cancellationToken);
     }
 
+    public Task PublishGlobalOptionSetsAsync(Uri environmentUrl, string accessToken, IReadOnlyList<string> optionSetNames, CancellationToken cancellationToken) =>
+        throw new NotImplementedException("STUB: PublishXml for <optionsets> is not implemented yet.");
+
     public async Task<ExistingSavedQuery?> TryGetSavedQueryAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string viewName, CancellationToken cancellationToken)
     {
         var relativePath = "savedqueries?$select=savedqueryid,description,fetchxml,layoutxml" +

@@ -33,7 +33,7 @@ namespace D365Architect.Commands.Table;
 public sealed class CreateTableCommand(ITableCreateService tableCreateService, ImportRunner importRunner)
     : AsyncCommand<CreateTableCommand.Settings>
 {
-    public sealed class Settings : ImportSettingsBase
+    public sealed class Settings : PublishableImportSettings
     {
         [CommandOption("-s|--solution <UNIQUE_NAME>")]
         [Description("Unique name of a solution to add the new table to as it is created.")]

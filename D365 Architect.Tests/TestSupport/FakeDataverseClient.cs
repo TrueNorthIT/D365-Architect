@@ -228,6 +228,15 @@ public sealed class FakeDataverseClient : IDataverseClient
         return Task.CompletedTask;
     }
 
+    /// <summary>The option-set names of every <see cref="PublishGlobalOptionSetsAsync"/> call, in order (one list per call).</summary>
+    public List<IReadOnlyList<string>> PublishGlobalOptionSetsCalls { get; } = [];
+
+    public Task PublishGlobalOptionSetsAsync(Uri environmentUrl, string accessToken, IReadOnlyList<string> optionSetNames, CancellationToken cancellationToken)
+    {
+        PublishGlobalOptionSetsCalls.Add(optionSetNames);
+        return Task.CompletedTask;
+    }
+
     public Task<string> GetEntityMetadataJsonAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken) =>
         Task.FromResult(EntityMetadataJson ?? throw new InvalidOperationException($"{nameof(EntityMetadataJson)} wasn't configured."));
 

@@ -64,7 +64,7 @@ namespace D365Architect.Commands.Table;
 public sealed class ImportTableCommand(ITableImportService tableImportService, ImportRunner importRunner)
     : AsyncCommand<ImportTableCommand.Settings>
 {
-    public sealed class Settings : ImportSettingsBase
+    public sealed class Settings : PublishableImportSettings
     {
         [CommandOption("--no-transaction")]
         [Description("Send every column create/update one request at a time instead of as a single atomic Dataverse changeset. Use this if the environment rejects batched metadata writes, or to keep whatever succeeded before a later one fails rather than having the whole import rolled back.")]

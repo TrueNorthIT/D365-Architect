@@ -47,7 +47,7 @@ namespace D365Architect.Commands.View;
 public sealed class ImportViewCommand(IViewImportService viewImportService, ImportRunner importRunner)
     : AsyncCommand<ImportViewCommand.Settings>
 {
-    public sealed class Settings : ImportSettingsBase
+    public sealed class Settings : PublishableImportSettings
     {
         [CommandOption("-s|--solution <UNIQUE_NAME>")]
         [Description("Unique name of a solution to add the view to as it is created or changed.")]

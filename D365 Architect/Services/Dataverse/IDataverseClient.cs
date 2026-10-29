@@ -202,6 +202,18 @@ public interface IDataverseClient
     Task PublishEntityAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Publishes the named global choices (option sets) via the
+    /// <c>PublishXml</c> action, one <c>&lt;optionset&gt;</c> per unique name
+    /// under <c>&lt;optionsets&gt;</c>, in the order given: what
+    /// <c>choice import --publish</c> (REQ-38) calls. Shape confirmed on
+    /// Microsoft Learn, "PublishXmlRequest.ParameterXml": "Publishes an
+    /// optionset using the optionset unique name"
+    /// (https://learn.microsoft.com/dotnet/api/microsoft.crm.sdk.messages.publishxmlrequest.parameterxml).
+    /// STUB: not implemented yet.
+    /// </summary>
+    Task PublishGlobalOptionSetsAsync(Uri environmentUrl, string accessToken, IReadOnlyList<string> optionSetNames, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Looks up a single view's id, description, fetchxml, and layoutxml
     /// together by table + display name — the same identity <c>view
     /// export</c> uses (see <see cref="Conversion.Models.ViewDefinition"/>'s
