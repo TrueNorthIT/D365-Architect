@@ -53,7 +53,7 @@ public sealed class FakeDataverseClient : IDataverseClient
     public List<JsonObject> UpdateStateValueCalls { get; } = [];
     public List<(JsonObject Body, string? SolutionUniqueName)> CreateGlobalOptionSetCalls { get; } = [];
     public List<(Guid MetadataId, JsonObject Body)> UpdateGlobalOptionSetCalls { get; } = [];
-    public List<(Guid FormId, string FormXml)> UpdateSystemFormXmlCalls { get; } = [];
+    public List<(Guid FormId, string FormXml, string? SolutionUniqueName)> UpdateSystemFormXmlCalls { get; } = [];
     public List<string> PublishEntityCalls { get; } = [];
     public List<(string EntityLogicalName, string AttributeLogicalName, int Value)> SetAutoNumberSeedCalls { get; } = [];
 
@@ -84,6 +84,7 @@ public sealed class FakeDataverseClient : IDataverseClient
         }
 
         CreateEntityCalls.Add((entityMetadata, solutionUniqueName));
+        WriteOrder.Add($"create-table:{(string?)entityMetadata["SchemaName"]}");
         return Task.CompletedTask;
     }
 
@@ -104,7 +105,7 @@ public sealed class FakeDataverseClient : IDataverseClient
     public Task<IReadOnlySet<Guid>?> TryGetSolutionSavedQueryIdsAsync(Uri environmentUrl, string accessToken, string solutionUniqueName, CancellationToken cancellationToken) => throw new NotImplementedException();
 
     public ExistingSavedQuery? SavedQuery { get; set; }
-    public List<(Guid SavedQueryId, string? Description, string? FetchXml, string? LayoutXml)> UpdateSavedQueryCalls { get; } = [];
+    public List<(Guid SavedQueryId, string? Description, string? FetchXml, string? LayoutXml, string? SolutionUniqueName)> UpdateSavedQueryCalls { get; } = [];
 
     /// <summary>
     /// Live views keyed by <c>savedqueryid</c> - what
@@ -130,11 +131,73 @@ public sealed class FakeDataverseClient : IDataverseClient
     public Task<ExistingSavedQuery?> TryGetSavedQueryByIdAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, CancellationToken cancellationToken) =>
         Task.FromResult(SavedQueriesById.GetValueOrDefault(savedQueryId));
 
-    public Task UpdateSavedQueryAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, string? description, string? fetchXml, string? layoutXml, CancellationToken cancellationToken)
+    public Task UpdateSavedQueryAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, string? description, string? fetchXml, string? layoutXml, CancellationToken cancellationToken) =>
+        UpdateSavedQueryAsync(environmentUrl, accessToken, savedQueryId, description, fetchXml, layoutXml, solutionUniqueName: null, cancellationToken);
+
+    public Task UpdateSavedQueryAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, string? description, string? fetchXml, string? layoutXml, string? solutionUniqueName, CancellationToken cancellationToken)
     {
-        UpdateSavedQueryCalls.Add((savedQueryId, description, fetchXml, layoutXml));
+        UpdateSavedQueryCalls.Add((savedQueryId, description, fetchXml, layoutXml, solutionUniqueName));
+        WriteOrder.Add($"update-view:{savedQueryId}");
         return Task.CompletedTask;
     }
+    // ---- Simpler hand-written forms and views (REQ-22 to REQ-33) ----
+
+    /// <summary>Every create/update of a table, view or form, in the order issued, e.g. <c>create-table:tn_Project</c>, <c>create-view:All projects</c>, <c>create-form:Project</c> - what the one-run ordering test reads.</summary>
+    public List<string> WriteOrder { get; } = [];
+
+    /// <summary>Live table identities by logical name - what <see cref="TryGetEntityIdentityAsync"/> answers. A missing key is "no such table" (null), as a real 404 is.</summary>
+    public Dictionary<string, EntityIdentity> EntityIdentities { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Every logical name <see cref="TryGetEntityIdentityAsync"/> was asked about.</summary>
+    public List<string> EntityIdentityCalls { get; } = [];
+
+    public Task<EntityIdentity?> TryGetEntityIdentityAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken)
+    {
+        EntityIdentityCalls.Add(entityLogicalName);
+        return Task.FromResult(EntityIdentities.GetValueOrDefault(entityLogicalName));
+    }
+
+    public List<(JsonObject Body, string? SolutionUniqueName)> CreateSavedQueryCalls { get; } = [];
+
+    public Task CreateSavedQueryAsync(Uri environmentUrl, string accessToken, JsonObject body, string? solutionUniqueName, CancellationToken cancellationToken)
+    {
+        CreateSavedQueryCalls.Add((body, solutionUniqueName));
+        WriteOrder.Add($"create-view:{(string?)body["name"]}");
+        return Task.CompletedTask;
+    }
+
+    public List<(JsonObject Body, string? SolutionUniqueName)> CreateSystemFormCalls { get; } = [];
+
+    public Task CreateSystemFormAsync(Uri environmentUrl, string accessToken, JsonObject body, string? solutionUniqueName, CancellationToken cancellationToken)
+    {
+        CreateSystemFormCalls.Add((body, solutionUniqueName));
+        WriteOrder.Add($"create-form:{(string?)body["name"]}");
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Live forms with their systemform <c>type</c> - what <see cref="FindSystemFormsAsync"/> filters, on
+    /// table (<see cref="ExistingSystemForm.EntityLogicalName"/>), name (<see cref="ExistingSystemForm.Name"/>) and type,
+    /// as the real query does. Left empty, it falls back to <see cref="SystemForm"/> (any type) so older tests keep working.
+    /// </summary>
+    public List<(ExistingSystemForm Form, int Type)> LiveSystemForms { get; } = [];
+
+    /// <summary>Every (table, name, type) <see cref="FindSystemFormsAsync"/> was asked for.</summary>
+    public List<(string EntityLogicalName, string FormName, int FormType)> FindSystemFormsCalls { get; } = [];
+
+    public Task<IReadOnlyList<ExistingSystemForm>> FindSystemFormsAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string formName, int formType, CancellationToken cancellationToken)
+    {
+        FindSystemFormsCalls.Add((entityLogicalName, formName, formType));
+
+        IReadOnlyList<ExistingSystemForm> found = LiveSystemForms.Count > 0 || SystemForm is null
+            ? LiveSystemForms
+                .Where(f => string.Equals(f.Form.EntityLogicalName, entityLogicalName, StringComparison.OrdinalIgnoreCase) && f.Form.Name == formName && f.Type == formType)
+                .Select(f => f.Form)
+                .ToList()
+            : [SystemForm];
+        return Task.FromResult(found);
+    }
+
     public Task<string> GetFormDefinitionsJsonAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken) => throw new NotImplementedException();
     public Task<string> GetFormSummariesJsonAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken) => throw new NotImplementedException();
     public Task<IReadOnlySet<Guid>?> TryGetSolutionSystemFormIdsAsync(Uri environmentUrl, string accessToken, string solutionUniqueName, CancellationToken cancellationToken) => throw new NotImplementedException();
@@ -149,9 +212,13 @@ public sealed class FakeDataverseClient : IDataverseClient
     public Task<ExistingSystemForm?> TryGetSystemFormByIdAsync(Uri environmentUrl, string accessToken, Guid formId, CancellationToken cancellationToken) =>
         Task.FromResult(SystemForm);
 
-    public Task UpdateSystemFormXmlAsync(Uri environmentUrl, string accessToken, Guid formId, string formXml, CancellationToken cancellationToken)
+    public Task UpdateSystemFormXmlAsync(Uri environmentUrl, string accessToken, Guid formId, string formXml, CancellationToken cancellationToken) =>
+        UpdateSystemFormXmlAsync(environmentUrl, accessToken, formId, formXml, solutionUniqueName: null, cancellationToken);
+
+    public Task UpdateSystemFormXmlAsync(Uri environmentUrl, string accessToken, Guid formId, string formXml, string? solutionUniqueName, CancellationToken cancellationToken)
     {
-        UpdateSystemFormXmlCalls.Add((formId, formXml));
+        UpdateSystemFormXmlCalls.Add((formId, formXml, solutionUniqueName));
+        WriteOrder.Add($"update-form:{formId}");
         return Task.CompletedTask;
     }
 
@@ -286,6 +353,7 @@ public sealed class FakeDataverseClient : IDataverseClient
                     }
 
                     CreateEntityCalls.Add((w.Metadata, w.SolutionUniqueName));
+                    WriteOrder.Add($"create-table:{(string?)w.Metadata["SchemaName"]}");
                     break;
 
                 case DataverseWrite.UpdateEntity w:

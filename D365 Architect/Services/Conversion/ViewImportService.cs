@@ -54,4 +54,8 @@ public sealed class ViewImportService(IDataverseClient dataverseClient) : IViewI
             preview.NewFetchXml,
             preview.NewLayoutXml,
             cancellationToken);
+
+    // Test-first stub (REQ-22, REQ-23): compile-only; the developer implements it.
+    public Task ApplyAsync(Uri environmentUrl, string accessToken, ViewImportPreview preview, string? solutionUniqueName, CancellationToken cancellationToken) =>
+        throw new NotImplementedException();
 }

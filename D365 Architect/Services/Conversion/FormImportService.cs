@@ -58,6 +58,10 @@ public sealed class FormImportService(IDataverseClient dataverseClient, FormJson
     public Task ApplyAsync(Uri environmentUrl, string accessToken, FormImportPreview preview, CancellationToken cancellationToken)
         => dataverseClient.UpdateSystemFormXmlAsync(environmentUrl, accessToken, preview.FormId, preview.NewFormXml, cancellationToken);
 
+    // Test-first stub (REQ-22, REQ-29): compile-only; the developer implements it.
+    public Task ApplyAsync(Uri environmentUrl, string accessToken, FormImportPreview preview, string? solutionUniqueName, CancellationToken cancellationToken)
+        => throw new NotImplementedException();
+
     public Task PublishAsync(Uri environmentUrl, string accessToken, FormImportPreview preview, CancellationToken cancellationToken)
         => dataverseClient.PublishEntityAsync(environmentUrl, accessToken, preview.Entity, cancellationToken);
 

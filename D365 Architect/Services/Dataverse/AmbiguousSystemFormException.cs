@@ -12,4 +12,16 @@ public sealed class AmbiguousSystemFormException(string entityLogicalName, strin
     public string EntityLogicalName { get; } = entityLogicalName;
     public string FormName { get; } = formName;
     public int MatchCount { get; } = matchCount;
+
+    /// <summary>
+    /// The name + type form of the refusal (REQ-31): lists the candidate ids so the user can add the right
+    /// <c>formId</c>. Test-first stub: the developer writes the message and <see cref="CandidateIds"/>.
+    /// </summary>
+    public AmbiguousSystemFormException(string entityLogicalName, string formName, IReadOnlyList<Guid> candidateIds)
+        : this(entityLogicalName, formName, candidateIds.Count)
+    {
+    }
+
+    /// <summary>The ids of the forms that matched; empty when thrown by the count-only constructor.</summary>
+    public IReadOnlyList<Guid> CandidateIds { get; } = [];
 }

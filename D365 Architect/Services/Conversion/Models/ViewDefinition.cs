@@ -103,4 +103,16 @@ public sealed class ViewDefinition
     /// <summary>The view's column layout, as LayoutXML. Null for views that don't render a grid (e.g. some Quick Find configurations).</summary>
     [YamlMember(Order = 10, ScalarStyle = ScalarStyle.Literal)]
     public string? LayoutXml { get; init; }
+
+    /// <summary>
+    /// A friendlier alternative to <see cref="LayoutXml"/> for hand-written views: the
+    /// columns to show, in order. Each entry is a plain string (the column's logical
+    /// name, default width 150) or <c>{ name, width }</c>. On import the tool builds the
+    /// layout from this, adds any listed column missing from <see cref="FetchXml"/> and
+    /// always includes the table's id column there, and fills in the table's type code.
+    /// Giving both this and <see cref="LayoutXml"/> is refused. Never written by
+    /// <c>view export</c>, which keeps writing the raw <see cref="LayoutXml"/>.
+    /// </summary>
+    [YamlMember(Order = 11)]
+    public IReadOnlyList<ViewColumn>? Columns { get; init; }
 }

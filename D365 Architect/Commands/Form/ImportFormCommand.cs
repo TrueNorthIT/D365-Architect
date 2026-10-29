@@ -60,6 +60,10 @@ public sealed class ImportFormCommand(IFormImportService formImportService, Impo
 {
     public sealed class Settings : ImportSettingsBase
     {
+        // Test-first stub (REQ-22): the property exists so tests compile; the developer adds
+        // [CommandOption("-s|--solution <UNIQUE_NAME>")] and [Description(...)], as CreateTableCommand has, and wires it through.
+        public string? Solution { get; init; }
+
         [CommandOption("--allow-schema-violations")]
         [Description("Proceed even if the rebuilt FormXML has a schema violation Dataverse might reject outright — see FormXmlValidationMessage.IsKnownHarmless. Off by default: a genuine 'invalid child element'/'invalid content' violation has been confirmed live to fail the write with a raw Dataverse 400, not just a cosmetic warning.")]
         public bool AllowSchemaViolations { get; init; }

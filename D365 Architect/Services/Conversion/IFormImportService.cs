@@ -26,7 +26,7 @@ namespace D365Architect.Services.Conversion;
 ///
 /// <see cref="IImportService{TInput,TPreview}.ApplyAsync"/> only writes the
 /// rebuilt FormXML (see
-/// <see cref="Dataverse.IDataverseClient.UpdateSystemFormXmlAsync"/>) — it
+/// <see cref="Dataverse.IDataverseClient.UpdateSystemFormXmlAsync(Uri, string, Guid, string, CancellationToken)"/>) — it
 /// deliberately doesn't publish. Publishing the form's owning table is
 /// <see cref="PublishAsync"/>'s own, separate step instead: it doesn't fit
 /// <see cref="IImportService{TInput,TPreview}"/>'s shared shape (table/view
@@ -38,6 +38,14 @@ public interface IFormImportService : IImportService<FormDefinition, FormImportP
 {
     /// <summary>Publishes <paramref name="preview"/>'s owning table, making a just-applied change visible to end users without a separate manual publish step.</summary>
     Task PublishAsync(Uri environmentUrl, string accessToken, FormImportPreview preview, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// As <see cref="IImportService{TInput,TPreview}.ApplyAsync"/>, adding whatever it creates or changes
+    /// to <paramref name="solutionUniqueName"/> (null = no solution), and creating the form when
+    /// <paramref name="preview"/> is <see cref="FormImportPreview.IsCreate"/> (REQ-22, REQ-29).
+    /// Test-first stub: the developer implements this; behaviour pinned by <c>FormImportServiceCreateTests</c>.
+    /// </summary>
+    Task ApplyAsync(Uri environmentUrl, string accessToken, FormImportPreview preview, string? solutionUniqueName, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -95,4 +103,11 @@ public sealed record FormImportPreview(Guid FormId, string Entity, string Existi
 {
     /// <summary>False when <see cref="ExistingComparableFormXml"/> and <see cref="NewFormXml"/> are identical — see that parameter's own doc comment for why comparing those two, not the raw live document, is what makes this accurate rather than "true" almost every time.</summary>
     public bool HasChanges => ExistingComparableFormXml != NewFormXml;
+
+    /// <summary>
+    /// True when no existing form matched the YAML (no <c>FormId</c>, and no form of that name and type on that
+    /// table), so <c>ApplyAsync</c> creates one (REQ-29). Then <see cref="FormId"/> is <see cref="Guid.Empty"/>,
+    /// <see cref="Entity"/> is the YAML's own table, the existing XML is empty and <see cref="HasChanges"/> is true.
+    /// </summary>
+    public bool IsCreate { get; init; }
 }

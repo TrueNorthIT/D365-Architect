@@ -29,8 +29,8 @@ namespace D365Architect.Commands.View;
 /// plain <c>savedqueries</c> GET reflects the *published* state, so a
 /// follow-up `view export` won't show a just-written FetchXml/LayoutXml
 /// change until something publishes the table (same platform behavior
-/// documented on <see cref="Services.Dataverse.IDataverseClient.UpdateSavedQueryAsync"/>,
-/// confirmed for forms first — see <see cref="Services.Dataverse.IDataverseClient.UpdateSystemFormXmlAsync"/>).
+/// documented on <see cref="Services.Dataverse.IDataverseClient.UpdateSavedQueryAsync(Uri, string, Guid, string?, string?, string?, CancellationToken)"/>,
+/// confirmed for forms first — see <see cref="Services.Dataverse.IDataverseClient.UpdateSystemFormXmlAsync(Uri, string, Guid, string, CancellationToken)"/>).
 /// The write itself genuinely takes regardless.
 ///
 /// The shared preview → diff → confirm → apply flow itself lives in the
@@ -42,7 +42,12 @@ namespace D365Architect.Commands.View;
 public sealed class ImportViewCommand(IViewImportService viewImportService, ImportRunner importRunner)
     : AsyncCommand<ImportViewCommand.Settings>
 {
-    public sealed class Settings : ImportSettingsBase;
+    public sealed class Settings : ImportSettingsBase
+    {
+        // Test-first stub (REQ-22): the property exists so tests compile; the developer adds
+        // [CommandOption("-s|--solution <UNIQUE_NAME>")] and [Description(...)], as CreateTableCommand has, and wires it through.
+        public string? Solution { get; init; }
+    }
 
     protected override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken) =>
         RunAsync(settings, cancellationToken);

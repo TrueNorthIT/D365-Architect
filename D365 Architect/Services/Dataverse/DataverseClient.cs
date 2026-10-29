@@ -364,6 +364,20 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         await EnsureSuccessAsync(response, cancellationToken);
     }
 
+    // ---- Simpler hand-written forms and views: compile-only stubs from the test-first pass; the developer implements these. ----
+
+    public Task<EntityIdentity?> TryGetEntityIdentityAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken) => throw new NotImplementedException();
+
+    public Task CreateSavedQueryAsync(Uri environmentUrl, string accessToken, JsonObject body, string? solutionUniqueName, CancellationToken cancellationToken) => throw new NotImplementedException();
+
+    public Task UpdateSavedQueryAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, string? description, string? fetchXml, string? layoutXml, string? solutionUniqueName, CancellationToken cancellationToken) => throw new NotImplementedException();
+
+    public Task<IReadOnlyList<ExistingSystemForm>> FindSystemFormsAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string formName, int formType, CancellationToken cancellationToken) => throw new NotImplementedException();
+
+    public Task CreateSystemFormAsync(Uri environmentUrl, string accessToken, JsonObject body, string? solutionUniqueName, CancellationToken cancellationToken) => throw new NotImplementedException();
+
+    public Task UpdateSystemFormXmlAsync(Uri environmentUrl, string accessToken, Guid formId, string formXml, string? solutionUniqueName, CancellationToken cancellationToken) => throw new NotImplementedException();
+
     public async Task PublishEntityAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken)
     {
         // Schema confirmed against Microsoft's own docs for

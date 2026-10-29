@@ -25,7 +25,16 @@ namespace D365Architect.Services.Conversion;
 /// view matches that table + name. <see cref="IImportService{TInput,TPreview}.ApplyAsync"/>
 /// doesn't publish the change.
 /// </summary>
-public interface IViewImportService : IImportService<ViewDefinition, ViewImportPreview>;
+public interface IViewImportService : IImportService<ViewDefinition, ViewImportPreview>
+{
+    /// <summary>
+    /// As <see cref="IImportService{TInput,TPreview}.ApplyAsync"/>, adding whatever it creates or changes
+    /// to <paramref name="solutionUniqueName"/> (null = no solution), and creating the view when
+    /// <paramref name="preview"/> is <see cref="ViewImportPreview.IsCreate"/> (REQ-22, REQ-23).
+    /// Test-first stub: the developer implements this; behaviour pinned by <c>ViewImportServiceCreateTests</c>.
+    /// </summary>
+    Task ApplyAsync(Uri environmentUrl, string accessToken, ViewImportPreview preview, string? solutionUniqueName, CancellationToken cancellationToken);
+}
 
 /// <param name="SavedQueryId">The view's id — what <see cref="IImportService{TInput,TPreview}.ApplyAsync"/> updates.</param>
 /// <param name="ExistingDescription">The view's current live description.</param>
@@ -51,6 +60,13 @@ public sealed record ViewImportPreview(
     /// by-name lookup or when the names agree.
     /// </summary>
     public string? IdentityMismatchWarning { get; init; }
+
+    /// <summary>
+    /// True when the YAML matched no existing view (no <c>savedQueryId</c>, and no view of that name on that
+    /// table), so <c>ApplyAsync</c> creates one (REQ-23). Then <see cref="SavedQueryId"/> is <see cref="Guid.Empty"/>,
+    /// the <c>Existing*</c> values are null and <see cref="HasChanges"/> is true.
+    /// </summary>
+    public bool IsCreate { get; init; }
 
     /// <summary>
     /// False when the local YAML's description/FetchXml/LayoutXml (whichever
