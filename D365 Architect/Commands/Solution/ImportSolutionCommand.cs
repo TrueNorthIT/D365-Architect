@@ -92,6 +92,9 @@ public sealed class ImportSolutionCommand(
         [CommandOption("--allow-schema-violations")]
         [Description("For every form import: proceed even if the rebuilt FormXML has a schema violation Dataverse might reject outright.")]
         public bool AllowSchemaViolations { get; init; }
+
+        // STUB (REQ-11): needs [CommandOption("--no-publish")] and a Description; forwarded to every step's settings.
+        public bool NoPublish { get; init; }
     }
 
     protected override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken) =>
@@ -177,6 +180,10 @@ public sealed class ImportSolutionCommand(
             AnsiConsole.WriteLine();
             return outcome;
         }
+
+        // STUB: see ISolutionImportStepRunner.CreateTablesAsync.
+        public Task<SolutionTableCreateResult> CreateTablesAsync(IReadOnlyList<string> tableAssetPaths, CancellationToken cancellationToken) =>
+            throw new NotImplementedException("STUB: batch table create for solution import is not implemented yet.");
 
         public void ReportSkipped(SolutionImportStage stage, string assetPath, string tableLogicalName) =>
             AnsiConsole.MarkupLine($"[grey]'{assetPath.EscapeMarkup()}' skipped: '{tableLogicalName.EscapeMarkup()}' doesn't exist yet and would be created first.[/]");

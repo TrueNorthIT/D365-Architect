@@ -25,7 +25,9 @@ namespace D365Architect.Services.Dataverse;
 internal static class ODataBatchResponseParser
 {
     /// <summary>One leaf HTTP response found somewhere inside the (possibly nested) multipart body.</summary>
-    public readonly record struct Part(int StatusCode, string Body);
+    // STUB: ContentId is never filled in yet. It should be the part's own Content-ID header (the number of the request it answers), e.g. "2";
+    // in a failed changeset that header sits on the single flat error part.
+    public readonly record struct Part(int StatusCode, string Body, string? ContentId = null);
 
     public static IReadOnlyList<Part> ParseParts(string multipartBody, string boundary)
     {

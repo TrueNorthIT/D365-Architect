@@ -36,6 +36,10 @@ public sealed class TableCreateService(IDataverseClient dataverseClient) : ITabl
     public Task PublishAsync(Uri environmentUrl, string accessToken, TableCreatePreview preview, CancellationToken cancellationToken) =>
         dataverseClient.PublishEntityAsync(environmentUrl, accessToken, preview.EntityLogicalName, cancellationToken);
 
+    // STUB: does nothing yet - see ITableCreateService.ApplyAllAsync for what it must do.
+    public Task ApplyAllAsync(Uri environmentUrl, string accessToken, IReadOnlyList<TableCreatePreview> previews, string? solutionUniqueName, CancellationToken cancellationToken) =>
+        Task.CompletedTask;
+
     public async Task ApplyAsync(Uri environmentUrl, string accessToken, TableCreatePreview preview, string? solutionUniqueName, CancellationToken cancellationToken)
     {
         if (preview.AlreadyExists || preview.RequestBody is null)

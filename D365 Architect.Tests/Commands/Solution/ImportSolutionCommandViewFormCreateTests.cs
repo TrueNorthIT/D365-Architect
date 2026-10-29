@@ -66,8 +66,8 @@ public sealed class ImportSolutionCommandViewFormCreateTests : IDisposable
             new GlobalChoiceImportService(client),
             new ImportRunner(new FakeAuthenticationService()));
 
-    private static ImportSolutionCommand.StepRunner CreateRunner(FakeDataverseClient client) =>
-        new(CreateCommand(client), new ImportSolutionCommand.Settings { Input = "unused", Solution = Solution, Yes = true });
+    private static ImportSolutionCommand.StepRunner CreateRunner(FakeDataverseClient client, bool noPublish = false) =>
+        new(CreateCommand(client), new ImportSolutionCommand.Settings { Input = "unused", Solution = Solution, Yes = true, NoPublish = noPublish });
 
     // ---- the view stage creates, in the solution, without prompting ----
 
@@ -148,8 +148,38 @@ public sealed class ImportSolutionCommandViewFormCreateTests : IDisposable
         Expect.Equal(Solution, Assert.Single(client.CreateSystemFormCalls).SolutionUniqueName, "REQ-22: the new form should join the solution.");
     }
 
+    // REQ-11: "`solution import --no-publish` passes the option on to every step (nothing published)." The same whole run with the option set
+    // still creates the table, view and form - in the same order - but publishes nothing, not even the form that always published before.
+    // Code path: ImportSolutionCommand.Settings.NoPublish forwarded to every per-asset command's settings (CreateRunner reads it from there).
+    [Fact]
+    [Trait("Requirement", "REQ-11")]
+    [Trait("Feature", "publish-by-default")]
+    public async Task WholeRun_WithNoPublish_CreatesEverythingAndPublishesNothing()
+    {
+        using var console = new ConsoleHarness();
+        File.WriteAllText(TablePath, TableCreateFixtures.TableYaml());
+        WriteView();
+        WriteForm();
+        var client = new FakeDataverseClient();
+        client.EntityExists = _ => client.CreateEntityCalls.Count > 0;
+        var runner = new TableThenViewAndFormRunner(CreateRunner(client, noPublish: true), client);
+
+        var result = await new SolutionImportOrchestrator().RunAsync(_root, runner, CancellationToken.None);
+
+        Expect.Equal(0, result.Failed, $"REQ-11: nothing in the run should fail. Output: <{console.Output}>");
+        Expect.Sequence(["create-table:tn_Project", "create-view:All projects", "create-form:Project"], client.WriteOrder, $"REQ-11: --no-publish must not stop the table, view and form being created. Output: <{console.Output}>");
+        PublishAssertions.NothingPublished(client, "REQ-11", "'solution import --no-publish' should publish nothing at any step.");
+    }
+
     private sealed class TableThenViewAndFormRunner(ImportSolutionCommand.StepRunner inner, FakeDataverseClient client) : ISolutionImportStepRunner
     {
+        public async Task<SolutionTableCreateResult> CreateTablesAsync(IReadOnlyList<string> tableAssetPaths, CancellationToken cancellationToken)
+        {
+            var result = await inner.CreateTablesAsync(tableAssetPaths, cancellationToken);
+            client.EntityIdentities["tn_project"] = ProjectIdentity; // Dataverse assigns the type code at creation
+            return result;
+        }
+
         public async Task<SolutionImportStepOutcome> RunAsync(SolutionImportStage stage, string assetPath, CancellationToken cancellationToken)
         {
             if (stage is SolutionImportStage.ImportChoices or SolutionImportStage.ImportTable)
@@ -160,7 +190,7 @@ public sealed class ImportSolutionCommandViewFormCreateTests : IDisposable
             var outcome = await inner.RunAsync(stage, assetPath, cancellationToken);
             if (stage == SolutionImportStage.CreateTable)
             {
-                client.EntityIdentities["tn_project"] = ProjectIdentity; // Dataverse assigns the type code at creation
+                client.EntityIdentities["tn_project"] = ProjectIdentity; // (the per-table create step, until the batch replaces it)
             }
 
             return outcome;

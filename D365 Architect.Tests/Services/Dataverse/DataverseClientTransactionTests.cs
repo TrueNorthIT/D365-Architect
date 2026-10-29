@@ -125,7 +125,7 @@ public sealed class DataverseClientTransactionTests
         var (client, handler) = CreateClient();
         handler.ResponseBody = FailureBody("SchemaName already in use");
 
-        var ex = await Assert.ThrowsAsync<HttpRequestException>(() => client.ExecuteTransactionAsync(
+        var ex = await Assert.ThrowsAnyAsync<HttpRequestException>(() => client.ExecuteTransactionAsync(
             new Uri("https://example.crm.dynamics.com"), "token",
             [new DataverseWrite.CreateAttribute("tn_test", new JsonObject { ["SchemaName"] = "tn_Dup" })], CancellationToken.None));
 

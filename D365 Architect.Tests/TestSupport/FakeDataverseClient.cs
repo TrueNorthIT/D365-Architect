@@ -347,9 +347,18 @@ public sealed class FakeDataverseClient : IDataverseClient
     // here; this fake only needs to record what was asked for. ----
     public List<IReadOnlyList<DataverseWrite>> ExecuteTransactionCalls { get; } = [];
 
+    /// <summary>When set, <see cref="ExecuteTransactionAsync"/> records the call, applies nothing and throws a <see cref="DataverseTransactionFailedException"/> naming this request (1-based Content-ID; null = unknown) - Dataverse rolling a changeset back.</summary>
+    public (int? ContentId, string Message)? TransactionFailure { get; set; }
+
     public Task ExecuteTransactionAsync(Uri environmentUrl, string accessToken, IReadOnlyList<DataverseWrite> writes, CancellationToken cancellationToken)
     {
         ExecuteTransactionCalls.Add(writes);
+
+        if (TransactionFailure is { } failure)
+        {
+            // A rolled-back changeset keeps nothing: nothing below is recorded, as on the real service.
+            throw new DataverseTransactionFailedException(failure.Message, failure.ContentId);
+        }
 
         foreach (var write in writes)
         {

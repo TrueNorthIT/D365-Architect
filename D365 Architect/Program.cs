@@ -102,20 +102,8 @@ var app = new CommandApp(registrar);
 // 3. Wire up the top-level commands/branches. Each one owns its own
 //    registration (name, description, sub-commands, examples) via its own
 //    Configure(IConfigurator) method — this list is just the index of
-//    what's plugged in. Add a new command/branch by adding one line here.
-app.Configure(config =>
-{
-    config.SetApplicationName("d365architect");
-
-    AuthCommands.Configure(config);
-    WhoAmICommand.Configure(config);
-    EnvironmentCommands.Configure(config);
-    TableCommands.Configure(config);
-    ViewCommands.Configure(config);
-    FormCommands.Configure(config);
-    ChoiceCommands.Configure(config);
-    SolutionCommands.Configure(config);
-    SchemaCommands.Configure(config);
-});
+//    what's plugged in (now in CommandAppConfiguration, so tests can drive
+//    the same tree). Add a new command/branch by adding one line there.
+app.Configure(CommandAppConfiguration.Configure);
 
 return await app.RunAsync(args);

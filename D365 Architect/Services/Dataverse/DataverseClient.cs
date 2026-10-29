@@ -13,6 +13,13 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
+    /// <summary>
+    /// How long <see cref="ExecuteTransactionAsync"/> waits for its <c>$batch</c> changeset - longer than an ordinary request
+    /// (<see cref="HttpClient.Timeout"/>'s own default is 100 seconds), because each table create inside one takes 14-40 seconds.
+    /// STUB: still the 100-second default, and not yet applied to the request.
+    /// </summary>
+    public TimeSpan TransactionTimeout { get; init; } = TimeSpan.FromSeconds(100);
+
     // System.Net.Http.Json's JsonContent.Create camelCases property names by
     // default when no options are given (confirmed live: {"ParameterXml": ...}
     // came out on the wire as {"parameterXml": ...}, which Dataverse's

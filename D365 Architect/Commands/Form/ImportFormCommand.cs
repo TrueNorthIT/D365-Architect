@@ -61,7 +61,7 @@ namespace D365Architect.Commands.Form;
 public sealed class ImportFormCommand(IFormImportService formImportService, ImportRunner importRunner)
     : AsyncCommand<ImportFormCommand.Settings>
 {
-    public sealed class Settings : ImportSettingsBase
+    public sealed class Settings : PublishableImportSettings
     {
         [CommandOption("-s|--solution <UNIQUE_NAME>")]
         [Description("Unique name of a solution to add the form to as it is created or changed.")]

@@ -36,6 +36,16 @@ public enum SolutionImportStepOutcome
 }
 
 /// <summary>
+/// What <see cref="ISolutionImportStepRunner.CreateTablesAsync"/> reports: the whole create stage, which is one decision and one transaction.
+/// </summary>
+/// <param name="Outcome"><see cref="SolutionImportStepOutcome.Succeeded"/> (every missing table was created, or none was missing, or - under <c>--whatif</c> - nothing was written),
+/// <see cref="SolutionImportStepOutcome.Failed"/> (the transaction was rolled back, or a table file was refused: none was created) or
+/// <see cref="SolutionImportStepOutcome.Declined"/> (the user said no: none was created).</param>
+/// <param name="WouldCreateAssetPaths">Under <c>--whatif</c>: the <c>*.table.yml</c> paths of the tables that don't exist and would be created; their other files are skipped. Empty otherwise.</param>
+/// <param name="FailedAssetPath">For <see cref="SolutionImportStepOutcome.Failed"/>: the <c>*.table.yml</c> path of the table that failed, when it can be told.</param>
+public sealed record SolutionTableCreateResult(SolutionImportStepOutcome Outcome, IReadOnlyList<string> WouldCreateAssetPaths, string? FailedAssetPath = null);
+
+/// <summary>
 /// Does one file's worth of work for one stage - in production, the
 /// matching per-asset command's <c>RunAsync</c> (so each step keeps its own
 /// preview, diff, confirm and apply). An exception is treated as
@@ -45,6 +55,13 @@ public enum SolutionImportStepOutcome
 public interface ISolutionImportStepRunner
 {
     Task<SolutionImportStepOutcome> RunAsync(SolutionImportStage stage, string assetPath, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The create stage, once for the whole run: given every <c>*.table.yml</c> path (sorted, so the order is stable), lists the tables
+    /// that don't exist, asks ONCE ("Create these N tables?", unless <c>--yes</c>; never under <c>--whatif</c>) and creates them all in one
+    /// transaction (<see cref="ITableCreateService.ApplyAllAsync"/>). Replaces the per-table <see cref="SolutionImportStage.CreateTable"/> steps.
+    /// </summary>
+    Task<SolutionTableCreateResult> CreateTablesAsync(IReadOnlyList<string> tableAssetPaths, CancellationToken cancellationToken);
 
     /// <summary>Reports a step not run because its table (<paramref name="tableLogicalName"/>, the folder's name) would be created first under <c>--whatif</c>, so there is nothing live to preview it against.</summary>
     void ReportSkipped(SolutionImportStage stage, string assetPath, string tableLogicalName);

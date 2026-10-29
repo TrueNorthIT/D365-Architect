@@ -4,32 +4,23 @@ using D365Architect.Services.Conversion;
 using D365Architect.Services.Conversion.Models;
 using D365Architect.Services.Dataverse;
 using D365Architect.Tests.TestSupport;
-using Spectre.Console.Cli;
 using Xunit;
 using static D365Architect.Tests.TestSupport.ViewFormCreateFixtures;
 
 namespace D365Architect.Tests.Commands.View;
 
 /// <summary>
-/// <c>view import --publish</c> as a user meets it (REQ-34, 35, 36, 37, 39):
-/// <see cref="ImportViewCommand"/> through the real <see cref="ImportRunner"/>
-/// and <see cref="ViewImportService"/>, with only Dataverse
-/// (<see cref="FakeDataverseClient"/>), sign-in and the console faked.
+/// <c>view import</c> publishes after it applies changes (REQ-2, 3, 4, 6 of the "publish by default"
+/// requirements, tagged with the "Feature" trait "publish-by-default" because those IDs overlap older ones):
+/// <see cref="ImportViewCommand"/> through the real <see cref="ImportRunner"/> and
+/// <see cref="ViewImportService"/>, with only Dataverse (<see cref="FakeDataverseClient"/>), sign-in and the
+/// console faked. The old <c>--publish</c> publish-only mode these tests used to cover is gone.
 ///
-/// Decisions pinned here, for the developer:
-/// <list type="bullet">
-/// <item>Dataverse publishes a view as part of its table, so publishing a view publishes
-/// the view's table (<c>ViewDefinition.Entity</c>) through <c>PublishEntityAsync</c>.</item>
-/// <item>"Doesn't exist yet" is a view the import would CREATE (<see cref="ViewImportPreview.IsCreate"/>),
-/// or a <c>savedQueryId</c> that matches no live view (today a <see cref="ViewNotFoundException"/>); either
-/// way the answer is "run view import without --publish first", never the raw exception text.</item>
-/// <item>"Unapplied changes" are what <see cref="ViewImportPreview.HasChanges"/> says is still to
-/// write. These tests only pin the count for a single differing field ("1 unapplied change").</item>
-/// </list>
+/// Dataverse publishes a view as part of its table, so "publish the view" means publishing the view's
+/// table (<c>ViewDefinition.Entity</c>) through <c>PublishEntityAsync</c>.
 ///
-/// In the "Console" collection because it swaps <c>AnsiConsole.Console</c>; a
-/// prompt nobody answered fails the test, which is how <c>--yes</c> is shown
-/// never to ask.
+/// In the "Console" collection because it swaps <c>AnsiConsole.Console</c>; a prompt nobody answered
+/// fails the test, which is how a single confirmation (no second prompt for the publish) is pinned.
 /// </summary>
 [Collection(ConsoleCollection.Name)]
 public sealed class ImportViewCommandPublishTests : IDisposable
@@ -56,179 +47,134 @@ public sealed class ImportViewCommandPublishTests : IDisposable
     }
 
     /// <summary>A view file that only carries a FetchXML, so the live view either matches it exactly or differs in that one field.</summary>
-    private static ViewDefinition FetchOnlyView(Guid? savedQueryId = null) => ViewOf(name: ViewName, fetchXml: ExportedFetchXml, savedQueryId: savedQueryId);
+    private static ViewDefinition FetchOnlyView() => ViewOf(name: ViewName, fetchXml: ExportedFetchXml);
 
-    private static ExistingSavedQuery LiveView(string fetchXml, Guid? id = null) => new(id ?? Guid.NewGuid(), null, fetchXml, ExportedLayoutXml());
+    private static ExistingSavedQuery LiveView(string fetchXml) => new(Guid.NewGuid(), null, fetchXml, ExportedLayoutXml());
 
-    private static (ImportViewCommand Command, FakeDataverseClient Client) CreateCommand(FakeDataverseClient? client = null)
+    /// <summary>A live table and, when <paramref name="liveFetchXml"/> is given, a live view with that FetchXML; with none, the import would create the view.</summary>
+    private static (ImportViewCommand Command, FakeDataverseClient Client) CreateCommand(string? liveFetchXml = null)
     {
-        client ??= ClientWithTable();
+        var client = ClientWithTable();
+        if (liveFetchXml is not null)
+        {
+            client.SavedQuery = LiveView(liveFetchXml);
+        }
+
         return (new ImportViewCommand(new ViewImportService(client), new ImportRunner(new FakeAuthenticationService())), client);
     }
 
-    private static ImportViewCommand.Settings Settings(string input, bool yes = false, bool whatIf = false) =>
-        new() { Input = input, Yes = yes, WhatIf = whatIf, Publish = true };
+    private static ImportViewCommand.Settings Settings(string input, bool yes = false, bool whatIf = false, bool noPublish = false) =>
+        new() { Input = input, Yes = yes, WhatIf = whatIf, NoPublish = noPublish };
 
-    // REQ-34: "`view import` ... accept `--publish`" - it is a real command-line option.
-    // Code path: ImportViewCommand.Settings (via PublishableImportSettings.Publish) needs a [CommandOption("--publish")].
+    // REQ-2: "`view import` ... publish after applying changes." - an existing view whose FetchXML changes is updated, then its table published.
+    // Code path: ImportViewCommand.RunAsync -> ImportRunner flow: after ViewImportService.ApplyAsync, IViewImportService.PublishAsync -> IDataverseClient.PublishEntityAsync(view.Entity).
     [Fact]
-    [Trait("Requirement", "REQ-34")]
-    public async Task ViewImport_OffersAPublishOption()
-    {
-        using var console = new ConsoleHarness();
-        var app = new CommandApp();
-        app.Configure(config =>
-        {
-            config.ConfigureConsole(console.Console);
-            ViewCommands.Configure(config);
-        });
-
-        var exitCode = await app.RunAsync(["view", "import", "--help"]);
-
-        Expect.Equal(0, exitCode, $"REQ-34: 'view import --help' should succeed. Output: <{console.Output}>");
-        Expect.Contains("--publish", console.Output, "REQ-34: 'view import' should offer --publish.");
-    }
-
-    // REQ-37 example: `view import -i all.view.yml --publish` -> publishes the view's table, since Dataverse publishes views as part of their table. REQ-34: nothing else is written.
-    // Code path: ImportViewCommand.RunAsync in publish mode -> IDataverseClient.PublishEntityAsync(view.Entity).
-    [Fact]
-    [Trait("Requirement", "REQ-37")]
-    public async Task RunAsync_PublishOfAnUpToDateView_PublishesItsTableAndWritesNothing()
+    [Trait("Requirement", "REQ-2")]
+    [Trait("Feature", "publish-by-default")]
+    public async Task RunAsync_UpdatingAView_PublishesItsTable()
     {
         using var console = new ConsoleHarness(); // --yes: a prompt would fail the test
-        var client = ClientWithTable();
-        client.SavedQuery = LiveView(ExportedFetchXml);
-        var (command, _) = CreateCommand(client);
+        var (command, client) = CreateCommand(liveFetchXml: "<fetch>old</fetch>");
 
         var exitCode = await command.RunAsync(Settings(WriteView(FetchOnlyView()), yes: true), CancellationToken.None);
 
-        Expect.Equal(0, exitCode, $"REQ-37: publishing an up-to-date view should succeed. Output: <{console.Output}>");
-        Expect.Sequence([TableName], client.PublishEntityCalls, "REQ-37: 'view import --publish' should publish the view's table, once.");
-        Expect.Empty(client.PublishGlobalOptionSetsCalls, "REQ-37: a view publish should not publish any global choices.");
-        PublishAssertions.NothingWritten(client, "REQ-34");
+        Expect.Equal(0, exitCode, $"REQ-2: updating a view should succeed. Output: <{console.Output}>");
+        Expect.Equal(1, client.UpdateSavedQueryCalls.Count, "REQ-2: the changed view should be updated.");
+        Expect.Sequence([TableName], client.PublishEntityCalls, "REQ-2: 'view import' should publish the view's table, once.");
+        Expect.Empty(client.PublishGlobalOptionSetsCalls, "REQ-2: a view import should not publish any global choices.");
     }
 
-    // REQ-37: the same when the view is identified by its savedQueryId rather than its name.
+    // REQ-2: a view that is created (no live view matches) is published too.
     [Fact]
-    [Trait("Requirement", "REQ-37")]
-    public async Task RunAsync_PublishOfAnUpToDateViewFoundById_PublishesItsTable()
-    {
-        using var console = new ConsoleHarness();
-        var id = Guid.NewGuid();
-        var client = ClientWithTable();
-        client.SavedQueriesById[id] = new ExistingSavedQuery(id, null, ExportedFetchXml, ExportedLayoutXml(), TableName, ViewName);
-        var (command, _) = CreateCommand(client);
-
-        var exitCode = await command.RunAsync(Settings(WriteView(FetchOnlyView(id)), yes: true), CancellationToken.None);
-
-        Expect.Equal(0, exitCode, $"REQ-37: publishing a view found by savedQueryId should succeed. Output: <{console.Output}>");
-        Expect.Sequence([TableName], client.PublishEntityCalls, "REQ-37: the view's table should be published.");
-    }
-
-    // REQ-35: "view not found (by id or name) means 'run view import without --publish first'" - by name, it would be a create.
-    // Code path: ImportViewCommand.RunAsync in publish mode, treating ViewImportPreview.IsCreate as "doesn't exist yet".
-    [Fact]
-    [Trait("Requirement", "REQ-35")]
-    public async Task RunAsync_PublishOfAViewThatDoesNotExistByName_SaysToRunViewImportWithoutPublishFirst()
-    {
-        using var console = new ConsoleHarness();
-        var (command, client) = CreateCommand(); // no live view: a plain import would create it
-
-        var exitCode = await command.RunAsync(Settings(WriteView(ViewOf(name: ViewName, fetchXml: ExportedFetchXml, layoutXml: ExportedLayoutXml())), yes: true), CancellationToken.None);
-
-        Expect.Equal(1, exitCode, $"REQ-35: publishing a view that doesn't exist should exit with 1. Output: <{console.Output}>");
-        Expect.Contains(ViewName, console.Output, "REQ-35: the user should be told which view doesn't exist yet.");
-        Expect.Contains("doesn't exist yet", console.Output, "REQ-35: the user should be told the view doesn't exist yet.");
-        Expect.Contains("view import", console.Output, "REQ-35: the user should be told to run 'view import'.");
-        Expect.Contains("without --publish first", console.Output, "REQ-35: the user should be told to run it without --publish first.");
-        PublishAssertions.NothingPublished(client, "REQ-35", "a missing view must not cause a publish.");
-        PublishAssertions.NothingWritten(client, "REQ-35");
-    }
-
-    // REQ-35: and by id - a savedQueryId matching no live view gets the same advice, not the raw "no view with that id" error.
-    // Code path: ImportViewCommand.RunAsync in publish mode, translating ViewNotFoundException from ViewImportService.PreviewAsync.
-    [Fact]
-    [Trait("Requirement", "REQ-35")]
-    public async Task RunAsync_PublishOfAViewWhoseIdMatchesNothing_SaysToRunViewImportWithoutPublishFirst()
+    [Trait("Requirement", "REQ-2")]
+    [Trait("Feature", "publish-by-default")]
+    public async Task RunAsync_CreatingAView_PublishesItsTable()
     {
         using var console = new ConsoleHarness();
         var (command, client) = CreateCommand();
 
-        var exitCode = await command.RunAsync(Settings(WriteView(FetchOnlyView(Guid.NewGuid())), yes: true), CancellationToken.None);
+        var exitCode = await command.RunAsync(Settings(WriteView(ViewOf(name: ViewName, fetchXml: ExportedFetchXml, layoutXml: ExportedLayoutXml())), yes: true), CancellationToken.None);
 
-        Expect.Equal(1, exitCode, $"REQ-35: publishing a view whose id isn't live should exit with 1. Output: <{console.Output}>");
-        Expect.Contains("doesn't exist yet", console.Output, "REQ-35: the user should be told the view doesn't exist yet.");
-        Expect.Contains("without --publish first", console.Output, "REQ-35: the user should be told to run view import without --publish first.");
-        PublishAssertions.NothingPublished(client, "REQ-35", "a view that isn't live must not cause a publish.");
+        Expect.Equal(0, exitCode, $"REQ-2: creating a view should succeed. Output: <{console.Output}>");
+        Expect.Equal(1, client.CreateSavedQueryCalls.Count, "REQ-2: the new view should be created.");
+        Expect.Sequence([TableName], client.PublishEntityCalls, "REQ-2: a created view's table should be published.");
     }
 
-    // REQ-36: the file's FetchXML differs from the live view, so a plain import would write it - refuse rather than publish something other than the file.
-    // Code path: ImportViewCommand.RunAsync in publish mode, using ViewImportPreview.HasChanges.
+    // REQ-2 + the confirmation: answering yes to "Import these changes?" is the only question - publishing follows without asking again.
     [Fact]
-    [Trait("Requirement", "REQ-36")]
-    public async Task RunAsync_PublishWhenTheFileDiffersFromTheLiveView_RefusesAndPublishesNothing()
+    [Trait("Requirement", "REQ-2")]
+    [Trait("Feature", "publish-by-default")]
+    public async Task RunAsync_ConfirmingTheImport_PublishesWithoutAskingAgain()
+    {
+        using var console = new ConsoleHarness("y");
+        var (command, client) = CreateCommand(liveFetchXml: "<fetch>old</fetch>");
+
+        var exitCode = await command.RunAsync(Settings(WriteView(FetchOnlyView())), CancellationToken.None);
+
+        Expect.Equal(0, exitCode, $"REQ-2: confirming once should import and publish. Output: <{console.Output}>");
+        Expect.Sequence([TableName], client.PublishEntityCalls, "REQ-2: the view's table should be published after the single confirmation.");
+    }
+
+    // REQ-3: "If nothing changed, nothing is published." - the live view already matches the file.
+    [Fact]
+    [Trait("Requirement", "REQ-3")]
+    [Trait("Feature", "publish-by-default")]
+    public async Task RunAsync_FileMatchesLive_PublishesNothing()
     {
         using var console = new ConsoleHarness();
-        var client = ClientWithTable();
-        client.SavedQuery = LiveView("<fetch>old</fetch>");
-        var (command, _) = CreateCommand(client);
+        var (command, client) = CreateCommand(liveFetchXml: ExportedFetchXml);
 
         var exitCode = await command.RunAsync(Settings(WriteView(FetchOnlyView()), yes: true), CancellationToken.None);
 
-        Expect.Equal(1, exitCode, $"REQ-36: a file with an unapplied change should be refused with exit code 1. Output: <{console.Output}>");
-        Expect.Contains("1 unapplied change", console.Output, "REQ-36: the refusal should say how many unapplied changes the file has.");
-        Expect.Contains("without --publish first", console.Output, "REQ-36: the refusal should say to run the command without --publish first.");
-        PublishAssertions.NothingPublished(client, "REQ-36", "publishing must not go ahead when the file differs from what is live.");
-        PublishAssertions.NothingWritten(client, "REQ-36");
+        Expect.Equal(0, exitCode, $"REQ-3: an in-sync view is not an error. Output: <{console.Output}>");
+        PublishAssertions.NothingPublished(client, "REQ-3", "nothing changed, so nothing should be published.");
     }
 
-    // REQ-39 example: `--publish --whatif` prints "would publish: <table>"; nothing is published and nothing is prompted.
+    // REQ-3: answering no applies nothing, so nothing is published.
     [Fact]
-    [Trait("Requirement", "REQ-39")]
-    public async Task RunAsync_PublishWithWhatIf_PrintsWouldPublishTheTableAndPublishesNothing()
+    [Trait("Requirement", "REQ-3")]
+    [Trait("Feature", "publish-by-default")]
+    public async Task RunAsync_DecliningTheImport_PublishesNothing()
+    {
+        using var console = new ConsoleHarness("n");
+        var (command, client) = CreateCommand(liveFetchXml: "<fetch>old</fetch>");
+
+        var exitCode = await command.RunAsync(Settings(WriteView(FetchOnlyView())), CancellationToken.None);
+
+        Expect.Equal(0, exitCode, $"Declining should exit 0, as every import does. Output: <{console.Output}>");
+        Expect.Empty(client.UpdateSavedQueryCalls, "Declining should write nothing.");
+        PublishAssertions.NothingPublished(client, "REQ-3", "declining wrote nothing, so there is nothing to publish.");
+    }
+
+    // REQ-4: "`--no-publish` skips publishing" - the view is still updated.
+    [Fact]
+    [Trait("Requirement", "REQ-4")]
+    [Trait("Feature", "publish-by-default")]
+    public async Task RunAsync_WithNoPublish_AppliesTheChangeButPublishesNothing()
+    {
+        using var console = new ConsoleHarness();
+        var (command, client) = CreateCommand(liveFetchXml: "<fetch>old</fetch>");
+
+        var exitCode = await command.RunAsync(Settings(WriteView(FetchOnlyView()), yes: true, noPublish: true), CancellationToken.None);
+
+        Expect.Equal(0, exitCode, $"REQ-4: --no-publish should still import. Output: <{console.Output}>");
+        Expect.Equal(1, client.UpdateSavedQueryCalls.Count, "REQ-4: --no-publish should still write the change.");
+        PublishAssertions.NothingPublished(client, "REQ-4", "--no-publish skips publishing.");
+    }
+
+    // REQ-6: "`--whatif` never publishes."
+    [Fact]
+    [Trait("Requirement", "REQ-6")]
+    [Trait("Feature", "publish-by-default")]
+    public async Task RunAsync_WithWhatIf_WritesAndPublishesNothing()
     {
         using var console = new ConsoleHarness(); // --whatif never prompts
-        var client = ClientWithTable();
-        client.SavedQuery = LiveView(ExportedFetchXml);
-        var (command, _) = CreateCommand(client);
+        var (command, client) = CreateCommand(liveFetchXml: "<fetch>old</fetch>");
 
         var exitCode = await command.RunAsync(Settings(WriteView(FetchOnlyView()), whatIf: true), CancellationToken.None);
 
-        Expect.Equal(0, exitCode, $"REQ-39: --publish --whatif should succeed. Output: <{console.Output}>");
-        Expect.Contains($"would publish: {TableName}", console.Output, "REQ-39: --whatif should say which table it would publish.");
-        PublishAssertions.NothingPublished(client, "REQ-39", "--whatif writes nothing, including no publish.");
-    }
-
-    // REQ-39: "asks first" - answering no publishes nothing and exits 0. Proves the prompt exists: without one this would publish.
-    [Fact]
-    [Trait("Requirement", "REQ-39")]
-    public async Task RunAsync_PublishWithoutYes_DecliningThePromptPublishesNothing()
-    {
-        using var console = new ConsoleHarness("n");
-        var client = ClientWithTable();
-        client.SavedQuery = LiveView(ExportedFetchXml);
-        var (command, _) = CreateCommand(client);
-
-        var exitCode = await command.RunAsync(Settings(WriteView(FetchOnlyView())), CancellationToken.None);
-
-        Expect.Equal(0, exitCode, $"REQ-39: declining the prompt should exit 0. Output: <{console.Output}>");
-        Expect.Contains($"would publish: {TableName}", console.Output, "REQ-39: the run should show what it is about to publish before asking.");
-        PublishAssertions.NothingPublished(client, "REQ-39", "answering no must not publish.");
-    }
-
-    // REQ-39: answering yes publishes.
-    [Fact]
-    [Trait("Requirement", "REQ-39")]
-    public async Task RunAsync_PublishWithoutYes_AcceptingThePromptPublishesTheTable()
-    {
-        using var console = new ConsoleHarness("y");
-        var client = ClientWithTable();
-        client.SavedQuery = LiveView(ExportedFetchXml);
-        var (command, _) = CreateCommand(client);
-
-        var exitCode = await command.RunAsync(Settings(WriteView(FetchOnlyView())), CancellationToken.None);
-
-        Expect.Equal(0, exitCode, $"REQ-39: confirming should publish and exit 0. Output: <{console.Output}>");
-        Expect.Sequence([TableName], client.PublishEntityCalls, "REQ-39: answering yes should publish the table once.");
+        Expect.Equal(0, exitCode, $"REQ-6: --whatif should succeed. Output: <{console.Output}>");
+        Expect.Empty(client.UpdateSavedQueryCalls, "REQ-6: --whatif must not write.");
+        PublishAssertions.NothingPublished(client, "REQ-6", "--whatif never publishes.");
     }
 }
