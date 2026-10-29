@@ -69,6 +69,9 @@ public sealed class ViewImportService(IDataverseClient dataverseClient) : IViewI
     public Task ApplyAsync(Uri environmentUrl, string accessToken, ViewImportPreview preview, CancellationToken cancellationToken) =>
         ApplyAsync(environmentUrl, accessToken, preview, solutionUniqueName: null, cancellationToken);
 
+    public Task PublishAsync(Uri environmentUrl, string accessToken, ViewImportPreview preview, CancellationToken cancellationToken) =>
+        dataverseClient.PublishEntityAsync(environmentUrl, accessToken, preview.Entity, cancellationToken);
+
     public Task ApplyAsync(Uri environmentUrl, string accessToken, ViewImportPreview preview, string? solutionUniqueName, CancellationToken cancellationToken)
     {
         if (!preview.IsCreate)

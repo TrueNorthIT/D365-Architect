@@ -28,7 +28,8 @@ namespace D365Architect.Commands.Table;
 /// <see cref="ImportRunner"/> flow (plan, confirm unless <c>--yes</c>,
 /// <c>--whatif</c> writes nothing), a public <see cref="RunAsync"/> so
 /// `solution import` can call it, and it never rewrites the input file.
-/// Doesn't publish, same as `table import`.
+/// Doesn't publish, same as `table import`, except when run with
+/// <c>--publish</c>, which publishes an existing table and nothing else.
 /// </summary>
 public sealed class CreateTableCommand(ITableCreateService tableCreateService, ImportRunner importRunner)
     : AsyncCommand<CreateTableCommand.Settings>
@@ -100,7 +101,7 @@ public sealed class CreateTableCommand(ITableCreateService tableCreateService, I
                     AnsiConsole.MarkupLine("[grey]Run 'table import' on the same file to add its other columns.[/]");
                 }
 
-                AnsiConsole.MarkupLine("[grey]Note: this tool doesn't publish yet — publish customizations separately before end users see the table.[/]");
+                AnsiConsole.MarkupLine("[grey]Note: the table isn't published — re-run with --publish (or publish customizations separately) before end users see it.[/]");
             },
 
             FormatDomainException = (ex, _) => ex switch
@@ -108,6 +109,13 @@ public sealed class CreateTableCommand(ITableCreateService tableCreateService, I
                 TableCreateValidationException or TableCreateFailedException => $"[red]{ex.Message.EscapeMarkup()}[/]",
                 _ => null,
             },
+
+            // Only the table has to exist: its other columns are table import's job, not a reason to refuse.
+            PublishRefusal = preview => preview.AlreadyExists ? null : ImportRunner.NotYetCreated(preview.EntityLogicalName, "table create"),
+
+            PublishTargets = preview => [preview.EntityLogicalName],
+
+            PublishAsync = (auth, preview, ct) => tableCreateService.PublishAsync(auth.EnvironmentUrl, auth.AccessToken, preview, ct),
         };
 
         if (await importRunner.RunAsync(settings, tableCreateService, spec, cancellationToken) != 0)

@@ -30,9 +30,8 @@ namespace D365Architect.Commands.Choice;
 /// to see just the diff/plan and never be prompted or write anything at
 /// all.
 ///
-/// What this doesn't do yet: publish the change — Dataverse customizations
-/// still need publishing separately before end users see it, same as
-/// `table import`.
+/// An import doesn't publish the change; a second run with <c>--publish</c>
+/// publishes the file's choices, and only that, same as `table import`.
 /// </summary>
 public sealed class ImportChoiceCommand(IGlobalChoiceImportService globalChoiceImportService, ImportRunner importRunner)
     : AsyncCommand<ImportChoiceCommand.Settings>
@@ -98,7 +97,7 @@ public sealed class ImportChoiceCommand(IGlobalChoiceImportService globalChoiceI
                 var created = preview.ChoicePlans.Count(p => p.Action == GlobalChoiceImportAction.Create);
                 var updated = preview.ChoicePlans.Count(p => p.Action == GlobalChoiceImportAction.Update);
                 AnsiConsole.MarkupLine($"[green]Imported.[/] {created} created, {updated} updated in Dataverse.");
-                AnsiConsole.MarkupLine("[grey]Note: this only updates Dataverse's metadata — publish customizations separately (e.g. in the maker portal) before end users see the change; this tool doesn't publish yet.[/]");
+                AnsiConsole.MarkupLine("[grey]Note: this only updates Dataverse's metadata — re-run with --publish (or publish customizations separately, e.g. in the maker portal) before end users see the change.[/]");
             },
 
             FormatDomainException = (ex, choices) => ex switch
@@ -106,6 +105,18 @@ public sealed class ImportChoiceCommand(IGlobalChoiceImportService globalChoiceI
                 InvalidDataException => $"[red]Couldn't parse the live metadata:[/] {ex.Message.EscapeMarkup()}",
                 _ => null,
             },
+
+            PublishRefusal = preview =>
+            {
+                var missing = preview.ChoicePlans.Where(p => p.Action == GlobalChoiceImportAction.Create).Select(p => p.Name).ToList();
+                return missing.Count > 0 ? ImportRunner.NotYetCreated(string.Join(", ", missing), "choice import")
+                    : preview.HasChanges ? ImportRunner.UnappliedChanges(preview.ChangeCount)
+                    : null;
+            },
+
+            PublishTargets = preview => preview.Names,
+
+            PublishAsync = (auth, preview, ct) => globalChoiceImportService.PublishAsync(auth.EnvironmentUrl, auth.AccessToken, preview, ct),
         };
 
         return await importRunner.RunAsync(settings, globalChoiceImportService, spec, cancellationToken);

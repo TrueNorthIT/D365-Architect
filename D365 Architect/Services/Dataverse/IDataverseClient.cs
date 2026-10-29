@@ -209,7 +209,6 @@ public interface IDataverseClient
     /// Microsoft Learn, "PublishXmlRequest.ParameterXml": "Publishes an
     /// optionset using the optionset unique name"
     /// (https://learn.microsoft.com/dotnet/api/microsoft.crm.sdk.messages.publishxmlrequest.parameterxml).
-    /// STUB: not implemented yet.
     /// </summary>
     Task PublishGlobalOptionSetsAsync(Uri environmentUrl, string accessToken, IReadOnlyList<string> optionSetNames, CancellationToken cancellationToken);
 

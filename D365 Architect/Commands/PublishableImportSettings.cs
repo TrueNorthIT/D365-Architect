@@ -11,8 +11,7 @@ namespace D365Architect.Commands;
 /// </summary>
 public abstract class PublishableImportSettings : ImportSettingsBase
 {
-    // STUB (tests written first): no [CommandOption] yet, so `--publish` isn't
-    // registered on the command line and the "offers --publish" tests fail.
-    // The developer adds [CommandOption("--publish")] and [Description(...)].
+    [CommandOption("--publish")]
+    [Description("Only publish what the file describes — write nothing else. Refuses (exit 1) if it doesn't exist yet or the file has changes not yet imported; run without --publish first. Asks first unless --yes; --whatif shows what would be published.")]
     public bool Publish { get; init; }
 }

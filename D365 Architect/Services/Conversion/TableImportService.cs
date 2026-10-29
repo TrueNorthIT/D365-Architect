@@ -29,6 +29,12 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
     public Task ApplyAsync(Uri environmentUrl, string accessToken, TableImportPreview preview, CancellationToken cancellationToken) =>
         ApplyAsync(environmentUrl, accessToken, preview, useTransaction: true, solutionUniqueName: null, cancellationToken);
 
+    public Task<bool> TableExistsAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken) =>
+        dataverseClient.EntityExistsAsync(environmentUrl, accessToken, entityLogicalName, cancellationToken);
+
+    public Task PublishAsync(Uri environmentUrl, string accessToken, TableImportPreview preview, CancellationToken cancellationToken) =>
+        dataverseClient.PublishEntityAsync(environmentUrl, accessToken, preview.EntityLogicalName, cancellationToken);
+
     public async Task ApplyAsync(Uri environmentUrl, string accessToken, TableImportPreview preview, bool useTransaction, string? solutionUniqueName, CancellationToken cancellationToken)
     {
         if (useTransaction)

@@ -26,6 +26,9 @@ public interface ITableCreateService : IImportService<EntityDefinition, TableCre
     /// <param name="cancellationToken">See <see cref="IImportService{TInput,TPreview}.ApplyAsync"/>.</param>
     /// <exception cref="Dataverse.TableCreateFailedException">Dataverse rejected the create; the message names the table.</exception>
     Task ApplyAsync(Uri environmentUrl, string accessToken, TableCreatePreview preview, string? solutionUniqueName, CancellationToken cancellationToken);
+
+    /// <summary>Publishes <paramref name="preview"/>'s table (<c>table create --publish</c>, REQ-37) — the same <see cref="Dataverse.IDataverseClient.PublishEntityAsync"/> call form import makes.</summary>
+    Task PublishAsync(Uri environmentUrl, string accessToken, TableCreatePreview preview, CancellationToken cancellationToken);
 }
 
 /// <param name="EntityLogicalName">The table this preview is for.</param>

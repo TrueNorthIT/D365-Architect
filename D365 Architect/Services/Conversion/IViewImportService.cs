@@ -43,6 +43,9 @@ public interface IViewImportService : IImportService<ViewDefinition, ViewImportP
     /// (REQ-22, REQ-23) — see <see cref="Dataverse.IDataverseClient.CreateSavedQueryAsync"/> for the body.
     /// </summary>
     Task ApplyAsync(Uri environmentUrl, string accessToken, ViewImportPreview preview, string? solutionUniqueName, CancellationToken cancellationToken);
+
+    /// <summary>Publishes the view's table, <see cref="ViewImportPreview.Entity"/> (<c>view import --publish</c>, REQ-37): Dataverse publishes a view as part of its table, so there's no narrower request.</summary>
+    Task PublishAsync(Uri environmentUrl, string accessToken, ViewImportPreview preview, CancellationToken cancellationToken);
 }
 
 /// <param name="SavedQueryId">The view's id — what <see cref="IImportService{TInput,TPreview}.ApplyAsync"/> updates (<see cref="Guid.Empty"/> for a create).</param>
@@ -89,9 +92,11 @@ public sealed record ViewImportPreview(
     /// field means "don't touch this", not "clear it") all already match
     /// what's live.
     /// </summary>
-    public bool HasChanges =>
-        IsCreate
-        || (NewDescription is not null && NewDescription != ExistingDescription)
-        || (NewFetchXml is not null && NewFetchXml != ExistingFetchXml)
-        || (NewLayoutXml is not null && NewLayoutXml != ExistingLayoutXml);
+    public bool HasChanges => IsCreate || ChangeCount > 0;
+
+    /// <summary>How many of the three fields differ (see <see cref="HasChanges"/>) — what <c>view import --publish</c> reports as unapplied (REQ-36).</summary>
+    public int ChangeCount =>
+        (NewDescription is not null && NewDescription != ExistingDescription ? 1 : 0)
+        + (NewFetchXml is not null && NewFetchXml != ExistingFetchXml ? 1 : 0)
+        + (NewLayoutXml is not null && NewLayoutXml != ExistingLayoutXml ? 1 : 0);
 }

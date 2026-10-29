@@ -455,17 +455,28 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         // just one systemform within it.
         var parameterXml = new XElement("importexportxml",
             new XElement("entities",
-                new XElement("entity", entityLogicalName))).ToString(SaveOptions.DisableFormatting);
+                new XElement("entity", entityLogicalName)));
+        await PublishXmlAsync(environmentUrl, accessToken, parameterXml, cancellationToken);
+    }
 
+    public async Task PublishGlobalOptionSetsAsync(Uri environmentUrl, string accessToken, IReadOnlyList<string> optionSetNames, CancellationToken cancellationToken)
+    {
+        // Same PublishXmlRequest.ParameterXml page: <optionsets><optionset>
+        // takes a global choice's unique name; one element per choice, so
+        // a whole file goes out in a single request.
+        var parameterXml = new XElement("importexportxml",
+            new XElement("optionsets", optionSetNames.Select(name => new XElement("optionset", name))));
+        await PublishXmlAsync(environmentUrl, accessToken, parameterXml, cancellationToken);
+    }
+
+    private async Task PublishXmlAsync(Uri environmentUrl, string accessToken, XElement parameterXml, CancellationToken cancellationToken)
+    {
         using var request = CreateRequest(environmentUrl, "PublishXml", accessToken, HttpMethod.Post);
-        request.Content = JsonContent.Create(new { ParameterXml = parameterXml }, options: VerbatimJsonOptions);
+        request.Content = JsonContent.Create(new { ParameterXml = parameterXml.ToString(SaveOptions.DisableFormatting) }, options: VerbatimJsonOptions);
 
         using var response = await httpClient.SendAsync(request, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);
     }
-
-    public Task PublishGlobalOptionSetsAsync(Uri environmentUrl, string accessToken, IReadOnlyList<string> optionSetNames, CancellationToken cancellationToken) =>
-        throw new NotImplementedException("STUB: PublishXml for <optionsets> is not implemented yet.");
 
     public async Task<ExistingSavedQuery?> TryGetSavedQueryAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string viewName, CancellationToken cancellationToken)
     {

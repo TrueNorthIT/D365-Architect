@@ -28,8 +28,9 @@ namespace D365Architect.Commands.View;
 /// are never written — see <see cref="IViewImportService"/>'s own doc
 /// comment for why.
 ///
-/// What this doesn't do yet: publish the change (Dataverse customizations
-/// still need publishing separately before end users see it) — and
+/// An import doesn't publish the change; a second run with <c>--publish</c>
+/// publishes the view's table, and only that (Dataverse customizations
+/// need publishing before end users see them) — and
 /// confirmed live, that gap isn't just cosmetic for verification either: a
 /// plain <c>savedqueries</c> GET reflects the *published* state, so a
 /// follow-up `view export` won't show a just-written FetchXml/LayoutXml
@@ -106,14 +107,26 @@ public sealed class ImportViewCommand(IViewImportService viewImportService, Impo
             PrintSuccess = (view, preview) =>
             {
                 AnsiConsole.MarkupLine($"[green]Imported.[/] '{view.Name.EscapeMarkup()}' {(preview.IsCreate ? "created" : "updated")} in Dataverse.");
-                AnsiConsole.MarkupLine("[grey]Note: this only updates the view's own fields — publish customizations separately (e.g. in the maker portal) before end users see the change; this tool doesn't publish yet. Until you do, a follow-up 'view export' won't show this change either — it reads the same unpublished state, not a sign the import failed.[/]");
+                AnsiConsole.MarkupLine("[grey]Note: this only updates the view's own fields — re-run with --publish (or publish customizations separately, e.g. in the maker portal) before end users see the change. Until you do, a follow-up 'view export' won't show this change either — it reads the same unpublished state, not a sign the import failed.[/]");
             },
 
             FormatDomainException = (ex, view) => ex switch
             {
+                // A stale savedQueryId under --publish is the same answer as a view that would be created.
+                ViewNotFoundException when settings.Publish => $"[red]Refusing to publish.[/] {ImportRunner.NotYetCreated($"'{view.Name}'", "view import").EscapeMarkup()}",
                 ViewNotFoundException or AmbiguousSavedQueryException or ViewIdentityMismatchException or InvalidDataException => $"[red]{ex.Message.EscapeMarkup()}[/]",
                 _ => null,
             },
+
+            PublishRefusal = preview =>
+                preview.IsCreate ? ImportRunner.NotYetCreated($"'{preview.Name}'", "view import")
+                : preview.HasChanges ? ImportRunner.UnappliedChanges(preview.ChangeCount)
+                : null,
+
+            // Dataverse publishes a view as part of its table.
+            PublishTargets = preview => [preview.Entity],
+
+            PublishAsync = (auth, preview, ct) => viewImportService.PublishAsync(auth.EnvironmentUrl, auth.AccessToken, preview, ct),
         };
 
         return await importRunner.RunAsync(settings, viewImportService, spec, cancellationToken);

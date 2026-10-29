@@ -64,6 +64,12 @@ public interface ITableImportService : IImportService<EntityDefinition, TableImp
     /// </param>
     /// <param name="cancellationToken">See <see cref="IImportService{TInput,TPreview}.ApplyAsync"/>.</param>
     Task ApplyAsync(Uri environmentUrl, string accessToken, TableImportPreview preview, bool useTransaction, string? solutionUniqueName, CancellationToken cancellationToken);
+
+    /// <summary>Whether the table is live — what <c>table import --publish</c> asks before previewing, since a preview of a missing table fails (REQ-35).</summary>
+    Task<bool> TableExistsAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken);
+
+    /// <summary>Publishes <paramref name="preview"/>'s table (<c>table import --publish</c>, REQ-37) — the same <see cref="Dataverse.IDataverseClient.PublishEntityAsync"/> call form import makes.</summary>
+    Task PublishAsync(Uri environmentUrl, string accessToken, TableImportPreview preview, CancellationToken cancellationToken);
 }
 
 /// <summary>What (if anything) <see cref="IImportService{TInput,TPreview}.ApplyAsync"/> will do for one column.</summary>
@@ -195,7 +201,10 @@ public sealed record OptionChangePlan(OptionChangeAction Action, JsonObject Requ
 /// <param name="AttributePlans">One plan per column seen on either side — see <see cref="AttributeImportAction"/>.</param>
 public sealed record TableImportPreview(string EntityLogicalName, string ExistingYaml, string NewYaml, JsonObject? TableUpdateBody, IReadOnlyList<AttributeImportPlan> AttributePlans)
 {
-    /// <summary>True when there's at least one actual write to make — a table-level change, or a column plan that writes something (Create/Update/CreateLookupRelationship/CreateCustomerRelationship).</summary>
-    public bool HasChanges => TableUpdateBody is not null || AttributePlans.Any(p =>
+    /// <summary>True when there's at least one actual write to make — see <see cref="ChangeCount"/>.</summary>
+    public bool HasChanges => ChangeCount > 0;
+
+    /// <summary>How many writes there are to make: one for a table-level change, plus one per column plan that writes something (Create/Update/CreateLookupRelationship/CreateCustomerRelationship) — what <c>table import --publish</c> reports as unapplied (REQ-36).</summary>
+    public int ChangeCount => (TableUpdateBody is null ? 0 : 1) + AttributePlans.Count(p =>
         p.Action is AttributeImportAction.Create or AttributeImportAction.Update or AttributeImportAction.CreateLookupRelationship or AttributeImportAction.CreateCustomerRelationship);
 }

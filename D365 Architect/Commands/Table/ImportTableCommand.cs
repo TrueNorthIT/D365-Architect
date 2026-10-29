@@ -50,8 +50,9 @@ namespace D365Architect.Commands.Table;
 /// turns out to reject batched metadata writes, or if partial progress on
 /// failure is actually what you want.
 ///
-/// What this doesn't do yet: publish the change — Dataverse customizations
-/// still need publishing separately before end users see it (confirmed
+/// An import doesn't publish the change; a second run with <c>--publish</c>
+/// does, and only that (see <see cref="PublishableImportSettings"/>) — Dataverse
+/// customizations need publishing before end users see them (confirmed
 /// required for table/column changes specifically, unlike form/view
 /// import's still-open question — see `docs/yaml-conventions.md`).
 ///
@@ -149,7 +150,7 @@ public sealed class ImportTableCommand(ITableImportService tableImportService, I
             PrintSuccess = (entity, preview) =>
             {
                 AnsiConsole.MarkupLine($"[green]Imported.[/] '{entity.LogicalName}' updated in Dataverse.");
-                AnsiConsole.MarkupLine("[grey]Note: this only updates Dataverse's metadata — publish customizations separately (e.g. in the maker portal) before end users see the change; this tool doesn't publish yet.[/]");
+                AnsiConsole.MarkupLine("[grey]Note: this only updates Dataverse's metadata — re-run with --publish (or publish customizations separately, e.g. in the maker portal) before end users see the change.[/]");
             },
 
             FormatDomainException = (ex, entity) => ex switch
@@ -157,6 +158,18 @@ public sealed class ImportTableCommand(ITableImportService tableImportService, I
                 InvalidDataException => $"[red]Couldn't parse the live metadata for '{entity.LogicalName}':[/] {ex.Message.EscapeMarkup()}",
                 _ => null,
             },
+
+            // Asked before previewing: a missing table can't be previewed. table import never creates one.
+            PublishPrecheckAsync = async (auth, entity, ct) =>
+                await tableImportService.TableExistsAsync(auth.EnvironmentUrl, auth.AccessToken, entity.LogicalName, ct)
+                    ? null
+                    : ImportRunner.NotYetCreated(entity.LogicalName, "table create"),
+
+            PublishRefusal = preview => preview.HasChanges ? ImportRunner.UnappliedChanges(preview.ChangeCount) : null,
+
+            PublishTargets = preview => [preview.EntityLogicalName],
+
+            PublishAsync = (auth, preview, ct) => tableImportService.PublishAsync(auth.EnvironmentUrl, auth.AccessToken, preview, ct),
         };
 
         return await importRunner.RunAsync(settings, tableImportService, spec, cancellationToken);

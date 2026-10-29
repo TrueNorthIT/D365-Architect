@@ -33,6 +33,9 @@ public sealed class TableCreateService(IDataverseClient dataverseClient) : ITabl
     public Task ApplyAsync(Uri environmentUrl, string accessToken, TableCreatePreview preview, CancellationToken cancellationToken) =>
         ApplyAsync(environmentUrl, accessToken, preview, solutionUniqueName: null, cancellationToken);
 
+    public Task PublishAsync(Uri environmentUrl, string accessToken, TableCreatePreview preview, CancellationToken cancellationToken) =>
+        dataverseClient.PublishEntityAsync(environmentUrl, accessToken, preview.EntityLogicalName, cancellationToken);
+
     public async Task ApplyAsync(Uri environmentUrl, string accessToken, TableCreatePreview preview, string? solutionUniqueName, CancellationToken cancellationToken)
     {
         if (preview.AlreadyExists || preview.RequestBody is null)
