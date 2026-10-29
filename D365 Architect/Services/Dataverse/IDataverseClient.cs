@@ -22,6 +22,23 @@ public interface IDataverseClient
     Task<string> GetEntityDefinitionJsonAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken);
 
     /// <summary>
+    /// True when a table with this logical name exists live, false when
+    /// Dataverse answers 404 for it; any other failure throws. What
+    /// <c>table create</c> checks before writing anything, so a table that is
+    /// already there is reported and left alone rather than POSTed again.
+    /// </summary>
+    Task<bool> EntityExistsAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Creates a brand-new table: <c>POST EntityDefinitions</c> with
+    /// <paramref name="entityMetadata"/> (see <see cref="EntityMetadataJsonBuilder.BuildCreateBody"/>).
+    /// <paramref name="solutionUniqueName"/>, when given, is sent as the
+    /// <c>MSCRM.SolutionUniqueName</c> header so the table joins that
+    /// solution as it is created - see <see cref="CreateAttributeAsync"/>.
+    /// </summary>
+    Task CreateEntityAsync(Uri environmentUrl, string accessToken, JsonObject entityMetadata, string? solutionUniqueName, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Resolves a solution's unique name to the MetadataIds of the Attribute
     /// components it contains — i.e. which columns that solution actually
     /// customizes, as opposed to a table's full merged metadata. Returns

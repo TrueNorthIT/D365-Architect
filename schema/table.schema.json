@@ -40,6 +40,10 @@
       "description": "Only present when true — false is the platform default for a table. Omit to leave notes off for this table; applying this file back won't turn them on.",
       "type": "boolean"
     },
+    "primaryNameAttribute": {
+      "description": "Logical name of the String column that is the table's primary name column, e.g. \"tn_name\". Must be listed under Attributes. Needed by table create (Dataverse's create-table call requires the primary name column in the body, flagged IsPrimaryName) and written by table export from the live table's PrimaryNameAttribute.",
+      "type": "string"
+    },
     "attributes": {
       "description": "The table's columns.",
       "type": "array",

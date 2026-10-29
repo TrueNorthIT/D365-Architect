@@ -72,6 +72,11 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         return await response.Content.ReadAsStringAsync(cancellationToken);
     }
 
+    // Stubs added by the test-first pass for `table create` - the developer implements these.
+    public Task<bool> EntityExistsAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken) => throw new NotImplementedException();
+
+    public Task CreateEntityAsync(Uri environmentUrl, string accessToken, JsonObject entityMetadata, string? solutionUniqueName, CancellationToken cancellationToken) => throw new NotImplementedException();
+
     public async Task<IReadOnlySet<Guid>?> TryGetSolutionAttributeMetadataIdsAsync(Uri environmentUrl, string accessToken, string solutionUniqueName, CancellationToken cancellationToken)
     {
         var solutionId = await TryGetSolutionIdAsync(environmentUrl, accessToken, solutionUniqueName, cancellationToken);

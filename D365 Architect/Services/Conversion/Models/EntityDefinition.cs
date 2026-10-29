@@ -65,8 +65,19 @@ public sealed class EntityDefinition
     [YamlMember(Order = 8)]
     public bool? HasNotes { get; init; }
 
-    /// <summary>The table's columns.</summary>
+    /// <summary>
+    /// Logical name of the String column that is the table's primary name
+    /// column, e.g. "tn_name". Must be listed under <see cref="Attributes"/>.
+    /// Needed by <c>table create</c> (Dataverse's create-table call requires
+    /// the primary name column in the body, flagged <c>IsPrimaryName</c>) and
+    /// written by <c>table export</c> from the live table's
+    /// <c>PrimaryNameAttribute</c>.
+    /// </summary>
     [YamlMember(Order = 9)]
+    public string? PrimaryNameAttribute { get; init; }
+
+    /// <summary>The table's columns.</summary>
+    [YamlMember(Order = 10)]
     public IReadOnlyList<AttributeDefinition> Attributes { get; init; } = [];
 
     /// <summary>

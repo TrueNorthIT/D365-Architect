@@ -30,7 +30,17 @@ public sealed class FakeDataverseClient : IDataverseClient
     public Func<string, IReadOnlyList<string>?>? SolutionEntityLogicalNames { get; set; }
     public Func<string, string, bool>? SolutionEntityIncludesSubcomponents { get; set; } // (solutionUniqueName, entityLogicalName) -> bool
 
+    /// <summary>Answers <see cref="EntityExistsAsync"/>: logical name -> exists live. Unset throws, like every other unconfigured read.</summary>
+    public Func<string, bool>? EntityExists { get; set; }
+
+    /// <summary>Every logical name <see cref="EntityExistsAsync"/> was asked about, in order.</summary>
+    public List<string> EntityExistsCalls { get; } = [];
+
+    /// <summary>When set, <see cref="CreateEntityAsync"/> (and a <see cref="DataverseWrite.CreateEntity"/> in a transaction) throws this instead of recording the call - simulates Dataverse rejecting the create.</summary>
+    public Exception? CreateEntityFailure { get; set; }
+
     // ---- Writes (inspect after the call) ----
+    public List<(JsonObject Body, string? SolutionUniqueName)> CreateEntityCalls { get; } = [];
     public List<(string EntityLogicalName, JsonObject Body, string? SolutionUniqueName)> CreateAttributeCalls { get; } = [];
     public List<(string EntityLogicalName, string AttributeLogicalName, JsonObject Body)> UpdateAttributeCalls { get; } = [];
     public List<(JsonObject Metadata, string? SolutionUniqueName)> CreateOneToManyRelationshipCalls { get; } = [];
@@ -51,6 +61,23 @@ public sealed class FakeDataverseClient : IDataverseClient
 
     public Task<string> GetEntityDefinitionJsonAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken) =>
         Task.FromResult(EntityDefinitionJson ?? throw new InvalidOperationException($"{nameof(EntityDefinitionJson)} wasn't configured."));
+
+    public Task<bool> EntityExistsAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken)
+    {
+        EntityExistsCalls.Add(entityLogicalName);
+        return Task.FromResult(EntityExists is not null ? EntityExists(entityLogicalName) : throw new NotImplementedException());
+    }
+
+    public Task CreateEntityAsync(Uri environmentUrl, string accessToken, JsonObject entityMetadata, string? solutionUniqueName, CancellationToken cancellationToken)
+    {
+        if (CreateEntityFailure is not null)
+        {
+            throw CreateEntityFailure;
+        }
+
+        CreateEntityCalls.Add((entityMetadata, solutionUniqueName));
+        return Task.CompletedTask;
+    }
 
     public Task<IReadOnlySet<Guid>?> TryGetSolutionAttributeMetadataIdsAsync(Uri environmentUrl, string accessToken, string solutionUniqueName, CancellationToken cancellationToken) =>
         Task.FromResult(SolutionAttributeMetadataIds is not null ? SolutionAttributeMetadataIds(solutionUniqueName) : throw new NotImplementedException());
@@ -236,6 +263,15 @@ public sealed class FakeDataverseClient : IDataverseClient
         {
             switch (write)
             {
+                case DataverseWrite.CreateEntity w:
+                    if (CreateEntityFailure is not null)
+                    {
+                        throw CreateEntityFailure;
+                    }
+
+                    CreateEntityCalls.Add((w.Metadata, w.SolutionUniqueName));
+                    break;
+
                 case DataverseWrite.UpdateEntity w:
                     UpdateEntityCalls.Add((w.EntityLogicalName, w.Metadata));
                     break;
