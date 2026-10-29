@@ -54,7 +54,7 @@ public sealed class LiveDataverse : IDisposable
         AuthenticatedContext context;
         try
         {
-            context = await new MsalAuthenticationService(AuthenticationOptions.FromEnvironment()).GetCurrentContextAsync(cancellationToken);
+            context = await new MsalAuthenticationService(AuthenticationOptions.FromEnvironment(), new NonInteractiveAuthenticator()).GetCurrentContextAsync(cancellationToken);
         }
         catch (AuthenticationRequiredException ex)
         {
