@@ -192,7 +192,7 @@ d365architect table import --input account.table.yml
 | `--whatif`          | Only show the diff/plan — never prompt and never write anything | No      |
 | `--no-transaction`  | Send every column create/update one request at a time instead of as a single atomic Dataverse changeset | No |
 | `-s, --solution`    | Unique name of a solution to add any brand-new column (or lookup relationship) to as it's created | No |
-| `--publish`         | Publish only what the file describes, writing nothing else. Refuses (exit 1) if the table doesn't exist yet or the file has unapplied changes | No |
+| `--no-publish`      | Don't publish the table after importing                        | No       |
 
 Pass `--solution` when a column in the file doesn't exist live yet, so the
 new column joins that solution as part of the same write — without it, a
@@ -253,15 +253,13 @@ time instead, same as this tool always did before batching existed — useful
 if an environment turns out to reject batched metadata writes, or if
 partial progress on failure is actually what you want.
 
-**Publishing is a separate step.** Dataverse's own docs confirm a table/column
-change needs publishing before it takes effect in model-driven apps, so an
-import doesn't publish. Once the file is fully applied, run the same command
-with `--publish`: it publishes the table (its forms and views come with it)
-and nothing else. It shows "would publish: …", asks unless `--yes` is passed,
-and `--whatif` publishes nothing. It refuses (exit 1) if the table doesn't
-exist yet ("run `table create` without --publish first") or if the file still
-has unapplied changes ("run without --publish first"); `--yes` never overrides
-a refusal. See
+**Publishes what it changed.** Dataverse's own docs confirm a table/column
+change needs publishing before it takes effect in model-driven apps, so once
+the changes are applied the table is published (its forms and views come
+with it) and the run ends with "Published.". Confirming the import is the only
+question asked. Nothing is published when nothing was applied: no changes,
+a declined prompt, or `--whatif`. Pass `--no-publish` to write the changes
+without publishing them. See
 [`docs/yaml-conventions.md`](docs/yaml-conventions.md#importing-tables-table-import)
 for the full detail, including exactly why each excluded column type is
 excluded.
@@ -282,7 +280,7 @@ d365architect table create --input tn_project.table.yml --solution TNCore
 | `-s, --solution`  | Unique name of a solution to add the new table to as it's created            | No       |
 | `-y, --yes`       | Skip the confirmation prompt and create the table immediately                | No       |
 | `--whatif`        | Only show what would be created — never prompt and never write anything      | No       |
-| `--publish`       | Publish the table only, once it exists, writing nothing else. Refuses (exit 1) if it doesn't exist yet or the file has unapplied changes | No |
+| `--no-publish`    | Don't publish the table after creating it                                    | No       |
 
 The file must give `schemaName` (with its publisher prefix), `ownershipType`
 (`UserOwned` or `OrganizationOwned` only), `primaryNameAttribute` (the logical
@@ -294,10 +292,9 @@ says (confirmed live with 100 sent).
 
 If the table already exists, the command says so ("already exists, nothing to
 create") and exits 0 without validating the file, so it's safe to run against
-every table in a solution. Like `table import`, it doesn't publish the change
-unless run with `--publish`, which publishes the table once it exists. Only the
-table has to exist for that: the rest of its columns don't need applying first.
-It never rewrites the input file. See
+every table in a solution. Like `table import`, it publishes the table it just
+created (ending with "Published."), unless `--no-publish` is passed; a table that
+already exists isn't published. It never rewrites the input file. See
 [`docs/yaml-conventions.md`](docs/yaml-conventions.md#creating-tables-table-create)
 for the create body, the live confirmations, and the recommended workflow for a
 new table (create, then `solution export`, then edit the views and forms).
@@ -352,7 +349,7 @@ d365architect view import --input active-accounts.view.yml
 | `-s, --solution`  | Unique name of a solution to add the view to as it is created or changed | No |
 | `-y, --yes`       | Skip the confirmation prompt and import immediately             | No       |
 | `--whatif`        | Only show the diff — never prompt and never write anything      | No       |
-| `--publish`       | Publish the view's table only, writing nothing else. Refuses (exit 1) if the view doesn't exist yet or the file has unapplied changes | No |
+| `--no-publish`    | Don't publish the view's table after importing                  | No       |
 
 Each exported file carries the view's `savedQueryId`. Import uses it to pick
 the target view, so two live views sharing a name no longer clash; an id that
@@ -368,8 +365,8 @@ table + name matches no live view is shown in the plan as `+ view '<name>'
 still an error and never creates a view. A new view must be public: leave
 `queryType` out (or set it to `MainApplicationView`), since Dataverse only
 accepts that type on create. A new view needs `columns` or a raw `layoutXml`;
-with a raw `layoutXml` it also needs `fetchXml`. Created views aren't
-published automatically (see below).
+with a raw `layoutXml` it also needs `fetchXml`. Created views are published
+like changed ones (see below).
 
 A hand-written file can list `columns` instead of a raw `layoutXml`. Each
 entry is a column name, or a `name`/`width` mapping (width in pixels,
@@ -404,13 +401,11 @@ write, regardless of `--yes`.
 created or changed to that solution. A view created on a table that isn't in
 the solution yet still joins it.
 
-**Publishing is a separate step.** An import doesn't publish the change, and a
-view's changes aren't visible until its table is published. Run the same file
-again with `--publish` once it's fully applied: that publishes the view's
-table (Dataverse publishes a view with its table) and nothing else. It refuses
-(exit 1) if the view doesn't exist yet ("run `view import` without --publish
-first") or the file has unapplied changes. Form import, by contrast, always
-publishes after writing (see below).
+**Publishes what it changed.** A view's changes aren't visible until its table
+is published (Dataverse publishes a view with its table), so once a view is
+created or updated its table is published, with no second prompt. Nothing is
+published when nothing was applied (no changes, declined, `--whatif`). Pass
+`--no-publish` to skip it.
 
 ### `form`
 
@@ -593,6 +588,7 @@ d365architect form import --input account-main-form.form.yml
 | `-y, --yes`                  | Skip the confirmation prompt and import immediately            | No       |
 | `--whatif`                   | Only show the diff — never prompt and never write anything     | No       |
 | `--allow-schema-violations`  | Proceed even with a schema violation that isn't a confirmed-safe pattern | No |
+| `--no-publish`               | Don't publish the form's table after importing                 | No       |
 
 Before writing anything, this looks up the form — by the YAML's own
 `formId` when it has one (the ordinary case for anything exported since
@@ -644,7 +640,7 @@ changed to that solution.
 **Publishes the change automatically** — the form's owning table is
 published right after the write (a created form included), so there's no
 separate manual publish step (e.g. in the maker portal) before end users see
-it. `--publish` isn't needed or accepted here.
+it, as with every other import. Pass `--no-publish` to skip it.
 
 **What this doesn't do yet**: detect that the live form was changed by
 someone else since this YAML was last exported (it only compares the live
@@ -703,8 +699,9 @@ empty one.
 #### `solution import`
 
 Walks a folder previously written by `solution export` and imports every
-file found, in stages. First, every `*.table.yml` whose table doesn't exist
-live yet is created (`table create`'s flow). Then `choices.yml`, then, for
+file found, in stages. First, every `*.table.yml` is checked, the tables that
+don't exist live yet are listed, and after one "Create these N tables?" they
+are all created in one Dataverse transaction. Then `choices.yml`, then, for
 each table sub-folder, its `*.table.yml` (columns), then its `*.view.yml`
 file(s), then its `*.form.yml` file(s). Each stage reads live state afresh,
 so a table created in the first stage is visible to the rest.
@@ -721,12 +718,13 @@ d365architect solution import --input ./examplesolution --solution examplesoluti
 | `--whatif`                   | Only show each asset's diff/plan — never prompt and never write anything | No       |
 | `--no-transaction`           | For every table import: send column create/update one request at a time instead of as a single atomic Dataverse changeset | No |
 | `--allow-schema-violations`  | For every form import: proceed even if the rebuilt FormXML has a schema violation Dataverse might reject outright | No |
+| `--no-publish`               | For every table, choice, view and form import: don't publish after importing | No |
 
 This doesn't invent a new bulk-import behavior: every file found goes
 through the exact same preview → diff → confirm → apply flow as running
 `table import`/`view import`/`form import`/`choice import` on it directly —
 its own diff, its own column/choice plan, its own schema-violation gate.
-`--yes`/`--whatif`/`--no-transaction`/`--allow-schema-violations` are simply
+`--yes`/`--whatif`/`--no-transaction`/`--allow-schema-violations`/`--no-publish` are simply
 forwarded to every file they apply to, so `--yes` runs the whole solution
 unattended the same way it already does for a single asset. `--solution` is
 likewise forwarded to every table create, table import, choice import, view
@@ -735,9 +733,8 @@ so any brand-new column/lookup relationship/global choice this run creates,
 and any view or form it creates or changes, actually joins the solution it
 came from, rather than landing wherever Dataverse's own default solution
 context puts it and silently not showing up in a later `solution export` of
-the same solution. `solution import` has no `--publish`: each file is applied
-exactly as its own import command would apply it, so a created view isn't
-published, while a form is (as `form import` always does). One non-create file
+the same solution. Each file is applied and published exactly as its own
+import command would (`--no-publish` turns publishing off for all of them). One non-create file
 failing (a validation error, a live rejection, a missing counterpart)
 doesn't stop the rest — every remaining file is still attempted, with a
 final summary of how many succeeded/failed and a non-zero exit code if
@@ -747,15 +744,21 @@ particular), but nothing ties multiple files' writes together into one
 larger transaction. Recovery is to fix the file and rerun: existing tables are
 skipped, and each import applies only what still differs.
 
-A failed or declined table create is different: it stops the run at that
-table, since its views, forms and any later table's lookups can't succeed
-against a table that isn't there.
+Creating the tables is different. They are created together, in one
+transaction: if Dataverse rejects any of them, none is created, the error names
+the table that failed with Dataverse's own reason, and the run stops before any
+choice, column, view or form, since those (and other tables' lookups) can't
+succeed against a table that isn't there. A table file that can't be used
+(e.g. no `ownershipType`) stops the run the same way before anything is sent.
+Answering no to "Create these N tables?" creates nothing and stops the run;
+`--yes` skips the question. `--solution` reaches every create in the
+transaction. The create stage itself doesn't publish: a new table is published
+by the later step (its columns, a view or a form) that changes it.
 
-Under `--whatif` a table that doesn't exist yet is reported as one that would
-be created, and its own `*.table.yml` import, views and forms are skipped with
-a note (there's nothing live to preview them against) rather than counted as
-failures. Declining a table's create at its prompt stops the run there, like a
-create Dataverse rejects.
+Under `--whatif` the tables that don't exist yet are listed as ones that would
+be created, nothing is asked or written, and each such table's own
+`*.table.yml` import, views and forms are skipped with a note (there's nothing
+live to preview them against) rather than counted as failures.
 
 ### `schema`
 

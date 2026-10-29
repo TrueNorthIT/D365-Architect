@@ -705,8 +705,8 @@ header. Only a public view can be created, so a `queryType` other than
 matches nothing is `ViewNotFoundException` and never creates. Confirmed live:
 a `solution import` created nine views this way (All, Active and Inactive on
 each of three tables), and a view created on `account` with `--solution` was
-added to that solution as component type 26. Created views are not published
-by the import; see "Publishing" below.
+added to that solution as component type 26. Created views are published like
+changed ones; see "Publishing" below.
 
 **`columns:` builds the layout.** Instead of a raw `layoutXml`, a hand-written
 file may list `columns`: plain names, or `{name, width}` entries (width defaults
@@ -736,15 +736,13 @@ A local field that's null means "don't touch this", never "clear it" — confirm
 `ViewImportPreview.HasChanges`, which only compares a field when the local
 YAML actually has a value there.
 
-**Publishing (`view import --publish`).** `view import` doesn't publish. Dataverse
-publishes a view with its table, so `--publish` runs `PublishEntityAsync` on
-`preview.Entity` and nothing else (`ImportRunner`'s publish mode). It refuses
-(exit 1) when the view doesn't exist yet ("run `view import` without
---publish first") or when the preview still has changes to write ("the file
-has N unapplied change(s)"). A stale `savedQueryId` under `--publish` gets the
-same "doesn't exist yet" refusal as a create. A confirmed live publish
-succeeded; a just-written change isn't visible to `view export` until the table
-is published, which is the same behaviour as before this option existed.
+**Publishing.** Dataverse publishes a view with its table, so once a view is
+created or updated `view import` runs `PublishEntityAsync` on `preview.Entity`
+(`ImportRunner`, straight after the apply, with no second prompt). Nothing is
+published when nothing was applied (no changes, declined, `--whatif`), and
+`--no-publish` skips it. A confirmed live publish succeeded; a change written
+with `--no-publish` isn't visible to `view export` until the table is
+published.
 
 ## Importing tables (`table import`)
 
@@ -1211,17 +1209,15 @@ can appear "different" in the diff without anything being done about it
 (unsupported type, or a removal), and the plan is where that distinction
 actually shows up.
 
-**Publishing (`table import --publish`).** Microsoft's own docs are explicit
-that publishing is needed: *"When you update a table or column definition, use
-the PublishXml Action before the changes you make are applied to the
-model-driven applications."* `table import` doesn't publish: the change is real
-and stored the moment `apply` succeeds, but isn't visible in model-driven apps
-until published. A second run with `--publish` publishes the table (`PublishEntityAsync`,
-so its forms and views come with it) and nothing else. It refuses (exit 1) if the
-table doesn't exist yet, which `table import` never creates ("run `table create`
-without --publish first"), and if the file still has changes to apply ("the file
-has N unapplied change(s)"). Confirmed live: a file with one unapplied column
-was refused, and publishing three tables succeeded.
+**Publishing.** Microsoft's own docs are explicit that publishing is needed:
+*"When you update a table or column definition, use the PublishXml Action
+before the changes you make are applied to the model-driven applications."*
+The change is real and stored the moment `apply` succeeds, but isn't visible in
+model-driven apps until published, so `table import` publishes the table
+(`PublishEntityAsync`, so its forms and views come with it) straight after
+applying, with no second prompt. Nothing is published when nothing was applied
+(no changes, declined, `--whatif`), and `--no-publish` skips it. Confirmed
+live: publishing three tables succeeded.
 
 ### Applying the plan: one changeset, or one request at a time
 
@@ -1288,15 +1284,15 @@ assumed.
   and virtual tables are refused. Every problem is returned in one run.
 - **An existing table is a no-op.** If the logical name already exists live,
   the command reports "already exists, nothing to create" and exits 0 without
-  validating the file. This is what lets `solution import` run it against
-  every table folder.
+  validating the file, so it's safe to run against every table folder.
+  (`solution import` doesn't run it per file: it previews every table the same
+  way, asks once, and creates the missing ones in one transaction - see below.)
 - **`--solution`** passes `MSCRM.SolutionUniqueName` on the create, so the
   new table joins that solution as it's created (the same gap `table import
   --solution` closes for columns).
-- **Doesn't publish by default**, same as `table import`. `--publish` publishes
-  the table once it exists, and only that (its forms and views come with it);
-  the table's other columns don't need applying first. It refuses a table that
-  doesn't exist yet. It never rewrites the input file.
+- **Publishes the table it created**, same as `table import` (ending with
+  "Published."), unless `--no-publish`; a table that already exists isn't
+  published. It never rewrites the input file.
 - **The primary name column's `RequiredLevel` is ignored at create.** Dataverse
   returned the column as not required even when the file asked for it
   (confirmed live). The staged `solution import` corrects it in its column
@@ -1318,7 +1314,32 @@ assumed.
 - A staged `solution import` (see the README's `solution import` section)
   of a new table `bogdan_stagedtest`, plus an added column, a view and a main
   form, created the table first, then imported the column, view and form in
-  one run. The input files were byte-identical afterwards.
+  one run. The input files were byte-identical afterwards. (That run created
+  tables one at a time; see below for the one-transaction create.)
+
+### Creating several tables at once (`solution import`)
+
+`solution import`'s first stage previews every `*.table.yml` exactly as
+`table create` would, lists the tables that don't exist yet, asks once
+("Create these N tables?", skipped by `--yes`) and sends all the creates as
+one Web API `$batch` changeset of `POST EntityDefinitions` requests, each with
+`MSCRM.SolutionUniqueName` when `--solution` is given. A changeset is
+all-or-nothing: if Dataverse rejects any create, none is kept. Its error part
+carries the `Content-ID` of the failing request; requests are numbered from 1
+over the creates actually sent (tables that already exist aren't sent), so the
+tool maps that number back to the table and names it with Dataverse's reason.
+With only one table sent it is named even without a `Content-ID`. The run then
+stops before choices, columns, views and forms. A table file that fails
+validation stops the stage the same way before anything is sent, and declining
+the prompt creates nothing and stops the run. Under `--whatif` the missing
+tables are listed, nothing is asked or written, and their folders are skipped.
+The changeset gets a longer timeout than an ordinary request (10 minutes, as
+each table create takes 14-40 s). The create stage itself doesn't publish: a
+new table is published by whichever later step changes it.
+
+Not confirmed live yet: a metadata `$batch` of `EntityDefinitions` creates with
+the solution header on each part, and the exact `Content-ID` format Dataverse
+returns on the failed part.
 
 ### Creating a new table and its views and forms
 
@@ -1338,8 +1359,9 @@ exported views and forms (or hand-write new ones, with `columns:` for a view)
 → `table import`/`view import`/`form import` (or a `solution import` of the
 folder), which creates any view or main form that doesn't exist yet. Recovery from a partly-failed run is to fix
 the file and rerun, since each stage is idempotent: an existing table is
-skipped, and an import applies only what still differs. There's no
-transaction across the whole `solution import`; each asset is its own write.
+skipped, and an import applies only what still differs. Apart from the
+table creates, there's no transaction across the whole `solution import`;
+each asset is its own write.
 
 ### `primaryNameAttribute`
 
@@ -1445,12 +1467,11 @@ properties), a global choice's own `Options` has to be named directly in
 `$select` instead. See `IDataverseClient.TryGetGlobalOptionSetJsonAsync`/`GetGlobalOptionSetsJsonAsync`'s
 own doc comments for the exact confirmed URLs.
 
-**Publishing (`choice import --publish`).** `choice import` doesn't publish.
-`--publish` publishes every choice listed in the file, in file order, in one
-`PublishGlobalOptionSetsAsync` call, and nothing else. It refuses (exit 1) if a
-listed choice doesn't exist yet or the file has unapplied changes, same wording
-as `table import --publish`. Not confirmed live yet (the `<optionsets>` publish
-body is unverified against a real environment).
+**Publishing.** Once the changes are applied, `choice import` publishes every
+choice listed in the file, in file order, in one `PublishGlobalOptionSetsAsync`
+call, with no second prompt. Nothing is published when nothing was applied (no
+changes, declined, `--whatif`), and `--no-publish` skips it. Not confirmed live
+yet (the `<optionsets>` publish body is unverified against a real environment).
 
 **What this doesn't do yet**: deleting an option (`IDataverseClient.DeleteOptionValueAsync`
 exists but is never called automatically, same policy as a table column's

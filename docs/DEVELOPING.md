@@ -37,7 +37,9 @@ composition root, in three explicit steps:
 1. **Register services** into a plain `ServiceCollection` — `IEnvironmentService`,
    `AuthenticationOptions.FromEnvironment()`, `IAuthenticationService` →
    `MsalAuthenticationService`, `IDataverseClient` → `DataverseClient` (via
-   `services.AddHttpClient<IDataverseClient, DataverseClient>()`), and one
+   `services.AddHttpClient<IDataverseClient, DataverseClient>()`, with the
+   `HttpClient`'s own timeout switched off — see "Timeouts" under Dataverse
+   below), and one
    reader/converter/export/import service per asset type.
 2. **Bridge to Spectre.Console.Cli** via `Infrastructure/TypeRegistrar.cs` +
    `TypeResolver.cs` — a small `ITypeRegistrar`/`ITypeResolver` adapter pair so
@@ -91,7 +93,25 @@ ImportTableCommand(tableImportService, importRunner)`) and call it per file
 it finds, with its own `Settings` built from the folder's own file paths.
 Every asset still gets its full preview → diff → confirm → apply flow; one
 file failing doesn't stop the rest (see `ImportSolutionCommand`'s own doc
-comment for why, and how it reports the count at the end). The one exception is a failed or declined table create, which stops the run at that table: `SolutionImportOrchestrator` owns the stage ordering (creates first, then choices, then each table's columns, views and forms) and its doc comment gives the reasoning. `CreateTableCommand` keeps the same `RunAsync` shape, but returns which outcome happened (created, already exists, would create, declined), since an exit code of 0 can't tell them apart. If you add a
+comment for why, and how it reports the count at the end).
+
+The one exception is stage 1, creating the tables, which is one prompt and
+one transaction rather than a `table create` per file.
+`SolutionImportOrchestrator` owns the stage ordering (creates first, then
+choices, then each table's columns, views and forms) and hands every
+`*.table.yml` path to `ISolutionImportStepRunner.CreateTablesAsync` in one
+call. The production runner (`ImportSolutionCommand.StepRunner`) previews
+them all with `TableCreateService.PreviewAsync` (an unreadable or invalid file
+fails the stage, naming it, before anything is sent), lists the missing ones,
+asks "Create these N tables?" once (skipped under `--yes`; under `--whatif` it
+only lists them and returns their paths so the orchestrator skips their
+folders), then calls `ITableCreateService.ApplyAllAsync`: one
+`ExecuteTransactionAsync` of `DataverseWrite.CreateEntity` writes, each
+carrying `--solution`. A rollback keeps nothing; `ApplyAllAsync` maps the
+failing part's `Content-ID` (counted over the requests actually sent) back to
+the table, and the run stops before any later stage. A decline stops it the
+same way. Standalone `table create` is unchanged: one table, its own prompt,
+published afterwards. If you add a
 fifth `Import*Command`, keep this same `RunAsync` shape so it can join
 `solution import`'s loop the same way, rather than solution import needing
 its own special case per asset type.
@@ -128,18 +148,19 @@ see its own doc comment for how. Domain-specific exceptions
 `AuthenticationRequiredException`, etc.) exist
 specifically to give that message something meaningful to say.
 
-### `--publish` is a second mode of the same flow
+### Publishing follows the apply
 
 `PublishableImportSettings` (`table create`, `table import`, `view import`,
-`choice import`) adds `--publish`. `ImportRunner` checks it before the normal
-flow, and `ImportFlowSpec` carries the publish delegates: `PublishPrecheckAsync`
-(runs before the preview, for a table that may not exist yet), `PublishRefusal`
-(on the preview), `PublishTargets` (the "would publish: …" names) and
-`PublishAsync`. The preview is still built, so a refusal reads the same plan an
-import would apply. The refusal wording lives in `ImportRunner.NotYetCreated`
-and `ImportRunner.UnappliedChanges`; keep it in step with the README. A command
-without `--publish` leaves the delegates at their defaults. Form import and
-`solution import` deliberately don't take `PublishableImportSettings`.
+`choice import`, `form import`) adds `--no-publish`. When a command's
+`ImportFlowSpec` sets `PublishAsync`, `ImportRunner` calls it right after a
+successful `ApplyAsync` and `PrintSuccess`, then prints "Published." — unless
+`--no-publish`. There is no second prompt: confirming the import is the
+decision. Every path that applies nothing (no changes, declined, `--whatif`,
+a block) returns before it, so nothing is published either. `solution import`
+has its own `--no-publish` and forwards it to every step's settings. The old
+publish-only `--publish` mode is gone, and `CommandAppConfiguration` turns on
+Spectre's `StrictParsing`, so `--publish` (like any undeclared option) is now
+a parse error rather than silently ignored.
 
 ## Services/
 
@@ -186,6 +207,20 @@ bearer token is passed in per call. Worth knowing before extending it:
   `EntityMetadataJsonBuilder` and checked first by `TableCreateValidator`. It
   is the only write that makes a new table; see "Creating tables" in
   [`yaml-conventions.md`](yaml-conventions.md) for the confirmed behaviour.
+  `solution import` sends several of them as one `$batch` changeset
+  (`DataverseWrite.CreateEntity` through `ExecuteTransactionAsync`); a
+  rolled-back changeset throws `DataverseTransactionFailedException`, whose
+  `FailedContentId` is the `Content-ID` of the part Dataverse reported
+  (`ODataBatchResponseParser.Part.ContentId`), or null when it didn't say.
+- **Timeouts** are enforced per request by `DataverseClient` itself (a linked
+  `CancellationTokenSource`), not by `HttpClient.Timeout`, which can't be
+  lengthened for one request — so the DI-registered `HttpClient` has
+  `Timeout = InfiniteTimeSpan`. Ordinary requests get `RequestTimeout`
+  (100 s, `HttpClient`'s own default); `ExecuteTransactionAsync` gets
+  `TransactionTimeout` (10 minutes by default), because each table create in a
+  changeset takes 14–40 s. A timeout surfaces as a `TimeoutException`. A new
+  request must go through the private `SendAsync(request, timeout, ct)`, not
+  `httpClient.SendAsync`, or it loses its timeout.
 - **Auto-number seeds** are one unbound `POST SetAutoNumberSeed`
   (`DataverseWrite.SetAutoNumberSeed`, `IDataverseClient.SetAutoNumberSeedAsync`).
   `TableImportService` sends it only straight after a column's own create,
@@ -248,8 +283,8 @@ bearer token is passed in per call. Worth knowing before extending it:
   table (attributes/forms/views/ribbons together) — there's no documented way
   to publish a single `systemform` on its own; `<entities><entity>` only ever
   takes a table's logical name. `PublishGlobalOptionSetsAsync` publishes a list
-  of global choices by name (`<optionsets>`, used by `choice import --publish`;
-  not yet confirmed live).
+  of global choices by name (`<optionsets>`, used by `choice import` after it
+  applies; not yet confirmed live).
 - **Creating views and forms**: `CreateSavedQueryAsync` (`POST savedqueries`)
   and `CreateSystemFormAsync` (`POST systemforms`) take a body as built by
   `ViewImportService`/`FormImportService` and an optional solution name sent as
@@ -598,8 +633,8 @@ is called out by name in its test's own doc comment or `[Fact]` name:
 - **Destructive operations don't get silently automated**: `table import`
   never deletes a column. `form import`/`view import` create a record only when
   a hand-written file matches nothing (never on a stale id), and the create is
-  shown in the plan and confirmed like any other change. `--publish` changes
-  no metadata; it refuses rather than publish something other than the file. `table create` is the deliberate
+  shown in the plan and confirmed like any other change. Publishing only ever
+  follows a change the user confirmed. `table create` is the deliberate
   exception: it creates a whole table, and only when none exists under that
   name. If you're adding a new import path,
   keep that bar — surface what *would* change and let the user opt in,
