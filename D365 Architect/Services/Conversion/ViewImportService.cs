@@ -10,7 +10,7 @@ namespace D365Architect.Services.Conversion;
 
 public sealed class ViewImportService(IDataverseClient dataverseClient) : IViewImportService
 {
-    /// <summary>REQ-25's "sensible default" width, in pixels, for a column the file gives no width.</summary>
+    /// <summary>The "sensible default" width, in pixels, for a column the file gives no width.</summary>
     private const int DefaultColumnWidth = 150;
 
     public async Task<ViewImportPreview> PreviewAsync(Uri environmentUrl, string accessToken, ViewDefinition view, CancellationToken cancellationToken)
@@ -21,7 +21,7 @@ public sealed class ViewImportService(IDataverseClient dataverseClient) : IViewI
         // sharing a name, and a stale id is a clear error rather than a quiet
         // fall back to the name (which could update the wrong view) or a
         // create (which would hide that the view was deleted). Without one,
-        // matching nothing by table + name is a create (REQ-23).
+        // matching nothing by table + name is a create.
         var existing = view.SavedQueryId is { } savedQueryId
             ? await dataverseClient.TryGetSavedQueryByIdAsync(environmentUrl, accessToken, savedQueryId, cancellationToken)
                 ?? throw new ViewNotFoundException(view.Entity, view.Name, savedQueryId)
@@ -168,7 +168,7 @@ public sealed class ViewImportService(IDataverseClient dataverseClient) : IViewI
         }
     }
 
-    /// <summary>What a view that matches nothing needs before it can be created (REQ-23).</summary>
+    /// <summary>What a view that matches nothing needs before it can be created.</summary>
     private static void ValidateCreate(ViewDefinition view)
     {
         // Learn: querytype "Must always be zero (0)" on create — only a
@@ -230,7 +230,7 @@ public sealed class ViewImportService(IDataverseClient dataverseClient) : IViewI
 
     /// <summary>
     /// A grid shaped like the ones Dataverse itself exports: <c>name="resultset"</c>,
-    /// <c>object</c> the table's type code (REQ-27 — Dataverse refuses a layout
+    /// <c>object</c> the table's type code (Dataverse refuses a layout
     /// without it), <c>jump</c> the primary name column, <c>select</c>/<c>icon</c>/<c>preview</c>
     /// 1, and a <c>result</c> row keyed on the primary id column.
     /// </summary>
@@ -252,7 +252,7 @@ public sealed class ViewImportService(IDataverseClient dataverseClient) : IViewI
 
     /// <summary>
     /// The layout with <c>object</c> set to the live type code — returned
-    /// byte-for-byte when it already is (REQ-28: exported files import
+    /// byte-for-byte when it already is (exported files import
     /// unchanged), corrected when missing or wrong (an export from another
     /// environment, where custom tables' codes differ).
     /// </summary>
@@ -272,7 +272,7 @@ public sealed class ViewImportService(IDataverseClient dataverseClient) : IViewI
     /// <summary>
     /// The FetchXML with an <c>&lt;attribute&gt;</c> added to its top-level
     /// <c>&lt;entity&gt;</c> for each of <paramref name="names"/> it doesn't
-    /// already query (REQ-26: a column shown but not queried renders blank),
+    /// already query (a column shown but not queried renders blank),
     /// after its existing attributes; order, filters and links are left as
     /// written. Returned byte-for-byte when nothing is missing.
     /// </summary>

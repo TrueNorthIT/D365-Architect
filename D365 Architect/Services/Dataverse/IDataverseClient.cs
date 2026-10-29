@@ -508,7 +508,7 @@ public interface IDataverseClient
     /// </summary>
     Task ExecuteTransactionAsync(Uri environmentUrl, string accessToken, IReadOnlyList<DataverseWrite> writes, CancellationToken cancellationToken);
 
-    // ---- Simpler hand-written forms and views (REQ-22 to REQ-33). ----
+    // ---- Simpler hand-written forms and views. ----
 
     /// <summary>
     /// Reads the three things <c>view import</c> needs from a table to build or

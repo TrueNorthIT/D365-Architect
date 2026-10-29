@@ -15,10 +15,10 @@ public sealed class FormImportService(IDataverseClient dataverseClient, FormJson
 
         // A formId is authoritative and never falls back to a name match or a
         // create (see FormNotFoundException). Without one, name + type is the
-        // identity (REQ-29): a fresh custom table's main, card and quick view
+        // identity: a fresh custom table's main, card and quick view
         // forms are all named "Information" (confirmed live), so name alone
         // can't tell them apart. No match is a create; several is refused,
-        // listing the ids to pick from (REQ-31).
+        // listing the ids to pick from.
         ExistingSystemForm? existing;
         if (form.FormId is { } formId)
         {

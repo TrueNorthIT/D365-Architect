@@ -38,9 +38,8 @@ public sealed class YamlSchemaGeneratorTests
         Assert.Equal("array", (string)columns["type"]!);
     }
 
-    // REQ-24/REQ-25: a view column may be a plain string or { name, width }, so an editor must accept both.
+    // A view column may be a plain string or { name, width }, so an editor must accept both.
     [Fact]
-    [Trait("Requirement", "REQ-25")]
     public void Generate_PlainStringShorthandClass_AllowsAStringOrTheObject()
     {
         var schema = YamlSchemaGenerator.Generate(typeof(ViewDefinition), "View", "A view");

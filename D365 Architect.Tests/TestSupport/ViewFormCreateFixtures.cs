@@ -7,7 +7,7 @@ namespace D365Architect.Tests.TestSupport;
 
 /// <summary>
 /// The shared starting point for the "simpler hand-written forms and views"
-/// tests (REQ-22 to REQ-33): a table that has just been created
+/// tests: a table that has just been created
 /// (<c>bogdan_tablecreatetest</c>, type code 10722, the real values from the
 /// live check), the exported FetchXML/LayoutXML that environment returned,
 /// and small builders for views and forms.
@@ -39,7 +39,7 @@ public static class ViewFormCreateFixtures
         + "<filter type=\"and\"><condition attribute=\"statecode\" operator=\"eq\" value=\"0\" /></filter>"
         + "</entity></fetch>";
 
-    /// <summary>A hand-written FetchXML that only sorts: no columns of its own (REQ-26's example).</summary>
+    /// <summary>A hand-written FetchXML that only sorts: no columns of its own.</summary>
     public const string FetchXmlWithOnlyAnOrder =
         "<fetch version=\"1.0\" mapping=\"logical\"><entity name=\"bogdan_tablecreatetest\">"
         + "<order attribute=\"bogdan_name\" descending=\"false\" />"

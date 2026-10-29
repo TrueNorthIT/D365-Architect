@@ -11,15 +11,15 @@ using static D365Architect.Tests.TestSupport.ViewFormCreateFixtures;
 namespace D365Architect.Tests.Commands.Solution;
 
 /// <summary>
-/// REQ-11: "`solution import --no-publish` passes the option on to every step (nothing published)."
+/// "`solution import --no-publish` passes the option on to every step (nothing published)."
 /// For each stage that publishes, <see cref="ImportSolutionCommand.StepRunner"/> runs that stage's own
 /// command with <c>solution import</c>'s <see cref="ImportSolutionCommand.Settings.NoPublish"/> carried
 /// over. Each test runs the stage twice over (Theory): with the option it still writes but publishes
-/// nothing; without it the same write is followed by its publish (REQ-2, REQ-4 through
-/// <c>solution import</c>), so a stage that ignores the option can't pass by never publishing anyway.
+/// nothing; without it the same write is followed by its publish (publish by default,
+/// carried through <c>solution import</c>), so a stage that ignores the option can't pass by never publishing anyway.
 /// The whole-run version is in <c>ImportSolutionCommandViewFormCreateTests</c>.
 ///
-/// Tagged with the "Feature" trait "publish-by-default" because the requirement IDs overlap older ones.
+/// Tagged with the "Feature" trait "publish-by-default".
 /// </summary>
 [Collection(ConsoleCollection.Name)]
 public sealed class ImportSolutionCommandNoPublishTests : IDisposable
@@ -58,7 +58,6 @@ public sealed class ImportSolutionCommandNoPublishTests : IDisposable
 
     // Code path: StepRunner.RunImportStepAsync(ImportView) -> ImportViewCommand.Settings with NoPublish forwarded.
     [Theory]
-    [Trait("Requirement", "REQ-11")]
     [Trait("Feature", "publish-by-default")]
     [InlineData(true)]
     [InlineData(false)]
@@ -75,21 +74,20 @@ public sealed class ImportSolutionCommandNoPublishTests : IDisposable
 
         var outcome = await CreateRunner(client, noPublish).RunAsync(SolutionImportStage.ImportView, path, CancellationToken.None);
 
-        Expect.Equal(SolutionImportStepOutcome.Succeeded, outcome, $"REQ-11: the view stage should succeed. Output: <{console.Output}>");
-        Expect.Equal(1, client.CreateSavedQueryCalls.Count, "REQ-11: the view should still be created whether or not publishing is switched off.");
+        Expect.Equal(SolutionImportStepOutcome.Succeeded, outcome, $"the view stage should succeed. Output: <{console.Output}>");
+        Expect.Equal(1, client.CreateSavedQueryCalls.Count, "the view should still be created whether or not publishing is switched off.");
         if (noPublish)
         {
-            PublishAssertions.NothingPublished(client, "REQ-11", "the view step should honour solution import's --no-publish.");
+            PublishAssertions.NothingPublished(client, "the view step should honour solution import's --no-publish.");
         }
         else
         {
-            Expect.Sequence(["tn_project"], client.PublishEntityCalls, "REQ-2: without --no-publish the view step should publish the view's table.");
+            Expect.Sequence(["tn_project"], client.PublishEntityCalls, "without --no-publish the view step should publish the view's table.");
         }
     }
 
     // Code path: StepRunner.RunImportStepAsync(ImportForm) -> ImportFormCommand.Settings with NoPublish forwarded (form import always published before).
     [Theory]
-    [Trait("Requirement", "REQ-11")]
     [Trait("Feature", "publish-by-default")]
     [InlineData(true)]
     [InlineData(false)]
@@ -102,21 +100,20 @@ public sealed class ImportSolutionCommandNoPublishTests : IDisposable
 
         var outcome = await CreateRunner(client, noPublish).RunAsync(SolutionImportStage.ImportForm, path, CancellationToken.None);
 
-        Expect.Equal(SolutionImportStepOutcome.Succeeded, outcome, $"REQ-11: the form stage should succeed. Output: <{console.Output}>");
-        Expect.Equal(1, client.CreateSystemFormCalls.Count, "REQ-11: the form should still be created whether or not publishing is switched off.");
+        Expect.Equal(SolutionImportStepOutcome.Succeeded, outcome, $"the form stage should succeed. Output: <{console.Output}>");
+        Expect.Equal(1, client.CreateSystemFormCalls.Count, "the form should still be created whether or not publishing is switched off.");
         if (noPublish)
         {
-            PublishAssertions.NothingPublished(client, "REQ-11", "the form step should honour solution import's --no-publish.");
+            PublishAssertions.NothingPublished(client, "the form step should honour solution import's --no-publish.");
         }
         else
         {
-            Expect.Sequence(["tn_project"], client.PublishEntityCalls, "REQ-33: without --no-publish a created form's table is published.");
+            Expect.Sequence(["tn_project"], client.PublishEntityCalls, "without --no-publish a created form's table is published.");
         }
     }
 
     // Code path: StepRunner.RunImportStepAsync(ImportTable) -> ImportTableCommand.Settings with NoPublish forwarded.
     [Theory]
-    [Trait("Requirement", "REQ-11")]
     [Trait("Feature", "publish-by-default")]
     [InlineData(true)]
     [InlineData(false)]
@@ -133,21 +130,20 @@ public sealed class ImportSolutionCommandNoPublishTests : IDisposable
 
         var outcome = await CreateRunner(client, noPublish).RunAsync(SolutionImportStage.ImportTable, path, CancellationToken.None);
 
-        Expect.Equal(SolutionImportStepOutcome.Succeeded, outcome, $"REQ-11: the table stage should succeed. Output: <{console.Output}>");
-        Expect.Equal(1, client.CreateAttributeCalls.Count, "REQ-11: the new column should still be created whether or not publishing is switched off.");
+        Expect.Equal(SolutionImportStepOutcome.Succeeded, outcome, $"the table stage should succeed. Output: <{console.Output}>");
+        Expect.Equal(1, client.CreateAttributeCalls.Count, "the new column should still be created whether or not publishing is switched off.");
         if (noPublish)
         {
-            PublishAssertions.NothingPublished(client, "REQ-11", "the table import step should honour solution import's --no-publish.");
+            PublishAssertions.NothingPublished(client, "the table import step should honour solution import's --no-publish.");
         }
         else
         {
-            Expect.Sequence(["tn_test"], client.PublishEntityCalls, "REQ-2: without --no-publish the table import step should publish the table it changed.");
+            Expect.Sequence(["tn_test"], client.PublishEntityCalls, "without --no-publish the table import step should publish the table it changed.");
         }
     }
 
     // Code path: StepRunner.RunImportStepAsync(ImportChoices) -> ImportChoiceCommand.Settings with NoPublish forwarded.
     [Theory]
-    [Trait("Requirement", "REQ-11")]
     [Trait("Feature", "publish-by-default")]
     [InlineData(true)]
     [InlineData(false)]
@@ -160,16 +156,16 @@ public sealed class ImportSolutionCommandNoPublishTests : IDisposable
 
         var outcome = await CreateRunner(client, noPublish).RunAsync(SolutionImportStage.ImportChoices, path, CancellationToken.None);
 
-        Expect.Equal(SolutionImportStepOutcome.Succeeded, outcome, $"REQ-11: the choices stage should succeed. Output: <{console.Output}>");
-        Expect.Equal(1, client.CreateGlobalOptionSetCalls.Count, "REQ-11: the choice should still be created whether or not publishing is switched off.");
+        Expect.Equal(SolutionImportStepOutcome.Succeeded, outcome, $"the choices stage should succeed. Output: <{console.Output}>");
+        Expect.Equal(1, client.CreateGlobalOptionSetCalls.Count, "the choice should still be created whether or not publishing is switched off.");
         if (noPublish)
         {
-            PublishAssertions.NothingPublished(client, "REQ-11", "the choice import step should honour solution import's --no-publish.");
+            PublishAssertions.NothingPublished(client, "the choice import step should honour solution import's --no-publish.");
         }
         else
         {
-            Expect.Equal(1, client.PublishGlobalOptionSetsCalls.Count, "REQ-2: without --no-publish the choice import step should publish the choice it created, in one call.");
-            Expect.Sequence(["bogdan_status"], client.PublishGlobalOptionSetsCalls.FirstOrDefault() ?? [], "REQ-2: the created choice should be the one published.");
+            Expect.Equal(1, client.PublishGlobalOptionSetsCalls.Count, "without --no-publish the choice import step should publish the choice it created, in one call.");
+            Expect.Sequence(["bogdan_status"], client.PublishGlobalOptionSetsCalls.FirstOrDefault() ?? [], "the created choice should be the one published.");
         }
     }
 }

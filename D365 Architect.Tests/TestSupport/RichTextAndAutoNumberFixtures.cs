@@ -1,8 +1,8 @@
 namespace D365Architect.Tests.TestSupport;
 
 /// <summary>
-/// Live Web API shapes for the rich text (REQ-13..16) and auto-number
-/// (REQ-17..21) tests. The first two are the literal read-backs confirmed
+/// Live Web API shapes for the rich text and auto-number
+/// tests. The first two are the literal read-backs confirmed
 /// against a real environment on 2026-10-26 (create accepted, then read back):
 /// <list type="bullet">
 /// <item>A rich text column is a Memo whose legacy <c>Format</c> reads back

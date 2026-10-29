@@ -140,7 +140,7 @@ public sealed class FakeDataverseClient : IDataverseClient
         WriteOrder.Add($"update-view:{savedQueryId}");
         return Task.CompletedTask;
     }
-    // ---- Simpler hand-written forms and views (REQ-22 to REQ-33) ----
+    // ---- Simpler hand-written forms and views ----
 
     /// <summary>Every create/update of a table, view or form, in the order issued, e.g. <c>create-table:tn_Project</c>, <c>create-view:All projects</c>, <c>create-form:Project</c> - what the one-run ordering test reads.</summary>
     public List<string> WriteOrder { get; } = [];

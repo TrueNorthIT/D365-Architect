@@ -6,13 +6,12 @@ namespace D365Architect.Tests.Services.Conversion;
 
 /// <summary>
 /// Covers <see cref="SolutionImportOrchestrator"/> - the stage ordering of
-/// <c>solution import</c> (REQ-10), that it never rewrites the folder it
-/// reads (REQ-11) and that a failed or declined table create stops the later
-/// stages (REQ-12).
+/// <c>solution import</c>, that it never rewrites the folder it
+/// reads and that a failed or declined table create stops the later
+/// stages.
 ///
-/// Batch table creation (REQ-7 to REQ-9 of the "publish by default / create tables
-/// in one transaction" requirements - tagged with the "Feature" trait
-/// "batch-table-create" because those IDs overlap the older ones): the orchestrator
+/// Batch table creation (the "create tables in one transaction" behaviour -
+/// tagged with the "Feature" trait "batch-table-create"): the orchestrator
 /// hands EVERY <c>*.table.yml</c> to <see cref="ISolutionImportStepRunner.CreateTablesAsync"/>
 /// in one call instead of running one create step per table.
 ///
@@ -102,10 +101,9 @@ public sealed class SolutionImportOrchestratorTests : IDisposable
 
     private static string Describe((SolutionImportStage Stage, string FileName) step) => $"{step.Stage}:{step.FileName}";
 
-    // REQ-7: "`solution import` lists every table it would create and asks once" - so every table file goes to the runner in ONE call, not one step each.
+    // "`solution import` lists every table it would create and asks once" - so every table file goes to the runner in ONE call, not one step each.
     // Code path: SolutionImportOrchestrator.RunAsync -> ISolutionImportStepRunner.CreateTablesAsync(all *.table.yml paths, sorted).
     [Fact]
-    [Trait("Requirement", "REQ-7")]
     [Trait("Feature", "batch-table-create")]
     public async Task RunAsync_HandsEveryTableFileToTheRunnerInOneBatch()
     {
@@ -113,13 +111,12 @@ public sealed class SolutionImportOrchestratorTests : IDisposable
 
         await Run(runner);
 
-        Expect.Equal(1, runner.CreateBatches.Count, $"REQ-7: the create stage should be one CreateTablesAsync call for the whole run. Log: <{string.Join(" | ", runner.Log)}>.");
-        Expect.Sequence(["tn_project.table.yml", "tn_task.table.yml"], runner.CreateBatches.FirstOrDefault() ?? [], "REQ-7: the batch should hold every *.table.yml, in folder order.");
+        Expect.Equal(1, runner.CreateBatches.Count, $"the create stage should be one CreateTablesAsync call for the whole run. Log: <{string.Join(" | ", runner.Log)}>.");
+        Expect.Sequence(["tn_project.table.yml", "tn_task.table.yml"], runner.CreateBatches.FirstOrDefault() ?? [], "the batch should hold every *.table.yml, in folder order.");
     }
 
-    // REQ-7: the per-table CreateTable step (a prompt and a request per table) is no longer how tables are created.
+    // The per-table CreateTable step (a prompt and a request per table) is no longer how tables are created.
     [Fact]
-    [Trait("Requirement", "REQ-7")]
     [Trait("Feature", "batch-table-create")]
     public async Task RunAsync_DoesNotRunAPerTableCreateStep()
     {
@@ -128,13 +125,12 @@ public sealed class SolutionImportOrchestratorTests : IDisposable
         await Run(runner);
 
         var perTable = runner.Log.Where(l => l.StartsWith("CreateTable:", StringComparison.Ordinal)).ToList();
-        Expect.Empty(perTable, "REQ-7: tables should be created by the single CreateTablesAsync call, not one CreateTable step per table.");
+        Expect.Empty(perTable, "tables should be created by the single CreateTablesAsync call, not one CreateTable step per table.");
     }
 
-    // REQ-10 (older numbering, kept): "first create any missing tables, then re-read live state, then import choices, columns, views and forms as today."
+    // "First create any missing tables, then re-read live state, then import choices, columns, views and forms as today."
     // The batch comes before any other kind of step, then the order is the same as before the change.
     [Fact]
-    [Trait("Requirement", "REQ-10")]
     [Trait("Feature", "batch-table-create")]
     public async Task RunAsync_CreatesTheTablesBeforeAnyOtherStageThenFollowsTodaysOrder()
     {
@@ -153,12 +149,11 @@ public sealed class SolutionImportOrchestratorTests : IDisposable
                 "ImportView:All tasks.view.yml",
             ],
             runner.Log,
-            "REQ-10: solution import should create the tables first, then import choices, then each table folder's columns, views and forms.");
+            "solution import should create the tables first, then import choices, then each table folder's columns, views and forms.");
     }
 
     // A run where the batch succeeds reports no failures and no stop.
     [Fact]
-    [Trait("Requirement", "REQ-10")]
     [Trait("Feature", "batch-table-create")]
     public async Task RunAsync_BatchSucceeds_ReportsNoFailuresAndNoStop()
     {
@@ -166,14 +161,13 @@ public sealed class SolutionImportOrchestratorTests : IDisposable
 
         var result = await Run(runner);
 
-        Expect.Equal(0, result.Failed, "REQ-10: a run where every step succeeds should report no failures.");
-        Expect.Equal(null, result.StoppedAtAssetPath, "REQ-10: a run that completed every stage should not report being stopped.");
+        Expect.Equal(0, result.Failed, "a run where every step succeeds should report no failures.");
+        Expect.Equal(null, result.StoppedAtAssetPath, "a run that completed every stage should not report being stopped.");
     }
 
-    // REQ-8: "If any fails, none are created, the run stops before columns/views/forms, and the error names the table that failed."
+    // "If any fails, none are created, the run stops before columns/views/forms, and the error names the table that failed."
     // Example: the batch reports tn_task failed -> no choices, columns, views or forms are attempted.
     [Fact]
-    [Trait("Requirement", "REQ-8")]
     [Trait("Feature", "batch-table-create")]
     public async Task RunAsync_BatchFails_NoLaterStageIsAttempted()
     {
@@ -181,11 +175,10 @@ public sealed class SolutionImportOrchestratorTests : IDisposable
 
         await Run(runner);
 
-        Expect.Sequence(["CreateTables:tn_project.table.yml,tn_task.table.yml"], runner.Log, "REQ-8: after the batch failed, no choices, columns, views or forms should be attempted.");
+        Expect.Sequence(["CreateTables:tn_project.table.yml,tn_task.table.yml"], runner.Log, "after the batch failed, no choices, columns, views or forms should be attempted.");
     }
 
     [Fact]
-    [Trait("Requirement", "REQ-8")]
     [Trait("Feature", "batch-table-create")]
     public async Task RunAsync_BatchFails_ResultNamesTheTableThatStoppedTheRun()
     {
@@ -194,14 +187,13 @@ public sealed class SolutionImportOrchestratorTests : IDisposable
         var result = await Run(runner);
 
         Expect.True(result.StoppedAtAssetPath?.EndsWith("tn_task.table.yml", StringComparison.Ordinal) == true,
-            $"REQ-8: the result should name the table file whose create failed (tn_task.table.yml). Actual: <{result.StoppedAtAssetPath}>.");
-        Expect.True(result.Failed >= 1, "REQ-8: the failed batch should be counted as a failure.");
-        Expect.True(!result.StopWasDeclined, "REQ-8: a failure is not a decline.");
+            $"the result should name the table file whose create failed (tn_task.table.yml). Actual: <{result.StoppedAtAssetPath}>.");
+        Expect.True(result.Failed >= 1, "the failed batch should be counted as a failure.");
+        Expect.True(!result.StopWasDeclined, "a failure is not a decline.");
     }
 
     // As today (ImportSolutionCommand.TryRunAsync): a step that throws is a failure, not a crash - now for the batch too.
     [Fact]
-    [Trait("Requirement", "REQ-8")]
     [Trait("Feature", "batch-table-create")]
     public async Task RunAsync_RunnerThrowsDuringTheBatch_IsAFailureThatStopsLaterStages()
     {
@@ -209,8 +201,8 @@ public sealed class SolutionImportOrchestratorTests : IDisposable
 
         var result = await new SolutionImportOrchestrator().RunAsync(_root, runner, CancellationToken.None);
 
-        Expect.True(result.Failed >= 1, "REQ-8: a create stage that threw should be counted as a failure.");
-        Expect.Equal(0, runner.LaterStageCalls, "REQ-8: no later stage should run after the create stage threw.");
+        Expect.True(result.Failed >= 1, "a create stage that threw should be counted as a failure.");
+        Expect.Equal(0, runner.LaterStageCalls, "no later stage should run after the create stage threw.");
     }
 
     private sealed class ThrowingRunner : ISolutionImportStepRunner
@@ -236,21 +228,19 @@ public sealed class SolutionImportOrchestratorTests : IDisposable
 
     // As today: a failing view or form doesn't stop the rest of the solution (only a failed table create does).
     [Fact]
-    [Trait("Requirement", "REQ-10")]
     public async Task RunAsync_ViewImportFails_RemainingAssetsAreStillImported()
     {
         var runner = new RecordingRunner { Fails = (stage, file) => stage == SolutionImportStage.ImportView && file == "Active projects.view.yml" };
 
         var result = await Run(runner);
 
-        Expect.Equal(1, result.Failed, "REQ-10: only the failed view should count as a failure.");
-        Expect.Contains("ImportForm:Main.form.yml", string.Join(" | ", runner.Steps.Select(Describe)), "REQ-10: the form after the failed view should still be imported, as today.");
-        Expect.Contains("ImportTable:tn_task.table.yml", string.Join(" | ", runner.Steps.Select(Describe)), "REQ-10: the next table folder should still be imported, as today.");
+        Expect.Equal(1, result.Failed, "only the failed view should count as a failure.");
+        Expect.Contains("ImportForm:Main.form.yml", string.Join(" | ", runner.Steps.Select(Describe)), "the form after the failed view should still be imported, as today.");
+        Expect.Contains("ImportTable:tn_task.table.yml", string.Join(" | ", runner.Steps.Select(Describe)), "the next table folder should still be imported, as today.");
     }
 
-    // REQ-9: "Saying no creates nothing and stops the run." - a declined batch stops exactly like a failed one, but says it was declined.
+    // "Saying no creates nothing and stops the run." - a declined batch stops exactly like a failed one, but says it was declined.
     [Fact]
-    [Trait("Requirement", "REQ-9")]
     [Trait("Feature", "batch-table-create")]
     public async Task RunAsync_BatchDeclined_StopsTheRunAsDeclinedWithNoLaterStage()
     {
@@ -258,10 +248,10 @@ public sealed class SolutionImportOrchestratorTests : IDisposable
 
         var result = await Run(runner);
 
-        Expect.Sequence(["CreateTables:tn_project.table.yml,tn_task.table.yml"], runner.Log, "REQ-9: a declined create should stop the run: no later stage may run.");
-        Expect.True(result.StopWasDeclined, "REQ-9: the result should say the stop was a decline, not a Dataverse failure.");
-        Expect.True(result.StoppedAtAssetPath is not null, "REQ-9: the result should be marked as stopped (StoppedAtAssetPath set) so the command exits non-zero, as it does today for a decline.");
-        Expect.Equal(0, result.Skipped, "REQ-9: nothing is skipped; the run simply stopped.");
+        Expect.Sequence(["CreateTables:tn_project.table.yml,tn_task.table.yml"], runner.Log, "a declined create should stop the run: no later stage may run.");
+        Expect.True(result.StopWasDeclined, "the result should say the stop was a decline, not a Dataverse failure.");
+        Expect.True(result.StoppedAtAssetPath is not null, "the result should be marked as stopped (StoppedAtAssetPath set) so the command exits non-zero, as it does today for a decline.");
+        Expect.Equal(0, result.Skipped, "nothing is skipped; the run simply stopped.");
     }
 
     // "`--whatif` on solution import still skips would-be-created tables' later stages as today":
@@ -300,10 +290,9 @@ public sealed class SolutionImportOrchestratorTests : IDisposable
         Expect.Equal(null, result.StoppedAtAssetPath, "A would-be-created table doesn't stop the run.");
     }
 
-    // REQ-11 (older numbering, kept): "No stage rewrites local YAML files. Each `*.table.yml` is byte-identical before and after `solution import`."
+    // "No stage rewrites local YAML files. Each `*.table.yml` is byte-identical before and after `solution import`."
     // The orchestrator only reads the folder; every file keeps its exact bytes whether the run succeeds or stops.
     [Theory]
-    [Trait("Requirement", "REQ-11")]
     [InlineData(false)]
     [InlineData(true)]
     public async Task RunAsync_LeavesEveryFileInTheFolderByteIdentical(bool createFails)
@@ -317,10 +306,10 @@ public sealed class SolutionImportOrchestratorTests : IDisposable
         await Run(runner);
 
         var after = Snapshot();
-        Expect.Sequence(before.Keys.OrderBy(k => k).ToList(), after.Keys.OrderBy(k => k).ToList(), "REQ-11: no file should be added or removed by solution import.");
+        Expect.Sequence(before.Keys.OrderBy(k => k).ToList(), after.Keys.OrderBy(k => k).ToList(), "no file should be added or removed by solution import.");
         foreach (var (path, bytes) in before)
         {
-            Expect.True(bytes.SequenceEqual(after[path]), $"REQ-11: '{path}' should be byte-identical before and after solution import.");
+            Expect.True(bytes.SequenceEqual(after[path]), $"'{path}' should be byte-identical before and after solution import.");
         }
     }
 

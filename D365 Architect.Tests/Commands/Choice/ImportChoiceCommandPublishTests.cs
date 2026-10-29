@@ -8,8 +8,8 @@ using Xunit;
 namespace D365Architect.Tests.Commands.Choice;
 
 /// <summary>
-/// <c>choice import</c> publishes after it applies changes (REQ-2, 3, 4, 6 of the "publish by default"
-/// requirements, tagged with the "Feature" trait "publish-by-default" because those IDs overlap older ones):
+/// <c>choice import</c> publishes after it applies changes (the "publish by default"
+/// behaviour, tagged with the "Feature" trait "publish-by-default"):
 /// <see cref="ImportChoiceCommand"/> through the real <see cref="ImportRunner"/> and
 /// <see cref="GlobalChoiceImportService"/>, with only Dataverse (<see cref="FakeDataverseClient"/>), sign-in
 /// and the console faked. The old <c>--publish</c> publish-only mode these tests used to cover is gone.
@@ -64,10 +64,9 @@ public sealed class ImportChoiceCommandPublishTests : IDisposable
     private static ImportChoiceCommand.Settings Settings(string input, bool yes = false, bool whatIf = false, bool noPublish = false) =>
         new() { Input = input, Yes = yes, WhatIf = whatIf, NoPublish = noPublish };
 
-    // REQ-2: "`choice import` ... publish after applying changes." - a new choice is created, then published by name.
+    // "`choice import` ... publish after applying changes." - a new choice is created, then published by name.
     // Code path: ImportChoiceCommand.RunAsync -> ImportRunner flow: after GlobalChoiceImportService.ApplyAsync, IGlobalChoiceImportService.PublishAsync -> IDataverseClient.PublishGlobalOptionSetsAsync.
     [Fact]
-    [Trait("Requirement", "REQ-2")]
     [Trait("Feature", "publish-by-default")]
     public async Task RunAsync_CreatingAChoice_PublishesIt()
     {
@@ -76,16 +75,15 @@ public sealed class ImportChoiceCommandPublishTests : IDisposable
 
         var exitCode = await command.RunAsync(Settings(WriteChoices(Choice("bogdan_status")), yes: true), CancellationToken.None);
 
-        Expect.Equal(0, exitCode, $"REQ-2: importing a new choice should succeed. Output: <{console.Output}>");
-        Expect.Equal(1, client.CreateGlobalOptionSetCalls.Count, "REQ-2: the new choice should be created.");
-        Expect.Equal(1, client.PublishGlobalOptionSetsCalls.Count, "REQ-2: the changed choice should be published in a single PublishXml call.");
-        Expect.Sequence(["bogdan_status"], client.PublishGlobalOptionSetsCalls.FirstOrDefault() ?? [], "REQ-2: the choice that was created should be the one published.");
-        Expect.Empty(client.PublishEntityCalls, "REQ-2: publishing a choice should not publish any table.");
+        Expect.Equal(0, exitCode, $"importing a new choice should succeed. Output: <{console.Output}>");
+        Expect.Equal(1, client.CreateGlobalOptionSetCalls.Count, "the new choice should be created.");
+        Expect.Equal(1, client.PublishGlobalOptionSetsCalls.Count, "the changed choice should be published in a single PublishXml call.");
+        Expect.Sequence(["bogdan_status"], client.PublishGlobalOptionSetsCalls.FirstOrDefault() ?? [], "the choice that was created should be the one published.");
+        Expect.Empty(client.PublishEntityCalls, "publishing a choice should not publish any table.");
     }
 
-    // REQ-2: an existing choice that is updated is published too.
+    // An existing choice that is updated is published too.
     [Fact]
-    [Trait("Requirement", "REQ-2")]
     [Trait("Feature", "publish-by-default")]
     public async Task RunAsync_UpdatingAChoice_PublishesIt()
     {
@@ -94,15 +92,14 @@ public sealed class ImportChoiceCommandPublishTests : IDisposable
 
         var exitCode = await command.RunAsync(Settings(WriteChoices(Choice("bogdan_status", description: "Now described")), yes: true), CancellationToken.None);
 
-        Expect.Equal(0, exitCode, $"REQ-2: updating a choice should succeed. Output: <{console.Output}>");
-        Expect.Equal(1, client.UpdateGlobalOptionSetCalls.Count, "REQ-2: the changed choice should be updated.");
-        Expect.Equal(1, client.PublishGlobalOptionSetsCalls.Count, "REQ-2: the updated choice should be published in a single PublishXml call.");
-        Expect.Sequence(["bogdan_status"], client.PublishGlobalOptionSetsCalls.FirstOrDefault() ?? [], "REQ-2: the choice that was updated should be the one published.");
+        Expect.Equal(0, exitCode, $"updating a choice should succeed. Output: <{console.Output}>");
+        Expect.Equal(1, client.UpdateGlobalOptionSetCalls.Count, "the changed choice should be updated.");
+        Expect.Equal(1, client.PublishGlobalOptionSetsCalls.Count, "the updated choice should be published in a single PublishXml call.");
+        Expect.Sequence(["bogdan_status"], client.PublishGlobalOptionSetsCalls.FirstOrDefault() ?? [], "the choice that was updated should be the one published.");
     }
 
-    // REQ-2 + the confirmation: answering yes to "Import these changes?" is the only question - publishing follows without asking again.
+    // Answering yes to "Import these changes?" is the only question - publishing follows without asking again.
     [Fact]
-    [Trait("Requirement", "REQ-2")]
     [Trait("Feature", "publish-by-default")]
     public async Task RunAsync_ConfirmingTheImport_PublishesWithoutAskingAgain()
     {
@@ -111,13 +108,12 @@ public sealed class ImportChoiceCommandPublishTests : IDisposable
 
         var exitCode = await command.RunAsync(Settings(WriteChoices(Choice("bogdan_status"))), CancellationToken.None);
 
-        Expect.Equal(0, exitCode, $"REQ-2: confirming once should import and publish. Output: <{console.Output}>");
-        Expect.Equal(1, client.PublishGlobalOptionSetsCalls.Count, "REQ-2: the choice should be published after the single confirmation.");
+        Expect.Equal(0, exitCode, $"confirming once should import and publish. Output: <{console.Output}>");
+        Expect.Equal(1, client.PublishGlobalOptionSetsCalls.Count, "the choice should be published after the single confirmation.");
     }
 
-    // REQ-3: "If nothing changed, nothing is published."
+    // "If nothing changed, nothing is published."
     [Fact]
-    [Trait("Requirement", "REQ-3")]
     [Trait("Feature", "publish-by-default")]
     public async Task RunAsync_FileMatchesLive_PublishesNothing()
     {
@@ -126,13 +122,12 @@ public sealed class ImportChoiceCommandPublishTests : IDisposable
 
         var exitCode = await command.RunAsync(Settings(WriteChoices(Choice("bogdan_status")), yes: true), CancellationToken.None);
 
-        Expect.Equal(0, exitCode, $"REQ-3: an in-sync choice is not an error. Output: <{console.Output}>");
-        PublishAssertions.NothingPublished(client, "REQ-3", "nothing changed, so nothing should be published.");
+        Expect.Equal(0, exitCode, $"an in-sync choice is not an error. Output: <{console.Output}>");
+        PublishAssertions.NothingPublished(client, "nothing changed, so nothing should be published.");
     }
 
-    // REQ-3: answering no applies nothing, so nothing is published.
+    // Answering no applies nothing, so nothing is published.
     [Fact]
-    [Trait("Requirement", "REQ-3")]
     [Trait("Feature", "publish-by-default")]
     public async Task RunAsync_DecliningTheImport_PublishesNothing()
     {
@@ -143,12 +138,11 @@ public sealed class ImportChoiceCommandPublishTests : IDisposable
 
         Expect.Equal(0, exitCode, $"Declining should exit 0, as every import does. Output: <{console.Output}>");
         Expect.Empty(client.CreateGlobalOptionSetCalls, "Declining should write nothing.");
-        PublishAssertions.NothingPublished(client, "REQ-3", "declining wrote nothing, so there is nothing to publish.");
+        PublishAssertions.NothingPublished(client, "declining wrote nothing, so there is nothing to publish.");
     }
 
-    // REQ-4: "`--no-publish` skips publishing" - the choice is still created.
+    // "`--no-publish` skips publishing" - the choice is still created.
     [Fact]
-    [Trait("Requirement", "REQ-4")]
     [Trait("Feature", "publish-by-default")]
     public async Task RunAsync_WithNoPublish_AppliesTheChangeButPublishesNothing()
     {
@@ -157,14 +151,13 @@ public sealed class ImportChoiceCommandPublishTests : IDisposable
 
         var exitCode = await command.RunAsync(Settings(WriteChoices(Choice("bogdan_status")), yes: true, noPublish: true), CancellationToken.None);
 
-        Expect.Equal(0, exitCode, $"REQ-4: --no-publish should still import. Output: <{console.Output}>");
-        Expect.Equal(1, client.CreateGlobalOptionSetCalls.Count, "REQ-4: --no-publish should still write the change.");
-        PublishAssertions.NothingPublished(client, "REQ-4", "--no-publish skips publishing.");
+        Expect.Equal(0, exitCode, $"--no-publish should still import. Output: <{console.Output}>");
+        Expect.Equal(1, client.CreateGlobalOptionSetCalls.Count, "--no-publish should still write the change.");
+        PublishAssertions.NothingPublished(client, "--no-publish skips publishing.");
     }
 
-    // REQ-6: "`--whatif` never publishes."
+    // "`--whatif` never publishes."
     [Fact]
-    [Trait("Requirement", "REQ-6")]
     [Trait("Feature", "publish-by-default")]
     public async Task RunAsync_WithWhatIf_WritesAndPublishesNothing()
     {
@@ -173,8 +166,8 @@ public sealed class ImportChoiceCommandPublishTests : IDisposable
 
         var exitCode = await command.RunAsync(Settings(WriteChoices(Choice("bogdan_status")), whatIf: true), CancellationToken.None);
 
-        Expect.Equal(0, exitCode, $"REQ-6: --whatif should succeed. Output: <{console.Output}>");
-        Expect.Empty(client.CreateGlobalOptionSetCalls, "REQ-6: --whatif must not write.");
-        PublishAssertions.NothingPublished(client, "REQ-6", "--whatif never publishes.");
+        Expect.Equal(0, exitCode, $"--whatif should succeed. Output: <{console.Output}>");
+        Expect.Empty(client.CreateGlobalOptionSetCalls, "--whatif must not write.");
+        PublishAssertions.NothingPublished(client, "--whatif never publishes.");
     }
 }

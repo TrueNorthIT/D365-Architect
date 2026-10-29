@@ -13,9 +13,8 @@ namespace D365Architect.Tests.Commands.Solution;
 /// per-asset commands. The ordering itself is pinned by
 /// <c>SolutionImportOrchestratorTests</c>; here it is the create stage.
 ///
-/// Batch table creation (REQ-7 to REQ-10 of the "publish by default / create tables in one
-/// transaction" requirements, tagged with the "Feature" trait "batch-table-create" because
-/// those IDs overlap the older ones): <see cref="ISolutionImportStepRunner.CreateTablesAsync"/>
+/// Batch table creation (the "create tables in one transaction" behaviour,
+/// tagged with the "Feature" trait "batch-table-create"): <see cref="ISolutionImportStepRunner.CreateTablesAsync"/>
 /// previews every table, lists the ones that don't exist, asks ONCE and creates them all in one
 /// Dataverse transaction (a single <c>$batch</c> changeset, which the fake records as one
 /// <see cref="FakeDataverseClient.ExecuteTransactionCalls"/> entry of
@@ -83,13 +82,12 @@ public sealed class ImportSolutionCommandStepRunnerTests : IDisposable
         File.WriteAllText(Path.Combine(_root, "tn_project", "Main.form.yml"), "name: Main\n");
     }
 
-    // ---- REQ-7: one list, one question ----
+    // ---- one list, one question ----
 
-    // REQ-7: "`solution import` lists every table it would create and asks once ("Create these N tables?")."
+    // "`solution import` lists every table it would create and asks once ("Create these N tables?")."
     // Code path: ImportSolutionCommand.StepRunner.CreateTablesAsync: previews each table, prints the ones to create, one AnsiConsole.Confirm.
     // The harness has ONE answer, so a second prompt would fail the test.
     [Fact]
-    [Trait("Requirement", "REQ-7")]
     [Trait("Feature", "batch-table-create")]
     public async Task CreateTables_TwoMissingTables_ListsBothAndAsksOnce()
     {
@@ -98,15 +96,14 @@ public sealed class ImportSolutionCommandStepRunnerTests : IDisposable
 
         var result = await CreateRunner(client, yes: false).CreateTablesAsync(BothTables, CancellationToken.None);
 
-        Expect.Equal(SolutionImportStepOutcome.Succeeded, result.Outcome, $"REQ-7: confirming once should create the tables. Output: <{console.Output}>");
-        Expect.Contains("Create these 2 tables?", console.Output, "REQ-7: the question should be 'Create these 2 tables?' for two missing tables.");
-        Expect.Contains("tn_project", console.Output, "REQ-7: the list should name the first table it would create.");
-        Expect.Contains("tn_task", console.Output, "REQ-7: the list should name the second table it would create.");
+        Expect.Equal(SolutionImportStepOutcome.Succeeded, result.Outcome, $"confirming once should create the tables. Output: <{console.Output}>");
+        Expect.Contains("Create these 2 tables?", console.Output, "the question should be 'Create these 2 tables?' for two missing tables.");
+        Expect.Contains("tn_project", console.Output, "the list should name the first table it would create.");
+        Expect.Contains("tn_task", console.Output, "the list should name the second table it would create.");
     }
 
-    // REQ-7: a table that already exists isn't "to create": it is neither listed in the count nor sent.
+    // A table that already exists isn't "to create": it is neither listed in the count nor sent.
     [Fact]
-    [Trait("Requirement", "REQ-7")]
     [Trait("Feature", "batch-table-create")]
     public async Task CreateTables_OneTableAlreadyExists_OnlyTheMissingOneIsCreated()
     {
@@ -115,14 +112,13 @@ public sealed class ImportSolutionCommandStepRunnerTests : IDisposable
 
         var result = await CreateRunner(client).CreateTablesAsync(BothTables, CancellationToken.None);
 
-        Expect.Equal(SolutionImportStepOutcome.Succeeded, result.Outcome, $"REQ-7: a run with one existing table should succeed. Output: <{console.Output}>");
+        Expect.Equal(SolutionImportStepOutcome.Succeeded, result.Outcome, $"a run with one existing table should succeed. Output: <{console.Output}>");
         var writes = CreateWrites(client);
-        Expect.Sequence(["tn_Task"], writes.Select(w => (string?)w.Metadata["SchemaName"] ?? "").ToList(), "REQ-7: only the table that doesn't exist (tn_task) should be created.");
+        Expect.Sequence(["tn_Task"], writes.Select(w => (string?)w.Metadata["SchemaName"] ?? "").ToList(), "only the table that doesn't exist (tn_task) should be created.");
     }
 
-    // REQ-7 + "`--yes` still skips prompts".
+    // The one question before creating the tables, and "`--yes` still skips prompts".
     [Fact]
-    [Trait("Requirement", "REQ-7")]
     [Trait("Feature", "batch-table-create")]
     public async Task CreateTables_WithYes_CreatesWithoutPrompting()
     {
@@ -137,7 +133,6 @@ public sealed class ImportSolutionCommandStepRunnerTests : IDisposable
 
     // When nothing is missing there is nothing to ask and nothing to write.
     [Fact]
-    [Trait("Requirement", "REQ-7")]
     [Trait("Feature", "batch-table-create")]
     public async Task CreateTables_EveryTableAlreadyExists_AsksNothingAndWritesNothing()
     {
@@ -151,12 +146,11 @@ public sealed class ImportSolutionCommandStepRunnerTests : IDisposable
         Expect.Empty(result.WouldCreateAssetPaths, "Nothing would be created, so no folder should be skipped.");
     }
 
-    // ---- REQ-8: one transaction ----
+    // ---- one transaction ----
 
-    // REQ-8: "All new tables are created in one transaction (a single Web API $batch changeset of POST EntityDefinitions requests)."
+    // "All new tables are created in one transaction (a single Web API $batch changeset of POST EntityDefinitions requests)."
     // Code path: StepRunner.CreateTablesAsync -> TableCreateService.ApplyAllAsync -> IDataverseClient.ExecuteTransactionAsync([CreateEntity, CreateEntity]).
     [Fact]
-    [Trait("Requirement", "REQ-8")]
     [Trait("Feature", "batch-table-create")]
     public async Task CreateTables_TwoMissingTables_AreCreatedInOneTransactionInFileOrder()
     {
@@ -165,17 +159,16 @@ public sealed class ImportSolutionCommandStepRunnerTests : IDisposable
 
         await CreateRunner(client).CreateTablesAsync(BothTables, CancellationToken.None);
 
-        Expect.Equal(1, client.ExecuteTransactionCalls.Count, $"REQ-8: both creates should be sent in ONE transaction. Output: <{console.Output}>");
+        Expect.Equal(1, client.ExecuteTransactionCalls.Count, $"both creates should be sent in ONE transaction. Output: <{console.Output}>");
         var writes = client.ExecuteTransactionCalls.FirstOrDefault() ?? [];
         Expect.Sequence(["tn_Project", "tn_Task"], writes.OfType<DataverseWrite.CreateEntity>().Select(w => (string?)w.Metadata["SchemaName"] ?? "").ToList(),
-            "REQ-8: the transaction should hold one CreateEntity (POST EntityDefinitions) per new table, in file order, and nothing else.");
-        Expect.Equal(2, writes.Count, "REQ-8: the transaction should hold only the two table creates.");
+            "the transaction should hold one CreateEntity (POST EntityDefinitions) per new table, in file order, and nothing else.");
+        Expect.Equal(2, writes.Count, "the transaction should hold only the two table creates.");
     }
 
-    // REQ-8: "If any fails, none are created ... and the error names the table that failed" - Dataverse names the failing request by Content-ID; here request 2 = tn_task.
+    // "If any fails, none are created ... and the error names the table that failed" - Dataverse names the failing request by Content-ID; here request 2 = tn_task.
     // Code path: TableCreateService.ApplyAllAsync maps DataverseTransactionFailedException.FailedContentId back to the table; StepRunner reports that table's file.
     [Fact]
-    [Trait("Requirement", "REQ-8")]
     [Trait("Feature", "batch-table-create")]
     public async Task CreateTables_DataverseRollsBackNamingRequestTwo_FailsNamingTheSecondTableAndCreatesNothing()
     {
@@ -185,17 +178,16 @@ public sealed class ImportSolutionCommandStepRunnerTests : IDisposable
 
         var result = await CreateRunner(client).CreateTablesAsync(BothTables, CancellationToken.None);
 
-        Expect.Equal(SolutionImportStepOutcome.Failed, result.Outcome, $"REQ-8: a rolled-back transaction is a failed create stage. Output: <{console.Output}>");
-        Expect.Equal(TaskTablePath, result.FailedAssetPath, "REQ-8: the failure should be attributed to the table whose request Dataverse named (Content-ID 2 = tn_task).");
-        Expect.Contains("tn_task", console.Output, "REQ-8: the printed error should name the table that failed.");
-        Expect.Contains("already in use", console.Output, "REQ-8: the printed error should keep Dataverse's own reason.");
-        Expect.Empty(client.CreateEntityCalls, "REQ-8: nothing should have been created.");
+        Expect.Equal(SolutionImportStepOutcome.Failed, result.Outcome, $"a rolled-back transaction is a failed create stage. Output: <{console.Output}>");
+        Expect.Equal(TaskTablePath, result.FailedAssetPath, "the failure should be attributed to the table whose request Dataverse named (Content-ID 2 = tn_task).");
+        Expect.Contains("tn_task", console.Output, "the printed error should name the table that failed.");
+        Expect.Contains("already in use", console.Output, "the printed error should keep Dataverse's own reason.");
+        Expect.Empty(client.CreateEntityCalls, "nothing should have been created.");
     }
 
-    // REQ-8: a file that can't be used (here no ownershipType) fails the whole stage BEFORE anything is sent: none are created, not even the valid one.
+    // A file that can't be used (here no ownershipType) fails the whole stage BEFORE anything is sent: none are created, not even the valid one.
     // Code path: TableCreateService.PreviewAsync throws TableCreateValidationException; StepRunner.CreateTablesAsync reports Failed for that file.
     [Fact]
-    [Trait("Requirement", "REQ-8")]
     [Trait("Feature", "batch-table-create")]
     public async Task CreateTables_OneTableFileIsInvalid_FailsNamingItAndCreatesNothing()
     {
@@ -205,18 +197,17 @@ public sealed class ImportSolutionCommandStepRunnerTests : IDisposable
 
         var result = await CreateRunner(client).CreateTablesAsync(BothTables, CancellationToken.None);
 
-        Expect.Equal(SolutionImportStepOutcome.Failed, result.Outcome, $"REQ-8: one unusable table file should fail the create stage. Output: <{console.Output}>");
-        Expect.Equal(TaskTablePath, result.FailedAssetPath, "REQ-8: the failure should name the file that couldn't be used.");
-        Expect.Contains("ownershipType is required to create tn_task", console.Output, "REQ-8: the user should be told what is wrong with tn_task.");
-        Expect.Empty(client.ExecuteTransactionCalls, "REQ-8: not even the valid table should be sent when another can't be created.");
-        Expect.Empty(client.CreateEntityCalls, "REQ-8: nothing should have been created.");
+        Expect.Equal(SolutionImportStepOutcome.Failed, result.Outcome, $"one unusable table file should fail the create stage. Output: <{console.Output}>");
+        Expect.Equal(TaskTablePath, result.FailedAssetPath, "the failure should name the file that couldn't be used.");
+        Expect.Contains("ownershipType is required to create tn_task", console.Output, "the user should be told what is wrong with tn_task.");
+        Expect.Empty(client.ExecuteTransactionCalls, "not even the valid table should be sent when another can't be created.");
+        Expect.Empty(client.CreateEntityCalls, "nothing should have been created.");
     }
 
-    // ---- REQ-9: no means no ----
+    // ---- no means no ----
 
-    // REQ-9: "Saying no creates nothing and stops the run." (the runner's half: the outcome the orchestrator stops on)
+    // "Saying no creates nothing and stops the run." (the runner's half: the outcome the orchestrator stops on)
     [Fact]
-    [Trait("Requirement", "REQ-9")]
     [Trait("Feature", "batch-table-create")]
     public async Task CreateTables_AnsweringNo_CreatesNothingAndReportsDeclined()
     {
@@ -225,14 +216,13 @@ public sealed class ImportSolutionCommandStepRunnerTests : IDisposable
 
         var result = await CreateRunner(client, yes: false).CreateTablesAsync(BothTables, CancellationToken.None);
 
-        Expect.Equal(SolutionImportStepOutcome.Declined, result.Outcome, $"REQ-9: answering no should report the create stage as declined. Output: <{console.Output}>");
-        Expect.Empty(client.ExecuteTransactionCalls, "REQ-9: answering no should send nothing.");
-        Expect.Empty(client.CreateEntityCalls, "REQ-9: answering no should create no table.");
+        Expect.Equal(SolutionImportStepOutcome.Declined, result.Outcome, $"answering no should report the create stage as declined. Output: <{console.Output}>");
+        Expect.Empty(client.ExecuteTransactionCalls, "answering no should send nothing.");
+        Expect.Empty(client.CreateEntityCalls, "answering no should create no table.");
     }
 
-    // REQ-9 end to end: the run stops - exit 1, said to be declined, no view or form touched, and still only the one question (the harness has one answer).
+    // Declining the create, end to end: the run stops - exit 1, said to be declined, no view or form touched, and still only the one question (the harness has one answer).
     [Fact]
-    [Trait("Requirement", "REQ-9")]
     [Trait("Feature", "batch-table-create")]
     public async Task SolutionImport_AnsweringNo_StopsTheRunAndCreatesNothing()
     {
@@ -242,19 +232,18 @@ public sealed class ImportSolutionCommandStepRunnerTests : IDisposable
 
         var exitCode = await CreateCommand(client).RunAsync(Settings(_root, yes: false, whatIf: false), CancellationToken.None);
 
-        Expect.Equal(1, exitCode, $"REQ-9: declining the create should stop the run with exit code 1, as today. Output: <{console.Output}>");
-        Expect.Contains("declined", console.Output, "REQ-9: the stop should be reported as a decline.");
-        Expect.True(!console.Output.Contains("failed", StringComparison.Ordinal), $"REQ-9: nothing after the declined create should have been attempted. Output: <{console.Output}>");
-        Expect.Empty(client.ExecuteTransactionCalls, "REQ-9: nothing should be created.");
-        Expect.Empty(client.CreateEntityCalls, "REQ-9: nothing should be created.");
+        Expect.Equal(1, exitCode, $"declining the create should stop the run with exit code 1, as today. Output: <{console.Output}>");
+        Expect.Contains("declined", console.Output, "the stop should be reported as a decline.");
+        Expect.True(!console.Output.Contains("failed", StringComparison.Ordinal), $"nothing after the declined create should have been attempted. Output: <{console.Output}>");
+        Expect.Empty(client.ExecuteTransactionCalls, "nothing should be created.");
+        Expect.Empty(client.CreateEntityCalls, "nothing should be created.");
     }
 
-    // ---- REQ-10: still added to --solution ----
+    // ---- still added to --solution ----
 
-    // REQ-10: "Tables created together are still added to `--solution`" - the MSCRM.SolutionUniqueName header on each request inside the changeset
+    // "Tables created together are still added to `--solution`" - the MSCRM.SolutionUniqueName header on each request inside the changeset
     // (DataverseWrite.CreateEntity.SolutionUniqueName; DataverseClient sends it per request - see DataverseClientBatchCreateTests).
     [Fact]
-    [Trait("Requirement", "REQ-10")]
     [Trait("Feature", "batch-table-create")]
     public async Task CreateTables_EveryCreateInTheTransactionCarriesTheSolution()
     {
@@ -264,8 +253,8 @@ public sealed class ImportSolutionCommandStepRunnerTests : IDisposable
         await CreateRunner(client).CreateTablesAsync(BothTables, CancellationToken.None);
 
         var writes = CreateWrites(client);
-        Expect.Equal(2, writes.Count, $"REQ-10: both tables should be created. Output: <{console.Output}>");
-        Expect.True(writes.All(w => w.SolutionUniqueName == "TNCore"), $"REQ-10: solution import's --solution (TNCore) should reach every create. Actual: <{string.Join(", ", writes.Select(w => w.SolutionUniqueName ?? "null"))}>.");
+        Expect.Equal(2, writes.Count, $"both tables should be created. Output: <{console.Output}>");
+        Expect.True(writes.All(w => w.SolutionUniqueName == "TNCore"), $"solution import's --solution (TNCore) should reach every create. Actual: <{string.Join(", ", writes.Select(w => w.SolutionUniqueName ?? "null"))}>.");
     }
 
     // ---- --whatif ----
@@ -273,7 +262,6 @@ public sealed class ImportSolutionCommandStepRunnerTests : IDisposable
     // "`--whatif` on solution import still skips would-be-created tables' later stages as today": the runner reports which tables would be created
     // (so the orchestrator can skip their folders), lists them, never prompts and writes nothing.
     [Fact]
-    [Trait("Requirement", "REQ-6")]
     [Trait("Feature", "batch-table-create")]
     public async Task CreateTables_WhatIf_ListsAndReportsTheTablesThatWouldBeCreatedAndWritesNothing()
     {
@@ -292,7 +280,6 @@ public sealed class ImportSolutionCommandStepRunnerTests : IDisposable
 
     // As before the batch: a rejected create (here a plain error with no Content-ID, from a single table) stops the run at that table and prints why.
     [Fact]
-    [Trait("Requirement", "REQ-8")]
     [Trait("Feature", "batch-table-create")]
     public async Task RejectedCreate_OfASingleTable_StopsTheRunAtThatTableAndPrintsWhy()
     {
@@ -304,14 +291,13 @@ public sealed class ImportSolutionCommandStepRunnerTests : IDisposable
 
         var result = await new SolutionImportOrchestrator().RunAsync(_root, CreateRunner(client), CancellationToken.None);
 
-        Expect.Equal(TablePath, result.StoppedAtAssetPath, "REQ-8: the run should stop at tn_project.table.yml.");
-        Expect.Contains("Creating table 'tn_project' failed", console.Output, "REQ-8: the create step should print which table failed.");
-        Expect.Contains("schema name is already in use", console.Output, "REQ-8: and Dataverse's own reason.");
+        Expect.Equal(TablePath, result.StoppedAtAssetPath, "the run should stop at tn_project.table.yml.");
+        Expect.Contains("Creating table 'tn_project' failed", console.Output, "the create step should print which table failed.");
+        Expect.Contains("schema name is already in use", console.Output, "and Dataverse's own reason.");
     }
 
-    // REQ-8 end to end: a rolled-back batch stops the whole run - exit 1, the failing table named, and no choice, column, view or form attempted.
+    // A failed transaction, end to end: a rolled-back batch stops the whole run - exit 1, the failing table named, and no choice, column, view or form attempted.
     [Fact]
-    [Trait("Requirement", "REQ-8")]
     [Trait("Feature", "batch-table-create")]
     public async Task SolutionImport_BatchRolledBack_StopsBeforeColumnsViewsAndFormsNamingTheTable()
     {
@@ -322,11 +308,11 @@ public sealed class ImportSolutionCommandStepRunnerTests : IDisposable
 
         var exitCode = await CreateCommand(client).RunAsync(Settings(_root, yes: true, whatIf: false), CancellationToken.None);
 
-        Expect.Equal(1, exitCode, $"REQ-8: a failed create should stop the run with exit code 1. Output: <{console.Output}>");
-        Expect.Contains("tn_task", console.Output, "REQ-8: the error should name the table that failed.");
-        Expect.Contains("already in use", console.Output, "REQ-8: the error should keep Dataverse's own reason.");
-        Expect.Empty(client.EntityIdentityCalls, "REQ-8: no view or form should be attempted after the create stage failed (they look the table up first).");
-        Expect.Empty(client.CreateEntityCalls, "REQ-8: no table should have been created.");
+        Expect.Equal(1, exitCode, $"a failed create should stop the run with exit code 1. Output: <{console.Output}>");
+        Expect.Contains("tn_task", console.Output, "the error should name the table that failed.");
+        Expect.Contains("already in use", console.Output, "the error should keep Dataverse's own reason.");
+        Expect.Empty(client.EntityIdentityCalls, "no view or form should be attempted after the create stage failed (they look the table up first).");
+        Expect.Empty(client.CreateEntityCalls, "no table should have been created.");
     }
 
     // --whatif on a missing table: reported as would-be-created, its views/forms skipped with a note, and the run doesn't end "Done with errors".

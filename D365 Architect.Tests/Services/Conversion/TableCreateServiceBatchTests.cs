@@ -8,8 +8,8 @@ namespace D365Architect.Tests.Services.Conversion;
 
 /// <summary>
 /// <see cref="ITableCreateService.ApplyAllAsync"/> - how <c>solution import</c> creates its new tables
-/// (REQ-8 and REQ-10 of the "create tables in one transaction" requirements, tagged with the "Feature"
-/// trait "batch-table-create" because those IDs overlap older ones), against a
+/// (the "create tables in one transaction" behaviour, tagged with the "Feature"
+/// trait "batch-table-create"), against a
 /// <see cref="FakeDataverseClient"/>: every table that doesn't exist yet is one
 /// <see cref="DataverseWrite.CreateEntity"/> in a single <c>ExecuteTransactionAsync</c> call (which
 /// <see cref="DataverseClient"/> sends as one <c>$batch</c> changeset); a failure keeps none and is
@@ -49,10 +49,9 @@ public sealed class TableCreateServiceBatchTests
         return (service, client, previews);
     }
 
-    // REQ-8: "All new tables are created in one transaction (a single Web API $batch changeset of POST EntityDefinitions requests)."
+    // "All new tables are created in one transaction (a single Web API $batch changeset of POST EntityDefinitions requests)."
     // Code path: TableCreateService.ApplyAllAsync -> IDataverseClient.ExecuteTransactionAsync([CreateEntity, CreateEntity]) once.
     [Fact]
-    [Trait("Requirement", "REQ-8")]
     [Trait("Feature", "batch-table-create")]
     public async Task ApplyAllAsync_TwoNewTables_AreOneTransactionOfTwoCreateEntityWritesInOrder()
     {
@@ -60,15 +59,14 @@ public sealed class TableCreateServiceBatchTests
 
         await service.ApplyAllAsync(EnvironmentUrl, "token", previews, "TNCore", CancellationToken.None);
 
-        Expect.Equal(1, client.ExecuteTransactionCalls.Count, "REQ-8: all the creates should go in ONE ExecuteTransactionAsync call.");
+        Expect.Equal(1, client.ExecuteTransactionCalls.Count, "all the creates should go in ONE ExecuteTransactionAsync call.");
         var writes = client.ExecuteTransactionCalls.FirstOrDefault() ?? [];
-        Expect.Sequence(["tn_Project", "tn_Task"], writes.OfType<DataverseWrite.CreateEntity>().Select(w => (string?)w.Metadata["SchemaName"] ?? "").ToList(), "REQ-8: the transaction should be one CreateEntity per new table, in the order given.");
-        Expect.Equal(2, writes.Count, "REQ-8: the transaction should hold nothing but the table creates (no columns, relationships or updates).");
+        Expect.Sequence(["tn_Project", "tn_Task"], writes.OfType<DataverseWrite.CreateEntity>().Select(w => (string?)w.Metadata["SchemaName"] ?? "").ToList(), "the transaction should be one CreateEntity per new table, in the order given.");
+        Expect.Equal(2, writes.Count, "the transaction should hold nothing but the table creates (no columns, relationships or updates).");
     }
 
-    // REQ-8: the body of each create is the one previewed (the primary name column travels inside it).
+    // The body of each create is the one previewed (the primary name column travels inside it).
     [Fact]
-    [Trait("Requirement", "REQ-8")]
     [Trait("Feature", "batch-table-create")]
     public async Task ApplyAllAsync_EachWriteCarriesItsTablesPreviewedBody()
     {
@@ -77,14 +75,13 @@ public sealed class TableCreateServiceBatchTests
         await service.ApplyAllAsync(EnvironmentUrl, "token", previews, solutionUniqueName: null, CancellationToken.None);
 
         var writes = (client.ExecuteTransactionCalls.FirstOrDefault() ?? []).OfType<DataverseWrite.CreateEntity>().ToList();
-        Expect.Equal(2, writes.Count, "REQ-8: both tables should be created.");
+        Expect.Equal(2, writes.Count, "both tables should be created.");
         Expect.True(ReferenceEquals(previews[0].RequestBody, writes.ElementAtOrDefault(0)?.Metadata) && ReferenceEquals(previews[1].RequestBody, writes.ElementAtOrDefault(1)?.Metadata),
-            "REQ-8: each CreateEntity should carry the request body its table's preview built.");
+            "each CreateEntity should carry the request body its table's preview built.");
     }
 
     // A table that already exists has no request body to send: only the missing ones are in the transaction.
     [Fact]
-    [Trait("Requirement", "REQ-8")]
     [Trait("Feature", "batch-table-create")]
     public async Task ApplyAllAsync_SkipsTablesThatAlreadyExist()
     {
@@ -93,12 +90,11 @@ public sealed class TableCreateServiceBatchTests
         await service.ApplyAllAsync(EnvironmentUrl, "token", previews, "TNCore", CancellationToken.None);
 
         var writes = (client.ExecuteTransactionCalls.FirstOrDefault() ?? []).OfType<DataverseWrite.CreateEntity>().ToList();
-        Expect.Sequence(["tn_Task"], writes.Select(w => (string?)w.Metadata["SchemaName"] ?? "").ToList(), "REQ-8: only the table that doesn't exist should be created.");
+        Expect.Sequence(["tn_Task"], writes.Select(w => (string?)w.Metadata["SchemaName"] ?? "").ToList(), "only the table that doesn't exist should be created.");
     }
 
     // Nothing to create: nothing to send (an empty changeset is not a request).
     [Fact]
-    [Trait("Requirement", "REQ-8")]
     [Trait("Feature", "batch-table-create")]
     public async Task ApplyAllAsync_EveryTableAlreadyExists_SendsNothing()
     {
@@ -106,13 +102,12 @@ public sealed class TableCreateServiceBatchTests
 
         await service.ApplyAllAsync(EnvironmentUrl, "token", previews, "TNCore", CancellationToken.None);
 
-        Expect.Empty(client.ExecuteTransactionCalls, "REQ-8: with nothing to create, no transaction should be sent.");
+        Expect.Empty(client.ExecuteTransactionCalls, "with nothing to create, no transaction should be sent.");
     }
 
-    // REQ-10: "Tables created together are still added to `--solution`" - the solution name is on every create in the changeset.
+    // "Tables created together are still added to `--solution`" - the solution name is on every create in the changeset.
     // Code path: DataverseWrite.CreateEntity(SolutionUniqueName) -> DataverseClient sends MSCRM.SolutionUniqueName per request (see DataverseClientBatchCreateTests).
     [Fact]
-    [Trait("Requirement", "REQ-10")]
     [Trait("Feature", "batch-table-create")]
     public async Task ApplyAllAsync_WithSolution_EveryCreateIsInThatSolution()
     {
@@ -121,14 +116,13 @@ public sealed class TableCreateServiceBatchTests
         await service.ApplyAllAsync(EnvironmentUrl, "token", previews, "TNCore", CancellationToken.None);
 
         var solutions = (client.ExecuteTransactionCalls.FirstOrDefault() ?? []).OfType<DataverseWrite.CreateEntity>().Select(w => w.SolutionUniqueName).ToList();
-        Expect.Equal(2, solutions.Count, "REQ-10: both tables should be created.");
-        Expect.True(solutions.All(s => s == "TNCore"), $"REQ-10: '--solution TNCore' should reach every create in the transaction. Actual: <{string.Join(", ", solutions.Select(s => s ?? "null"))}>.");
+        Expect.Equal(2, solutions.Count, "both tables should be created.");
+        Expect.True(solutions.All(s => s == "TNCore"), $"'--solution TNCore' should reach every create in the transaction. Actual: <{string.Join(", ", solutions.Select(s => s ?? "null"))}>.");
     }
 
-    // REQ-8: "the error names the table that failed (Dataverse's batch error identifies the failing request by Content-ID - map it back to the table)."
+    // "the error names the table that failed (Dataverse's batch error identifies the failing request by Content-ID - map it back to the table)."
     // Here request 2 of 3 failed: tn_task. Nothing is kept.
     [Fact]
-    [Trait("Requirement", "REQ-8")]
     [Trait("Feature", "batch-table-create")]
     public async Task ApplyAllAsync_RolledBackNamingRequestTwo_ThrowsNamingTheSecondTable()
     {
@@ -137,15 +131,14 @@ public sealed class TableCreateServiceBatchTests
 
         var ex = await Assert.ThrowsAsync<TableCreateFailedException>(() => service.ApplyAllAsync(EnvironmentUrl, "token", previews, "TNCore", CancellationToken.None));
 
-        Expect.Equal("tn_task", ex.EntityLogicalName, "REQ-8: Content-ID 2 is the second create, so the failure should name tn_task.");
-        Expect.Contains("tn_task", ex.Message, "REQ-8: the message should name the table that failed.");
-        Expect.Contains("already in use", ex.Message, "REQ-8: the message should keep Dataverse's own reason.");
-        Expect.Empty(client.CreateEntityCalls, "REQ-8: a rolled-back transaction keeps no table.");
+        Expect.Equal("tn_task", ex.EntityLogicalName, "Content-ID 2 is the second create, so the failure should name tn_task.");
+        Expect.Contains("tn_task", ex.Message, "the message should name the table that failed.");
+        Expect.Contains("already in use", ex.Message, "the message should keep Dataverse's own reason.");
+        Expect.Empty(client.CreateEntityCalls, "a rolled-back transaction keeps no table.");
     }
 
-    // REQ-8: Content-IDs count the requests actually sent. tn_project already exists, so it has no request: Content-ID 2 is the SECOND create sent (tn_note), not the second table given.
+    // Content-IDs count the requests actually sent. tn_project already exists, so it has no request: Content-ID 2 is the SECOND create sent (tn_note), not the second table given.
     [Fact]
-    [Trait("Requirement", "REQ-8")]
     [Trait("Feature", "batch-table-create")]
     public async Task ApplyAllAsync_ContentIdsCountOnlyTheRequestsSent()
     {
@@ -154,12 +147,11 @@ public sealed class TableCreateServiceBatchTests
 
         var ex = await Assert.ThrowsAsync<TableCreateFailedException>(() => service.ApplyAllAsync(EnvironmentUrl, "token", previews, "TNCore", CancellationToken.None));
 
-        Expect.Equal("tn_note", ex.EntityLogicalName, "REQ-8: with tn_project skipped, requests are tn_task (1) and tn_note (2), so Content-ID 2 is tn_note.");
+        Expect.Equal("tn_note", ex.EntityLogicalName, "with tn_project skipped, requests are tn_task (1) and tn_note (2), so Content-ID 2 is tn_note.");
     }
 
-    // REQ-8: a single table can be named even when Dataverse didn't say which request failed - there is only one it could be.
+    // A single table can be named even when Dataverse didn't say which request failed - there is only one it could be.
     [Fact]
-    [Trait("Requirement", "REQ-8")]
     [Trait("Feature", "batch-table-create")]
     public async Task ApplyAllAsync_OnlyOneTableAndNoContentId_StillNamesThatTable()
     {
@@ -168,6 +160,6 @@ public sealed class TableCreateServiceBatchTests
 
         var ex = await Assert.ThrowsAsync<TableCreateFailedException>(() => service.ApplyAllAsync(EnvironmentUrl, "token", previews, "TNCore", CancellationToken.None));
 
-        Expect.Equal("tn_project", ex.EntityLogicalName, "REQ-8: with one table in the transaction the failure can only be that table.");
+        Expect.Equal("tn_project", ex.EntityLogicalName, "with one table in the transaction the failure can only be that table.");
     }
 }

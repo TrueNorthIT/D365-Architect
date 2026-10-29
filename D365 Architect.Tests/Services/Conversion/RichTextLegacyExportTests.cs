@@ -16,7 +16,6 @@ namespace D365Architect.Tests.Services.Conversion;
 public sealed class RichTextLegacyExportTests
 {
     [Fact]
-    [Trait("Requirement", "REQ-16")]
     public async Task PreviewAsync_PreRichTextExportAgainstLiveRichTextColumn_IsInvalidAndSaysToReExport()
     {
         var client = new FakeDataverseClient

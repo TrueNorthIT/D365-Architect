@@ -17,7 +17,7 @@ public sealed class AmbiguousSystemFormException : Exception
     }
 
     /// <summary>
-    /// The name + type form of the refusal (REQ-31): lists the candidate ids so
+    /// The name + type form of the refusal: lists the candidate ids so
     /// the user can add the right <c>formId</c> to the file.
     /// </summary>
     public AmbiguousSystemFormException(string entityLogicalName, string formName, IReadOnlyList<Guid> candidateIds)

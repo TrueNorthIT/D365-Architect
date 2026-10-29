@@ -14,7 +14,7 @@ namespace D365Architect.Services.Conversion;
 /// Matches the live form by its <c>FormId</c> when the YAML has one (the
 /// ordinary case for an exported file, and immune to a rename or a shared
 /// name — see <see cref="FormDefinition.FormId"/>'s own doc comment), or
-/// otherwise by table + name + type (REQ-29: <c>type</c> absent means Main,
+/// otherwise by table + name + type (<c>type</c> absent means Main,
 /// which is what tells apart the three forms named "Information" every new
 /// custom table gets). A hand-written file that matches nothing that way is
 /// created (<see cref="FormImportPreview.IsCreate"/>); a stale <c>FormId</c>
@@ -23,7 +23,7 @@ namespace D365Architect.Services.Conversion;
 /// <see cref="IImportService{TInput,TPreview}.PreviewAsync"/> throws
 /// <see cref="Dataverse.FormNotFoundException"/> when <c>form.FormId</c>
 /// matches nothing, <see cref="Dataverse.AmbiguousSystemFormException"/>
-/// (listing the candidate ids, REQ-31) when <c>form.FormId</c> is absent and
+/// (listing the candidate ids) when <c>form.FormId</c> is absent and
 /// more than one form matches that table + name + type,
 /// <see cref="InvalidDataException"/> for a <c>type</c> that isn't one of
 /// Dataverse's, and <see cref="NotSupportedException"/> when the form is a
@@ -47,7 +47,7 @@ public interface IFormImportService : IImportService<FormDefinition, FormImportP
     /// As <see cref="IImportService{TInput,TPreview}.ApplyAsync"/>, adding whatever it creates or changes
     /// to <paramref name="solutionUniqueName"/> (null = no solution, sent as <c>MSCRM.SolutionUniqueName</c>),
     /// and creating the form when <paramref name="preview"/> is <see cref="FormImportPreview.IsCreate"/>
-    /// (REQ-22, REQ-29) — see <see cref="Dataverse.IDataverseClient.CreateSystemFormAsync"/> for the body.
+    /// — see <see cref="Dataverse.IDataverseClient.CreateSystemFormAsync"/> for the body.
     /// </summary>
     Task ApplyAsync(Uri environmentUrl, string accessToken, FormImportPreview preview, string? solutionUniqueName, CancellationToken cancellationToken);
 }
@@ -110,7 +110,7 @@ public sealed record FormImportPreview(Guid FormId, string Entity, string Existi
 
     /// <summary>
     /// True when no existing form matched the YAML (no <c>FormId</c>, and no form of that name and type on that
-    /// table), so <c>ApplyAsync</c> creates one (REQ-29). Then <see cref="FormId"/> is <see cref="Guid.Empty"/>,
+    /// table), so <c>ApplyAsync</c> creates one. Then <see cref="FormId"/> is <see cref="Guid.Empty"/>,
     /// <see cref="Entity"/> is the YAML's own table, the existing XML is empty and <see cref="HasChanges"/> is true.
     /// </summary>
     public bool IsCreate { get; init; }

@@ -7,8 +7,8 @@ using Xunit;
 namespace D365Architect.Tests.Services.Conversion;
 
 /// <summary>
-/// Export side and round trip for rich text (REQ-14) and auto-number
-/// (REQ-18): <see cref="EntityJsonDefinitionReader"/> reading the live
+/// Export side and round trip for rich text and auto-number
+/// columns: <see cref="EntityJsonDefinitionReader"/> reading the live
 /// shapes in <see cref="RichTextAndAutoNumberFixtures"/> (literal live
 /// read-backs, 2026-10-26), <see cref="TableExportService"/> writing them,
 /// and the YAML rebuilding into the create body / re-importing as a no-op.
@@ -41,107 +41,99 @@ public sealed class RichTextAndAutoNumberExportTests
         return await service.ExportTableAsync(EnvironmentUrl, "token", "tn_test", solutionUniqueName: null, CancellationToken.None);
     }
 
-    // ---- REQ-14: reader ----
+    // ---- reader ----
 
-    // REQ-14: "Export shows a rich text column as `format: RichText`" - reader half.
+    // "Export shows a rich text column as `format: RichText`" - reader half.
     // Live: Format "Text" + FormatName.Value "RichText" must read as Format "RichText".
     // Code path: EntityJsonDefinitionReader.ParseAttribute (Format for Memo).
     [Fact]
-    [Trait("Requirement", "REQ-14")]
     public void Read_RichTextMemo_ReadsFormatAsRichText()
     {
         var entity = new EntityJsonDefinitionReader().Read(RichTextAndAutoNumberFixtures.Entity(RichTextAndAutoNumberFixtures.LiveRichTextMemo));
 
         var column = Column(entity, RichTextAndAutoNumberFixtures.RichTextLogicalName);
-        Expect.Equal("Memo", column.Type, "REQ-14: the rich text column is still a Memo.");
-        Expect.Equal("RichText", column.Format, "REQ-14: FormatName.Value 'RichText' should read as Format 'RichText'; the legacy Format 'Text' must not win.");
-        Expect.Equal(100000, column.MaxLength, "REQ-14: MaxLength should still be read.");
+        Expect.Equal("Memo", column.Type, "the rich text column is still a Memo.");
+        Expect.Equal("RichText", column.Format, "FormatName.Value 'RichText' should read as Format 'RichText'; the legacy Format 'Text' must not win.");
+        Expect.Equal(100000, column.MaxLength, "MaxLength should still be read.");
     }
 
-    // REQ-14: "a plain Memo exports as today" - the legacy Format is kept, with or without a FormatName. Guard.
+    // "a plain Memo exports as today" - the legacy Format is kept, with or without a FormatName. Guard.
     // Code path: EntityJsonDefinitionReader.ParseAttribute.
     [Theory]
-    [Trait("Requirement", "REQ-14")]
     [InlineData(RichTextAndAutoNumberFixtures.PlainMemo)]
     [InlineData("""{ "LogicalName": "bogdan_notes", "SchemaName": "bogdan_Notes", "AttributeType": "Memo", "Format": "TextArea", "MaxLength": 2000 }""")]
     public void Read_PlainMemo_KeepsItsLegacyFormat(string attributeJson)
     {
         var entity = new EntityJsonDefinitionReader().Read(RichTextAndAutoNumberFixtures.Entity(attributeJson));
 
-        Expect.Equal("TextArea", Column(entity, RichTextAndAutoNumberFixtures.RichTextLogicalName).Format, "REQ-14: a plain Memo should keep reading as Format 'TextArea', unchanged from today.");
+        Expect.Equal("TextArea", Column(entity, RichTextAndAutoNumberFixtures.RichTextLogicalName).Format, "a plain Memo should keep reading as Format 'TextArea', unchanged from today.");
     }
 
-    // ---- REQ-18: reader ----
+    // ---- reader ----
 
-    // REQ-18: "Export writes `autoNumberFormat`" - reader half. Live: AutoNumberFormat "MSUM{SEQNUM:6}", Format/FormatName "Text".
+    // "Export writes `autoNumberFormat`" - reader half. Live: AutoNumberFormat "MSUM{SEQNUM:6}", Format/FormatName "Text".
     // Code path: EntityJsonDefinitionReader.ParseAttribute (AutoNumberFormat).
     [Fact]
-    [Trait("Requirement", "REQ-18")]
     public void Read_AutoNumberString_ReadsTheAutoNumberFormat()
     {
         var entity = new EntityJsonDefinitionReader().Read(RichTextAndAutoNumberFixtures.Entity(RichTextAndAutoNumberFixtures.LiveAutoNumberString));
 
         var column = Column(entity, RichTextAndAutoNumberFixtures.AutoNumberLogicalName);
-        Expect.Equal("MSUM{SEQNUM:6}", column.AutoNumberFormat, "REQ-18: the live AutoNumberFormat should be read into AttributeDefinition.AutoNumberFormat.");
-        Expect.Equal("Text", column.Format, "REQ-18: an auto-number column's Format stays 'Text', as the export writes it today.");
+        Expect.Equal("MSUM{SEQNUM:6}", column.AutoNumberFormat, "the live AutoNumberFormat should be read into AttributeDefinition.AutoNumberFormat.");
+        Expect.Equal("Text", column.Format, "an auto-number column's Format stays 'Text', as the export writes it today.");
     }
 
-    // REQ-18 (default omission): an ordinary String reports AutoNumberFormat as "" - that is "none", not a value to export. Guard.
+    // Default omission: an ordinary String reports AutoNumberFormat as "" - that is "none", not a value to export. Guard.
     // Code path: EntityJsonDefinitionReader.ParseAttribute.
     [Fact]
-    [Trait("Requirement", "REQ-18")]
     public void Read_OrdinaryStringWithEmptyAutoNumberFormat_ReadsNoAutoNumberFormat()
     {
         var entity = new EntityJsonDefinitionReader().Read(RichTextAndAutoNumberFixtures.Entity(RichTextAndAutoNumberFixtures.OrdinaryStringWithEmptyAutoNumberFormat));
 
         Assert.True(Column(entity, RichTextAndAutoNumberFixtures.AutoNumberLogicalName).AutoNumberFormat is null,
-            "REQ-18: an empty live AutoNumberFormat should read as null so ordinary columns export without an autoNumberFormat key.");
+            "an empty live AutoNumberFormat should read as null so ordinary columns export without an autoNumberFormat key.");
     }
 
-    // ---- REQ-14 / REQ-18: the exported YAML ----
+    // ---- the exported YAML ----
 
-    // REQ-14 example: "Exporting the rich column yields `format: RichText`."
+    // Example: "Exporting the rich column yields `format: RichText`."
     // Code path: TableExportService.ExportTableAsync -> EntityJsonDefinitionReader -> EntityYamlSerializer.
     [Fact]
-    [Trait("Requirement", "REQ-14")]
     public async Task ExportTableAsync_RichTextColumn_WritesFormatRichText()
     {
         var yaml = await ExportAsync(RichTextAndAutoNumberFixtures.LiveRichTextMemo);
 
-        Expect.Contains("format: RichText", yaml, "REQ-14: exporting the rich text column should write 'format: RichText'.");
+        Expect.Contains("format: RichText", yaml, "exporting the rich text column should write 'format: RichText'.");
     }
 
-    // REQ-14: "a plain Memo exports as today": format: TextArea. Guard.
+    // "a plain Memo exports as today": format: TextArea. Guard.
     // Code path: TableExportService.ExportTableAsync.
     [Fact]
-    [Trait("Requirement", "REQ-14")]
     public async Task ExportTableAsync_PlainMemo_StillWritesFormatTextArea()
     {
         var yaml = await ExportAsync(RichTextAndAutoNumberFixtures.PlainMemo);
 
-        Expect.Contains("format: TextArea", yaml, "REQ-14: a plain Memo should still export as 'format: TextArea'.");
+        Expect.Contains("format: TextArea", yaml, "a plain Memo should still export as 'format: TextArea'.");
     }
 
-    // REQ-18 example: "Exporting the column yields `autoNumberFormat: MSUM{SEQNUM:6}`."
+    // Example: "Exporting the column yields `autoNumberFormat: MSUM{SEQNUM:6}`."
     // The key is asserted by name and the value by reading the YAML back, so YAML quoting of the braces doesn't matter.
     // Code path: TableExportService.ExportTableAsync -> EntityYamlSerializer.
     [Fact]
-    [Trait("Requirement", "REQ-18")]
     public async Task ExportTableAsync_AutoNumberColumn_WritesTheAutoNumberFormat()
     {
         var yaml = await ExportAsync(RichTextAndAutoNumberFixtures.LiveAutoNumberString);
 
-        Expect.Contains("autoNumberFormat:", yaml, "REQ-18: exporting the auto-number column should write an 'autoNumberFormat' key.");
+        Expect.Contains("autoNumberFormat:", yaml, "exporting the auto-number column should write an 'autoNumberFormat' key.");
         var column = Column(EntityYamlDeserializer.FromYaml(yaml), RichTextAndAutoNumberFixtures.AutoNumberLogicalName);
-        Expect.Equal("MSUM{SEQNUM:6}", column.AutoNumberFormat, "REQ-18: the exported autoNumberFormat should read back as 'MSUM{SEQNUM:6}'.");
+        Expect.Equal("MSUM{SEQNUM:6}", column.AutoNumberFormat, "the exported autoNumberFormat should read back as 'MSUM{SEQNUM:6}'.");
     }
 
     // ---- Round trip: live JSON -> reader -> YAML -> create body ----
 
-    // REQ-13 + REQ-14 round trip: export the live rich text column, read the YAML, build the create body: FormatName RichText.
+    // Rich text round trip: export the live rich text column, read the YAML, build the create body: FormatName RichText.
     // Code path: TableExportService -> EntityYamlDeserializer -> AttributeMetadataJsonBuilder.BuildCreateBody.
     [Fact]
-    [Trait("Requirement", "REQ-14")]
     public async Task ExportedYaml_RebuildsARichTextCreateBody()
     {
         var yaml = await ExportAsync(RichTextAndAutoNumberFixtures.LiveRichTextMemo);
@@ -149,14 +141,13 @@ public sealed class RichTextAndAutoNumberExportTests
         var column = Column(EntityYamlDeserializer.FromYaml(yaml), RichTextAndAutoNumberFixtures.RichTextLogicalName);
         var body = AttributeMetadataJsonBuilder.BuildCreateBody(column);
 
-        Expect.Equal("RichText", (string?)body["FormatName"]?["Value"], "REQ-14: export -> re-create should reproduce FormatName 'RichText'.");
-        Expect.Equal(100000, (int?)body["MaxLength"], "REQ-14: export -> re-create should reproduce MaxLength 100000.");
+        Expect.Equal("RichText", (string?)body["FormatName"]?["Value"], "export -> re-create should reproduce FormatName 'RichText'.");
+        Expect.Equal(100000, (int?)body["MaxLength"], "export -> re-create should reproduce MaxLength 100000.");
     }
 
-    // REQ-18 round trip: export the live auto-number column, read the YAML, build the create body: AutoNumberFormat kept.
+    // Auto-number round trip: export the live auto-number column, read the YAML, build the create body: AutoNumberFormat kept.
     // Code path: TableExportService -> EntityYamlDeserializer -> AttributeMetadataJsonBuilder.BuildCreateBody.
     [Fact]
-    [Trait("Requirement", "REQ-18")]
     public async Task ExportedYaml_RebuildsAnAutoNumberCreateBody()
     {
         var yaml = await ExportAsync(RichTextAndAutoNumberFixtures.LiveAutoNumberString);
@@ -164,8 +155,8 @@ public sealed class RichTextAndAutoNumberExportTests
         var column = Column(EntityYamlDeserializer.FromYaml(yaml), RichTextAndAutoNumberFixtures.AutoNumberLogicalName);
         var body = AttributeMetadataJsonBuilder.BuildCreateBody(column);
 
-        Expect.Equal("MSUM{SEQNUM:6}", (string?)body["AutoNumberFormat"], "REQ-18: export -> re-create should reproduce AutoNumberFormat 'MSUM{SEQNUM:6}'.");
-        Expect.Equal("Text", (string?)body["FormatName"]?["Value"], "REQ-18: export -> re-create should reproduce FormatName 'Text'.");
+        Expect.Equal("MSUM{SEQNUM:6}", (string?)body["AutoNumberFormat"], "export -> re-create should reproduce AutoNumberFormat 'MSUM{SEQNUM:6}'.");
+        Expect.Equal("Text", (string?)body["FormatName"]?["Value"], "export -> re-create should reproduce FormatName 'Text'.");
     }
 
     // ---- Round trip: re-import against the same live JSON must be a no-op ----
@@ -175,7 +166,6 @@ public sealed class RichTextAndAutoNumberExportTests
     // Guard (passes today because both sides read 'Text'; it must still pass once the reader says 'RichText').
     // Code path: TableExportService -> EntityYamlDeserializer -> TableImportService.PreviewAsync (AttributesMatch).
     [Fact]
-    [Trait("Requirement", "REQ-14")]
     public async Task ExportedYaml_ReimportedAgainstTheSameLiveTable_PlansNoChangeForEitherColumn()
     {
         var liveJson = RichTextAndAutoNumberFixtures.Entity(RichTextAndAutoNumberFixtures.LiveRichTextMemo, RichTextAndAutoNumberFixtures.LiveAutoNumberString);
@@ -197,11 +187,10 @@ public sealed class RichTextAndAutoNumberExportTests
 
     // ---- YAML keys ----
 
-    // REQ-13 / REQ-17 / REQ-20: the user-facing YAML keys are spelled `format`, `autoNumberFormat`, `autoNumberSeed`,
+    // The user-facing YAML keys are spelled `format`, `autoNumberFormat`, `autoNumberSeed`,
     // written unquoted as in the requirements' examples. Pins the spelling (guard: passes once the properties exist).
     // Code path: EntityYamlDeserializer.FromYaml -> AttributeDefinition.Format/AutoNumberFormat/AutoNumberSeed.
     [Fact]
-    [Trait("Requirement", "REQ-17")]
     public void FromYaml_RichTextAndAutoNumberKeys_Populate()
     {
         const string yaml = """
@@ -221,8 +210,8 @@ public sealed class RichTextAndAutoNumberExportTests
 
         var entity = EntityYamlDeserializer.FromYaml(yaml);
 
-        Expect.Equal("RichText", Column(entity, "bogdan_notes").Format, "REQ-13: 'format: RichText' should populate AttributeDefinition.Format.");
-        Expect.Equal("IVC{SEQNUM:9}", Column(entity, "bogdan_ref").AutoNumberFormat, "REQ-17: 'autoNumberFormat: IVC{SEQNUM:9}' should populate AttributeDefinition.AutoNumberFormat.");
-        Expect.Equal(1, Column(entity, "bogdan_ref").AutoNumberSeed, "REQ-20: 'autoNumberSeed: 1' should populate AttributeDefinition.AutoNumberSeed.");
+        Expect.Equal("RichText", Column(entity, "bogdan_notes").Format, "'format: RichText' should populate AttributeDefinition.Format.");
+        Expect.Equal("IVC{SEQNUM:9}", Column(entity, "bogdan_ref").AutoNumberFormat, "'autoNumberFormat: IVC{SEQNUM:9}' should populate AttributeDefinition.AutoNumberFormat.");
+        Expect.Equal(1, Column(entity, "bogdan_ref").AutoNumberSeed, "'autoNumberSeed: 1' should populate AttributeDefinition.AutoNumberSeed.");
     }
 }

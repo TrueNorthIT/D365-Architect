@@ -9,8 +9,8 @@ using static D365Architect.Tests.TestSupport.RichTextAndAutoNumberFixtures;
 namespace D365Architect.Tests.Commands.Table;
 
 /// <summary>
-/// <c>table import</c> publishes after it applies changes (REQ-2, 3, 4, 6 of the "publish by default"
-/// requirements, tagged with the "Feature" trait "publish-by-default" because those IDs overlap older ones):
+/// <c>table import</c> publishes after it applies changes (the "publish by default"
+/// behaviour, tagged with the "Feature" trait "publish-by-default"):
 /// <see cref="ImportTableCommand"/> through the real <see cref="ImportRunner"/> and
 /// <see cref="TableImportService"/>, with only Dataverse (<see cref="FakeDataverseClient"/>), sign-in and the
 /// console faked. The old <c>--publish</c> publish-only mode these tests used to cover is gone.
@@ -75,10 +75,9 @@ public sealed class ImportTableCommandPublishTests : IDisposable
     private static ImportTableCommand.Settings Settings(string input, bool yes = false, bool whatIf = false, bool noPublish = false, bool noTransaction = false) =>
         new() { Input = input, Yes = yes, WhatIf = whatIf, NoPublish = noPublish, NoTransaction = noTransaction };
 
-    // REQ-2: "`table import` ... publish after applying changes."
+    // "`table import` ... publish after applying changes."
     // Code path: ImportTableCommand.RunAsync -> ImportRunner flow: after TableImportService.ApplyAsync, ITableImportService.PublishAsync -> IDataverseClient.PublishEntityAsync.
     [Fact]
-    [Trait("Requirement", "REQ-2")]
     [Trait("Feature", "publish-by-default")]
     public async Task RunAsync_ApplyingAChange_PublishesTheTable()
     {
@@ -87,15 +86,14 @@ public sealed class ImportTableCommandPublishTests : IDisposable
 
         var exitCode = await command.RunAsync(Settings(input, yes: true), CancellationToken.None);
 
-        Expect.Equal(0, exitCode, $"REQ-2: importing a new column should succeed. Output: <{console.Output}>");
-        Expect.Equal(1, client.CreateAttributeCalls.Count, "REQ-2: the new column should be created.");
-        Expect.Sequence(["tn_test"], client.PublishEntityCalls, "REQ-2: 'table import' should publish the table it changed, once.");
-        Expect.Empty(client.PublishGlobalOptionSetsCalls, "REQ-2: a table import should not publish any global choices.");
+        Expect.Equal(0, exitCode, $"importing a new column should succeed. Output: <{console.Output}>");
+        Expect.Equal(1, client.CreateAttributeCalls.Count, "the new column should be created.");
+        Expect.Sequence(["tn_test"], client.PublishEntityCalls, "'table import' should publish the table it changed, once.");
+        Expect.Empty(client.PublishGlobalOptionSetsCalls, "a table import should not publish any global choices.");
     }
 
-    // REQ-2: the same when the column is written one request at a time (--no-transaction) rather than as a changeset.
+    // The same when the column is written one request at a time (--no-transaction) rather than as a changeset.
     [Fact]
-    [Trait("Requirement", "REQ-2")]
     [Trait("Feature", "publish-by-default")]
     public async Task RunAsync_ApplyingAChangeWithoutATransaction_PublishesTheTable()
     {
@@ -104,13 +102,12 @@ public sealed class ImportTableCommandPublishTests : IDisposable
 
         var exitCode = await command.RunAsync(Settings(input, yes: true, noTransaction: true), CancellationToken.None);
 
-        Expect.Equal(0, exitCode, $"REQ-2: importing with --no-transaction should succeed. Output: <{console.Output}>");
-        Expect.Sequence(["tn_test"], client.PublishEntityCalls, "REQ-2: --no-transaction changes how columns are written, not whether the table is published.");
+        Expect.Equal(0, exitCode, $"importing with --no-transaction should succeed. Output: <{console.Output}>");
+        Expect.Sequence(["tn_test"], client.PublishEntityCalls, "--no-transaction changes how columns are written, not whether the table is published.");
     }
 
-    // REQ-2 + the confirmation: answering yes to "Import these changes?" is the only question - publishing follows without asking again.
+    // Answering yes to "Import these changes?" is the only question - publishing follows without asking again.
     [Fact]
-    [Trait("Requirement", "REQ-2")]
     [Trait("Feature", "publish-by-default")]
     public async Task RunAsync_ConfirmingTheImport_PublishesWithoutAskingAgain()
     {
@@ -119,13 +116,12 @@ public sealed class ImportTableCommandPublishTests : IDisposable
 
         var exitCode = await command.RunAsync(Settings(input), CancellationToken.None);
 
-        Expect.Equal(0, exitCode, $"REQ-2: confirming once should import and publish. Output: <{console.Output}>");
-        Expect.Sequence(["tn_test"], client.PublishEntityCalls, "REQ-2: the table should be published after the single confirmation.");
+        Expect.Equal(0, exitCode, $"confirming once should import and publish. Output: <{console.Output}>");
+        Expect.Sequence(["tn_test"], client.PublishEntityCalls, "the table should be published after the single confirmation.");
     }
 
-    // REQ-3: "If nothing changed, nothing is published." - the file matches what is live.
+    // "If nothing changed, nothing is published." - the file matches what is live.
     [Fact]
-    [Trait("Requirement", "REQ-3")]
     [Trait("Feature", "publish-by-default")]
     public async Task RunAsync_FileMatchesLive_PublishesNothing()
     {
@@ -134,13 +130,12 @@ public sealed class ImportTableCommandPublishTests : IDisposable
 
         var exitCode = await command.RunAsync(Settings(input, yes: true), CancellationToken.None);
 
-        Expect.Equal(0, exitCode, $"REQ-3: an in-sync table is not an error. Output: <{console.Output}>");
-        PublishAssertions.NothingPublished(client, "REQ-3", "nothing changed, so nothing should be published.");
+        Expect.Equal(0, exitCode, $"an in-sync table is not an error. Output: <{console.Output}>");
+        PublishAssertions.NothingPublished(client, "nothing changed, so nothing should be published.");
     }
 
-    // REQ-3: a seed on an existing column is only a warning ("seed ignored"), not a change - still nothing to publish.
+    // A seed on an existing column is only a warning ("seed ignored"), not a change - still nothing to publish.
     [Fact]
-    [Trait("Requirement", "REQ-3")]
     [Trait("Feature", "publish-by-default")]
     public async Task RunAsync_OnlyAnIgnoredSeedDiffers_PublishesNothing()
     {
@@ -149,13 +144,12 @@ public sealed class ImportTableCommandPublishTests : IDisposable
 
         var exitCode = await command.RunAsync(Settings(input, yes: true), CancellationToken.None);
 
-        Expect.Equal(0, exitCode, $"REQ-3: an ignored seed is not an error. Output: <{console.Output}>");
-        PublishAssertions.NothingPublished(client, "REQ-3", "an ignored seed changes nothing, so nothing should be published.");
+        Expect.Equal(0, exitCode, $"an ignored seed is not an error. Output: <{console.Output}>");
+        PublishAssertions.NothingPublished(client, "an ignored seed changes nothing, so nothing should be published.");
     }
 
-    // REQ-3: answering no applies nothing, so nothing is published.
+    // Answering no applies nothing, so nothing is published.
     [Fact]
-    [Trait("Requirement", "REQ-3")]
     [Trait("Feature", "publish-by-default")]
     public async Task RunAsync_DecliningTheImport_PublishesNothing()
     {
@@ -166,12 +160,11 @@ public sealed class ImportTableCommandPublishTests : IDisposable
 
         Expect.Equal(0, exitCode, $"Declining should exit 0, as every import does. Output: <{console.Output}>");
         Expect.Empty(client.CreateAttributeCalls, "Declining should write nothing.");
-        PublishAssertions.NothingPublished(client, "REQ-3", "declining wrote nothing, so there is nothing to publish.");
+        PublishAssertions.NothingPublished(client, "declining wrote nothing, so there is nothing to publish.");
     }
 
-    // REQ-4: "`--no-publish` skips publishing" - the column is still written.
+    // "`--no-publish` skips publishing" - the column is still written.
     [Fact]
-    [Trait("Requirement", "REQ-4")]
     [Trait("Feature", "publish-by-default")]
     public async Task RunAsync_WithNoPublish_AppliesTheChangeButPublishesNothing()
     {
@@ -180,14 +173,13 @@ public sealed class ImportTableCommandPublishTests : IDisposable
 
         var exitCode = await command.RunAsync(Settings(input, yes: true, noPublish: true), CancellationToken.None);
 
-        Expect.Equal(0, exitCode, $"REQ-4: --no-publish should still import. Output: <{console.Output}>");
-        Expect.Equal(1, client.CreateAttributeCalls.Count, "REQ-4: --no-publish should still write the change.");
-        PublishAssertions.NothingPublished(client, "REQ-4", "--no-publish skips publishing.");
+        Expect.Equal(0, exitCode, $"--no-publish should still import. Output: <{console.Output}>");
+        Expect.Equal(1, client.CreateAttributeCalls.Count, "--no-publish should still write the change.");
+        PublishAssertions.NothingPublished(client, "--no-publish skips publishing.");
     }
 
-    // REQ-6: "`--whatif` never publishes."
+    // "`--whatif` never publishes."
     [Fact]
-    [Trait("Requirement", "REQ-6")]
     [Trait("Feature", "publish-by-default")]
     public async Task RunAsync_WithWhatIf_WritesAndPublishesNothing()
     {
@@ -196,8 +188,8 @@ public sealed class ImportTableCommandPublishTests : IDisposable
 
         var exitCode = await command.RunAsync(Settings(input, whatIf: true), CancellationToken.None);
 
-        Expect.Equal(0, exitCode, $"REQ-6: --whatif should succeed. Output: <{console.Output}>");
-        Expect.Empty(client.CreateAttributeCalls, "REQ-6: --whatif must not write.");
-        PublishAssertions.NothingPublished(client, "REQ-6", "--whatif never publishes.");
+        Expect.Equal(0, exitCode, $"--whatif should succeed. Output: <{console.Output}>");
+        Expect.Empty(client.CreateAttributeCalls, "--whatif must not write.");
+        PublishAssertions.NothingPublished(client, "--whatif never publishes.");
     }
 }

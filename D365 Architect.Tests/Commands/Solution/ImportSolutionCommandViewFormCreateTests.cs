@@ -9,7 +9,7 @@ using static D365Architect.Tests.TestSupport.ViewFormCreateFixtures;
 namespace D365Architect.Tests.Commands.Solution;
 
 /// <summary>
-/// REQ-32: "<c>solution import</c> handles new views/forms the same way, after
+/// "<c>solution import</c> handles new views/forms the same way, after
 /// the table and column stages, with the same plan/confirmation." The
 /// orchestrator already runs views and forms after tables
 /// (<c>SolutionImportOrchestratorTests</c>); what these pin is that
@@ -17,8 +17,7 @@ namespace D365Architect.Tests.Commands.Solution;
 /// through the create path, forwarding <c>solution import</c>'s own
 /// <c>--solution</c> and <c>--yes</c> (today it passes neither a solution to the
 /// view/form commands, which is the gap), and that a whole run over a new table's
-/// folder ends with table, view and form all created, in that order
-/// (REQ-22, REQ-29, REQ-33).
+/// folder ends with table, view and form all created, in that order.
 /// </summary>
 [Collection(ConsoleCollection.Name)]
 public sealed class ImportSolutionCommandViewFormCreateTests : IDisposable
@@ -71,10 +70,9 @@ public sealed class ImportSolutionCommandViewFormCreateTests : IDisposable
 
     // ---- the view stage creates, in the solution, without prompting ----
 
-    // REQ-32 + REQ-22: "Stories' folders with hand-written views ... import in one run" - the view stage creates a view that matches nothing.
+    // "Stories' folders with hand-written views ... import in one run" - the view stage creates a view that matches nothing.
     // Code path: ImportSolutionCommand.RunImportStepAsync(ImportView) -> ImportViewCommand.RunAsync with Solution forwarded.
     [Fact]
-    [Trait("Requirement", "REQ-32")]
     public async Task ImportViewStage_NewView_CreatesItInTheSolutionWithoutPrompting()
     {
         using var console = new ConsoleHarness(); // no answers: --yes must be forwarded
@@ -83,15 +81,14 @@ public sealed class ImportSolutionCommandViewFormCreateTests : IDisposable
 
         var outcome = await CreateRunner(client).RunAsync(SolutionImportStage.ImportView, ViewPath, CancellationToken.None);
 
-        Expect.Equal(SolutionImportStepOutcome.Succeeded, outcome, $"REQ-32: the view stage should succeed for a new view. Output: <{console.Output}>");
+        Expect.Equal(SolutionImportStepOutcome.Succeeded, outcome, $"the view stage should succeed for a new view. Output: <{console.Output}>");
         var call = Assert.Single(client.CreateSavedQueryCalls);
-        Expect.Equal(Solution, call.SolutionUniqueName, "REQ-22/REQ-32: solution import's --solution should reach the view create.");
-        Expect.Equal("All projects", (string?)call.Body["name"], "REQ-32: the view in the folder should be the one created.");
+        Expect.Equal(Solution, call.SolutionUniqueName, "solution import's --solution should reach the view create.");
+        Expect.Equal("All projects", (string?)call.Body["name"], "the view in the folder should be the one created.");
     }
 
-    // REQ-32 + REQ-22 (change half): an existing view that changes joins the solution too.
+    // Change half: an existing view that changes joins the solution too.
     [Fact]
-    [Trait("Requirement", "REQ-32")]
     public async Task ImportViewStage_ExistingView_IsUpdatedInTheSolution()
     {
         using var console = new ConsoleHarness();
@@ -102,13 +99,12 @@ public sealed class ImportSolutionCommandViewFormCreateTests : IDisposable
         var outcome = await CreateRunner(client).RunAsync(SolutionImportStage.ImportView, ViewPath, CancellationToken.None);
 
         Expect.Equal(SolutionImportStepOutcome.Succeeded, outcome, $"The view stage should succeed for an existing view. Output: <{console.Output}>");
-        Expect.Equal(Solution, Assert.Single(client.UpdateSavedQueryCalls).SolutionUniqueName, "REQ-22/REQ-32: solution import's --solution should reach the view update.");
+        Expect.Equal(Solution, Assert.Single(client.UpdateSavedQueryCalls).SolutionUniqueName, "solution import's --solution should reach the view update.");
     }
 
     // ---- the form stage creates, in the solution, and publishes ----
 
     [Fact]
-    [Trait("Requirement", "REQ-32")]
     public async Task ImportFormStage_NewForm_CreatesItInTheSolutionAndPublishes()
     {
         using var console = new ConsoleHarness();
@@ -117,19 +113,18 @@ public sealed class ImportSolutionCommandViewFormCreateTests : IDisposable
 
         var outcome = await CreateRunner(client).RunAsync(SolutionImportStage.ImportForm, FormPath, CancellationToken.None);
 
-        Expect.Equal(SolutionImportStepOutcome.Succeeded, outcome, $"REQ-32: the form stage should succeed for a new form. Output: <{console.Output}>");
-        Expect.Equal(Solution, Assert.Single(client.CreateSystemFormCalls).SolutionUniqueName, "REQ-22/REQ-32: solution import's --solution should reach the form create.");
-        Expect.Sequence(["tn_project"], client.PublishEntityCalls, "REQ-33: a created form is published.");
+        Expect.Equal(SolutionImportStepOutcome.Succeeded, outcome, $"the form stage should succeed for a new form. Output: <{console.Output}>");
+        Expect.Equal(Solution, Assert.Single(client.CreateSystemFormCalls).SolutionUniqueName, "solution import's --solution should reach the form create.");
+        Expect.Sequence(["tn_project"], client.PublishEntityCalls, "a created form is published.");
     }
 
     // ---- the whole run ----
 
-    // REQ-32 example: one run over a new table's folder ends with the table, its view and its form created, in that order.
+    // Example: one run over a new table's folder ends with the table, its view and its form created, in that order.
     // The runner below does the three stages that matter here for real and skips the column/choice stages (they have their own tests).
     // Dataverse only knows the table's type code once the table exists, so the identity appears after the create stage - the view stage
     // would find no table (and be refused) if it ran first.
     [Fact]
-    [Trait("Requirement", "REQ-32")]
     public async Task WholeRun_NewTableWithHandWrittenViewAndForm_CreatesTableThenViewThenForm()
     {
         using var console = new ConsoleHarness();
@@ -142,17 +137,16 @@ public sealed class ImportSolutionCommandViewFormCreateTests : IDisposable
 
         var result = await new SolutionImportOrchestrator().RunAsync(_root, runner, CancellationToken.None);
 
-        Expect.Equal(0, result.Failed, $"REQ-32: nothing in the run should fail. Output: <{console.Output}>");
-        Expect.Sequence(["create-table:tn_Project", "create-view:All projects", "create-form:Project"], client.WriteOrder, $"REQ-32: the table should be created first, then its view, then its form. Output: <{console.Output}>");
-        Expect.Equal(Solution, Assert.Single(client.CreateSavedQueryCalls).SolutionUniqueName, "REQ-22: the new view should join the solution.");
-        Expect.Equal(Solution, Assert.Single(client.CreateSystemFormCalls).SolutionUniqueName, "REQ-22: the new form should join the solution.");
+        Expect.Equal(0, result.Failed, $"nothing in the run should fail. Output: <{console.Output}>");
+        Expect.Sequence(["create-table:tn_Project", "create-view:All projects", "create-form:Project"], client.WriteOrder, $"the table should be created first, then its view, then its form. Output: <{console.Output}>");
+        Expect.Equal(Solution, Assert.Single(client.CreateSavedQueryCalls).SolutionUniqueName, "the new view should join the solution.");
+        Expect.Equal(Solution, Assert.Single(client.CreateSystemFormCalls).SolutionUniqueName, "the new form should join the solution.");
     }
 
-    // REQ-11: "`solution import --no-publish` passes the option on to every step (nothing published)." The same whole run with the option set
+    // "`solution import --no-publish` passes the option on to every step (nothing published)." The same whole run with the option set
     // still creates the table, view and form - in the same order - but publishes nothing, not even the form that always published before.
     // Code path: ImportSolutionCommand.Settings.NoPublish forwarded to every per-asset command's settings (CreateRunner reads it from there).
     [Fact]
-    [Trait("Requirement", "REQ-11")]
     [Trait("Feature", "publish-by-default")]
     public async Task WholeRun_WithNoPublish_CreatesEverythingAndPublishesNothing()
     {
@@ -166,9 +160,9 @@ public sealed class ImportSolutionCommandViewFormCreateTests : IDisposable
 
         var result = await new SolutionImportOrchestrator().RunAsync(_root, runner, CancellationToken.None);
 
-        Expect.Equal(0, result.Failed, $"REQ-11: nothing in the run should fail. Output: <{console.Output}>");
-        Expect.Sequence(["create-table:tn_Project", "create-view:All projects", "create-form:Project"], client.WriteOrder, $"REQ-11: --no-publish must not stop the table, view and form being created. Output: <{console.Output}>");
-        PublishAssertions.NothingPublished(client, "REQ-11", "'solution import --no-publish' should publish nothing at any step.");
+        Expect.Equal(0, result.Failed, $"nothing in the run should fail. Output: <{console.Output}>");
+        Expect.Sequence(["create-table:tn_Project", "create-view:All projects", "create-form:Project"], client.WriteOrder, $"--no-publish must not stop the table, view and form being created. Output: <{console.Output}>");
+        PublishAssertions.NothingPublished(client, "'solution import --no-publish' should publish nothing at any step.");
     }
 
     private sealed class TableThenViewAndFormRunner(ImportSolutionCommand.StepRunner inner, FakeDataverseClient client) : ISolutionImportStepRunner

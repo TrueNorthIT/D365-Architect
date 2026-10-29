@@ -13,7 +13,7 @@ namespace D365Architect.Services.Conversion;
 /// Updates the view the YAML's <c>savedQueryId</c> names, or otherwise the
 /// one matching its table + name (the same identity <c>view export</c>
 /// uses). A hand-written file matching nothing by table + name is created
-/// as a public view (<see cref="ViewImportPreview.IsCreate"/>, REQ-23). Only
+/// as a public view (<see cref="ViewImportPreview.IsCreate"/>). Only
 /// <c>Description</c>/<c>FetchXml</c>/<c>LayoutXml</c> are written —
 /// <c>QueryType</c>/<c>IsDefault</c>/<c>IsQuickFindQuery</c> are documented
 /// on <see cref="ViewDefinition"/> itself as fields applying a YAML file
@@ -21,8 +21,8 @@ namespace D365Architect.Services.Conversion;
 ///
 /// A file may give <see cref="ViewDefinition.Columns"/> instead of a raw
 /// LayoutXML: the layout is then generated, and the FetchXML gains any
-/// listed column it doesn't query (REQ-24 to REQ-26). The layout's
-/// <c>object</c> is always the table's live type code (REQ-27).
+/// listed column it doesn't query. The layout's
+/// <c>object</c> is always the table's live type code.
 ///
 /// <see cref="IImportService{TInput,TPreview}.PreviewAsync"/> throws
 /// <see cref="Dataverse.ViewNotFoundException"/> when <c>savedQueryId</c>
@@ -40,7 +40,7 @@ public interface IViewImportService : IImportService<ViewDefinition, ViewImportP
     /// As <see cref="IImportService{TInput,TPreview}.ApplyAsync"/>, adding whatever it creates or changes
     /// to <paramref name="solutionUniqueName"/> (null = no solution, sent as <c>MSCRM.SolutionUniqueName</c>),
     /// and creating the view when <paramref name="preview"/> is <see cref="ViewImportPreview.IsCreate"/>
-    /// (REQ-22, REQ-23) — see <see cref="Dataverse.IDataverseClient.CreateSavedQueryAsync"/> for the body.
+    /// — see <see cref="Dataverse.IDataverseClient.CreateSavedQueryAsync"/> for the body.
     /// </summary>
     Task ApplyAsync(Uri environmentUrl, string accessToken, ViewImportPreview preview, string? solutionUniqueName, CancellationToken cancellationToken);
 
@@ -75,7 +75,7 @@ public sealed record ViewImportPreview(
 
     /// <summary>
     /// True when the YAML matched no existing view (no <c>savedQueryId</c>, and no view of that name on that
-    /// table), so <c>ApplyAsync</c> creates one (REQ-23). Then <see cref="SavedQueryId"/> is <see cref="Guid.Empty"/>,
+    /// table), so <c>ApplyAsync</c> creates one. Then <see cref="SavedQueryId"/> is <see cref="Guid.Empty"/>,
     /// the <c>Existing*</c> values are null and <see cref="HasChanges"/> is true.
     /// </summary>
     public bool IsCreate { get; init; }
