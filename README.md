@@ -225,7 +225,9 @@ an invalid character (e.g. `BankName` or `new_Bank Name` instead of
 actually derives from SchemaName, two new columns claiming the same
 SchemaName, an invalid `RequiredLevel`, a MaxLength outside 1–4000
 (String/Memo), an Integer MinValue/MaxValue outside -2147483648 to
-2147483647, a Decimal/Money Precision outside 1–10, or MinValue greater
+2147483647, a Memo format other than `TextArea` or `RichText` (or a switch
+between plain and rich text on an existing Memo), an `autoNumberFormat` on a
+non-String column, a Decimal/Money Precision outside 1–10, or MinValue greater
 than MaxValue — all show up in the plan as `invalid` with the specific
 reason, rather than being attempted and failing with a raw Dataverse API
 error. See `docs/yaml-conventions.md` for which of these are confirmed
@@ -233,6 +235,14 @@ against Microsoft's own documented bounds versus a reasonable, same-shape
 extension. A few things Dataverse allows but warns against (lowering
 `MaxLength`/`Precision` below what existing data might exceed) still plan
 as a normal update, just with a warning printed alongside.
+
+A String column can also be an auto-number column with `autoNumberFormat`
+(e.g. `DATA{SEQNUM:6}`), and `autoNumberSeed` sets its first number. The seed
+is only applied in the run that creates the column, in this environment only
+(it isn't part of the solution); on an existing column the plan warns that it
+was ignored, so re-importing never resets the counter. The format string
+itself isn't validated by the tool. See `docs/yaml-conventions.md` for the
+rich text and auto-number details.
 
 By default, every write in the column plan (plus the table-level update, if
 any) is sent as a single atomic Dataverse changeset — either all of it
@@ -271,6 +281,8 @@ The file must give `schemaName` (with its publisher prefix), `ownershipType`
 name of a String column listed under `attributes`), and both display names.
 Nothing is guessed: anything missing or invalid is listed in one run and
 nothing is sent. Activity, elastic and virtual tables aren't supported.
+Dataverse sets the primary name column's MaxLength to 850 whatever the file
+says (confirmed live with 100 sent).
 
 If the table already exists, the command says so ("already exists, nothing to
 create") and exits 0 without validating the file, so it's safe to run against

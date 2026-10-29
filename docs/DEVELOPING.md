@@ -18,7 +18,7 @@ covers the code around that YAML, not the YAML's own design rules.
 | `Program.cs` | Composition root — see below. |
 | `Commands/` | One subfolder per CLI branch (`Auth`, `Environments`, `Table`, `View`, `Form`, `Choice`, `Solution`, `Schema`), each a thin Spectre.Console.Cli layer over `Services/`. |
 | `Services/Authentication/` | MSAL-based sign-in, token cache, current-session tracking. |
-| `Services/Dataverse/` | The Web API client and its supporting validators/exceptions/DTOs. |
+| `Services/Dataverse/` | The Web API client and its supporting validators/exceptions/DTOs, and `MemoFormats`. |
 | `Services/Conversion/` (+ `Models/`) | Table/view/form ↔ YAML readers, writers, and the curated models themselves. The biggest folder by far. |
 | `Services/Schema/` | Generates `schema/*.schema.json` from the curated models via reflection. |
 | `Services/EnvironmentService.cs` | **Placeholder scaffolding** — see below, don't mistake it for real config. |
@@ -173,6 +173,11 @@ bearer token is passed in per call. Worth knowing before extending it:
   `EntityMetadataJsonBuilder` and checked first by `TableCreateValidator`. It
   is the only write that makes a new table; see "Creating tables" in
   [`yaml-conventions.md`](yaml-conventions.md) for the confirmed behaviour.
+- **Auto-number seeds** are one unbound `POST SetAutoNumberSeed`
+  (`DataverseWrite.SetAutoNumberSeed`, `IDataverseClient.SetAutoNumberSeedAsync`).
+  `TableImportService` sends it only straight after a column's own create,
+  never for an existing column, because a second call resets the counter. See
+  "Rich text and auto-number columns" in [`yaml-conventions.md`](yaml-conventions.md).
 - **Solution-scoping** (the `--solution` option on export commands) goes
   through `solutioncomponents`, filtered by `componenttype` (1=Entity,
   2=Attribute, 9=Option Set, 26=View/SavedQuery, 60=SystemForm) plus
@@ -240,8 +245,10 @@ where it was confirmed, e.g. Microsoft Learn vs. "corroborated across
 multiple sources, not a single canonical page"), `AttributeMetadataJsonBuilder`
 (builds/mutates column JSON; `SupportedTypes` = `String`, `Memo`, `Integer`,
 `BigInt`, `Decimal`, `Money`, `DateTime` only — see its own doc comment for
-exactly why each excluded type is excluded), plus the not-found/ambiguous
-exceptions and `Existing*`/`WhoAmIResult` DTOs.
+exactly why each excluded type is excluded), `MemoFormats` (the Memo formats
+this tool can create: `TextArea` and `RichText`, the latter carried by
+`FormatName`, not `Format`), plus the not-found/ambiguous exceptions and
+`Existing*`/`WhoAmIResult` DTOs.
 
 ### Conversion (the biggest folder)
 

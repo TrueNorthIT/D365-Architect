@@ -766,6 +766,61 @@ a citation. This tool refuses the update up front (an `Invalid` plan,
 same mechanism as an immutable `Type`/`SchemaName`/`Targets` change) rather
 than ever claim "Imported." for a write that silently never took effect.
 
+### Rich text and auto-number columns
+
+**Rich text Memo.** `format: RichText` on a Memo creates a rich text column:
+the create body sends `FormatName: { Value: "RichText" }` (see
+`MemoFormats`). The legacy `Format` property can't express it, so a rich
+text column reads back as `Format: Text` and only `FormatName` says
+`RichText`. `format: TextArea` (or no format) creates a plain Memo as before.
+Any other Memo format is refused, not created as a plain Memo.
+
+- Export reads rich text from `FormatName`, so `table export` writes
+  `format: RichText`. Exports made before this support existed wrote a rich
+  text column as `format: Text`; importing one of those against the live rich
+  text column is refused, and the message says to re-export.
+- Switching an existing Memo between plain and rich text is planned as
+  `invalid` and never attempted. Create a new column instead.
+- An update never writes a Memo's format, so an unchanged rich text column
+  stays rich text.
+
+**Confirmed live** (personal test environment, 2026-10-26): a rich text
+column created through the Web API read back as `Format: Text`,
+`FormatName: RichText`; `table export` then wrote `format: RichText`, and
+`table import --whatif` on that export reported no changes. A `table import`
+in default transaction mode created a rich text Memo with `MaxLength: 100000`.
+
+**Auto-number String.** `autoNumberFormat` (e.g. `DATA{SEQNUM:6}`) on a String
+column makes it an auto-number column. It's sent as `AutoNumberFormat` on the
+create (with `FormatName` left as Text), on an update of an existing Text
+column, compared against the live value, and written by export. It's refused
+on any non-String column and alongside any non-Text format. The tool doesn't
+validate the format string itself; Dataverse doesn't either at create time, so
+a bad format only fails when the first record is saved.
+
+**Auto-number seed.** `autoNumberSeed` (an integer; needs `autoNumberFormat`)
+sets the first number the column will use, via the unbound
+`SetAutoNumberSeed` action (`IDataverseClient.SetAutoNumberSeedAsync`). It is
+only sent in the run that creates the column: in the same changeset, straight
+after the create, by default, or as its own request after the create with
+`--no-transaction`. On an existing column it is never sent. The plan says
+`seed ignored — column already exists` as a warning, even when the column is
+otherwise Unchanged. The reason it's create-only: the seed is per environment
+(a solution doesn't carry it), and calling it again resets the counter, which
+risks duplicate numbers. Without a seed, sequences start at 1000. Export never
+writes `autoNumberSeed`. The create line in the plan reads
+`+ col (create, auto-number seed N — this environment only)`.
+
+**Confirmed live** (same environment, 2026-10-26): a default-transaction
+`table import` created a rich text Memo and a String with
+`autoNumberFormat: DATA{SEQNUM:6}` and `autoNumberSeed: 1` in one changeset,
+so Dataverse accepts `SetAutoNumberSeed` in the same changeset as the create.
+The first record got `DATA000001`. An existing column's format changed from
+`MSUM{SEQNUM:6}` to `MSUM{SEQNUM:8}` in the same changeset, and without a seed
+its next value was `MSUM00001000`. Re-importing the same file (still with
+`autoNumberSeed: 1`) showed the seed-ignored warning and did not reset the
+counter: the next record got `DATA000002`.
+
 ### Boolean and Choice (Picklist/MultiSelectPicklist)
 
 Both need an `OptionSet` — the actual choice values — which Dataverse only
@@ -995,6 +1050,12 @@ real table, not just reasoned about:
 - **An invalid `RequiredLevel`** — anything other than `None`,
   `Recommended`, `ApplicationRequired`, or `SystemRequired` (Dataverse's
   own documented values) on either create or update.
+- **A Memo format other than `TextArea` or `RichText`**, a plain-to-rich-text
+  switch (or the reverse) on an existing Memo, and an `autoNumberFormat` on a
+  non-String column or alongside a non-Text format (`AttributeChangeValidator`).
+  An `autoNumberSeed` without an `autoNumberFormat` is also refused. An
+  `autoNumberSeed` on an existing column is a warning, not a refusal (see
+  "Rich text and auto-number columns").
 - **A non-positive, or excessive, `MaxLength`** on a String/Memo column —
   must be greater than 0, and (String only) no more than 4000. Corroborated
   across multiple sources rather than a single canonical Microsoft Learn
@@ -1145,6 +1206,10 @@ assumed.
   `IsPrimaryName: true`. Every other column is left for `table import`, which
   already plans, diffs and creates the types it supports. Creating a table
   and then importing its columns is two steps by design.
+- **The primary name column's MaxLength is 850, whatever is sent.** The
+  create body sends the column's `maxLength` (100 when omitted), but
+  Dataverse sets the primary name's MaxLength to 850 regardless. Confirmed
+  live with a 100 sent; the column read back at 850.
 - **Refuses rather than guesses.** `TableCreateValidator` requires
   `schemaName` (with a publisher prefix), `ownershipType` (`UserOwned` or
   `OrganizationOwned` only; `TeamOwned`, `BusinessOwned`, `BusinessParented`
