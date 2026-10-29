@@ -13,8 +13,12 @@ namespace D365Architect.Services.Authentication;
 ///
 /// Which environment/account is "current" is tracked separately in a small
 /// non-secret profile file next to the token cache.
+///
+/// When d365architect_AUTH_MODE is set, <see cref="GetCurrentContextAsync"/>
+/// hands over to <see cref="NonInteractiveAuthenticator"/> instead and none
+/// of the above (profile, token cache, MSAL itself) is touched.
 /// </summary>
-public sealed class MsalAuthenticationService(AuthenticationOptions options) : IAuthenticationService
+public sealed class MsalAuthenticationService(AuthenticationOptions options, NonInteractiveAuthenticator nonInteractiveAuthenticator) : IAuthenticationService
 {
     private const string CacheFileName = "msal.cache";
     private const string ProfileFileName = "profile.json";
@@ -44,6 +48,12 @@ public sealed class MsalAuthenticationService(AuthenticationOptions options) : I
 
     public async Task<AuthenticatedContext> GetCurrentContextAsync(CancellationToken cancellationToken)
     {
+        var nonInteractiveSettings = NonInteractiveAuthSettingsResolver.Resolve(Environment.GetEnvironmentVariable);
+        if (nonInteractiveSettings is not null)
+        {
+            return await nonInteractiveAuthenticator.GetContextAsync(nonInteractiveSettings, cancellationToken);
+        }
+
         var profile = await LoadProfileAsync(cancellationToken)
             ?? throw new AuthenticationRequiredException("Not signed in. Run 'auth login --url <environment-url>' first.");
 
@@ -65,7 +75,7 @@ public sealed class MsalAuthenticationService(AuthenticationOptions options) : I
         }
     }
 
-    private static string ToDefaultScope(Uri environmentUrl) => $"{environmentUrl.GetLeftPart(UriPartial.Authority)}/.default";
+    internal static string ToDefaultScope(Uri environmentUrl) => $"{environmentUrl.GetLeftPart(UriPartial.Authority)}/.default";
 
     private static Func<Task<IPublicClientApplication>> BuildApplicationAsync(AuthenticationOptions options) => async () =>
     {

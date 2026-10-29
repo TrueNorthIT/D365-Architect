@@ -9,6 +9,12 @@ namespace D365Architect.Services.Authentication;
 /// Some tenants require sign-in through their own app registration instead
 /// (e.g. because of Conditional Access policies) — override with the
 /// d365architect_CLIENT_ID / d365architect_AUTHORITY environment variables in that case.
+///
+/// Only applies while d365architect_AUTH_MODE is unset. Once it's set,
+/// d365architect_CLIENT_ID instead means the service principal or managed
+/// identity to sign in as non-interactively (see
+/// <see cref="NonInteractiveAuthSettingsResolver"/>), and this interactive
+/// app isn't used at all.
 /// </summary>
 public sealed record AuthenticationOptions(string ClientId, string Authority)
 {

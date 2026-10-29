@@ -8,7 +8,7 @@ using Xunit;
 namespace D365Architect.Tests;
 
 /// <summary>Covers the preview-all, confirm-once, apply-all flow behind `solution import`, plus the shared `--table` matching.</summary>
-[Collection("Console")]
+[Collection(ConsoleCollection.Name)]
 public sealed class SolutionImportFlowTests
 {
     private sealed class Item

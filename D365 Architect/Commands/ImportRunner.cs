@@ -53,9 +53,20 @@ public sealed record PreparedImport(ImportOutcome Outcome, Func<CancellationToke
 /// a <see cref="PreparedImport"/> with a deferred apply;
 /// <see cref="RunAsync{TSettings,TInput,TPreview}"/> is preview + the single
 /// prompt + apply, for the single-asset commands.
+///
+/// Once a change is applied, a command whose spec has
+/// <see cref="ImportFlowSpec{TSettings,TInput,TPreview}.PublishAsync"/>
+/// publishes it too, unless <c>--no-publish</c>
+/// (<see cref="PublishableImportSettings"/>) - confirming the import is the
+/// only question asked. Nothing applied (no change, declined, <c>--whatif</c>)
+/// means nothing published.
 /// </summary>
 public sealed class ImportRunner(IAuthenticationService authenticationService)
 {
+    /// <summary>The signed-in context, for a flow that isn't one file's import - <c>solution import</c>'s create stage.</summary>
+    public Task<AuthenticatedContext> GetContextAsync(CancellationToken cancellationToken) =>
+        authenticationService.GetCurrentContextAsync(cancellationToken);
+
     public async Task<int> RunAsync<TSettings, TInput, TPreview>(TSettings settings, IImportService<TInput, TPreview> service, ImportFlowSpec<TSettings, TInput, TPreview> spec, CancellationToken cancellationToken)
         where TSettings : ImportSettingsBase
         where TInput : class
@@ -141,7 +152,7 @@ public sealed class ImportRunner(IAuthenticationService authenticationService)
                 return PreparedImport.Failed;
             }
 
-            return new PreparedImport(ImportOutcome.Changed, ct => ApplyAsync(spec, auth, input, preview, ct));
+            return new PreparedImport(ImportOutcome.Changed, ct => ApplyAsync(settings, spec, auth, input, preview, ct));
         }
         catch (Exception ex) when (TryReport(ex, spec, input))
         {
@@ -149,7 +160,8 @@ public sealed class ImportRunner(IAuthenticationService authenticationService)
         }
     }
 
-    private static async Task<bool> ApplyAsync<TSettings, TInput, TPreview>(ImportFlowSpec<TSettings, TInput, TPreview> spec, AuthenticatedContext auth, TInput input, TPreview preview, CancellationToken cancellationToken)
+    /// <summary>Writes a previewed change, then publishes it unless the command has no publish step or <c>--no-publish</c> was given.</summary>
+    private static async Task<bool> ApplyAsync<TSettings, TInput, TPreview>(TSettings settings, ImportFlowSpec<TSettings, TInput, TPreview> spec, AuthenticatedContext auth, TInput input, TPreview preview, CancellationToken cancellationToken)
         where TSettings : ImportSettingsBase
         where TInput : class
     {
@@ -157,6 +169,13 @@ public sealed class ImportRunner(IAuthenticationService authenticationService)
         {
             await AnsiConsole.Status().StartAsync(spec.ApplyStatusMessage, async _ => await spec.ApplyAsync(auth, preview, cancellationToken));
             spec.PrintSuccess(input, preview);
+
+            if (spec.PublishAsync is { } publishAsync && settings is not PublishableImportSettings { NoPublish: true })
+            {
+                await AnsiConsole.Status().StartAsync("Publishing...", async _ => await publishAsync(auth, preview, cancellationToken));
+                AnsiConsole.MarkupLine("[green]Published.[/]");
+            }
+
             return true;
         }
         catch (Exception ex) when (TryReport(ex, spec, input))

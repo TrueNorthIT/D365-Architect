@@ -80,6 +80,9 @@ public sealed class GlobalChoiceImportService(IDataverseClient dataverseClient) 
     public Task ApplyAsync(Uri environmentUrl, string accessToken, GlobalChoicesImportPreview preview, CancellationToken cancellationToken) =>
         ApplyAsync(environmentUrl, accessToken, preview, solutionUniqueName: null, cancellationToken);
 
+    public Task PublishAsync(Uri environmentUrl, string accessToken, GlobalChoicesImportPreview preview, CancellationToken cancellationToken) =>
+        dataverseClient.PublishGlobalOptionSetsAsync(environmentUrl, accessToken, preview.Names, cancellationToken);
+
     public async Task ApplyAsync(Uri environmentUrl, string accessToken, GlobalChoicesImportPreview preview, string? solutionUniqueName, CancellationToken cancellationToken)
     {
         foreach (var plan in preview.ChoicePlans)

@@ -15,7 +15,7 @@ namespace D365Architect.Tests;
 /// <see cref="AnsiConsole.Console"/> for a recording one, so these must not run in parallel with
 /// anything else that writes to it.
 /// </summary>
-[Collection("Console")]
+[Collection(ConsoleCollection.Name)]
 public sealed class ImportRunnerTests
 {
     private sealed class Settings : ImportSettingsBase;
@@ -119,6 +119,3 @@ public sealed class ImportRunnerTests
         Assert.Contains("Nothing above is actually applicable", output);
     }
 }
-
-[CollectionDefinition("Console", DisableParallelization = true)]
-public sealed class ConsoleCollection;

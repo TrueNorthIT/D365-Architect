@@ -93,7 +93,9 @@ public static class YamlSchemaGenerator
             schema["required"] = required;
         }
 
-        return schema;
+        return type.GetCustomAttribute<SchemaPlainStringShorthandAttribute>() is null
+            ? schema
+            : new JsonObject { ["anyOf"] = new JsonArray(new JsonObject { ["type"] = "string" }, schema) };
     }
 
     private static JsonObject BuildPropertySchema(PropertyInfo property, string? description, XDocument? xmlDocs, HashSet<Type> ancestors)
