@@ -1,5 +1,7 @@
 using System.Globalization;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
+using System.Xml;
 using System.Xml.Linq;
 using D365Architect.Services.Conversion.Models;
 using D365Architect.Services.Dataverse;
@@ -52,7 +54,7 @@ public sealed class ViewImportService(IDataverseClient dataverseClient) : IViewI
             existing?.SavedQueryId ?? Guid.Empty,
             existing?.Description,
             view.Description,
-            existing?.FetchXml,
+            ComparableExistingFetchXml(existing?.FetchXml, newFetchXml),
             newFetchXml,
             existing?.LayoutXml,
             newLayoutXml)
@@ -101,6 +103,41 @@ public sealed class ViewImportService(IDataverseClient dataverseClient) : IViewI
         }
 
         return dataverseClient.CreateSavedQueryAsync(environmentUrl, accessToken, body, solutionUniqueName, cancellationToken);
+    }
+
+    private static readonly Regex SavedQueryIdAttribute = new(@"\s+savedqueryid\s*=\s*(""[^""]*""|'[^']*')");
+
+    /// <summary>
+    /// The live FetchXML as the diff should see it. Dataverse stamps
+    /// <c>savedqueryid</c> onto the stored <c>&lt;fetch&gt;</c> root when it
+    /// saves a view (confirmed live), so a hand-written file without it would
+    /// otherwise diff on every run. That attribute is dropped from the live
+    /// side only when the file's own <c>&lt;fetch&gt;</c> lacks it; an exported
+    /// file carries it (<c>view export</c> writes the live FetchXML verbatim)
+    /// and compares as-is. Removed textually so the rest stays byte-for-byte.
+    /// </summary>
+    private static string? ComparableExistingFetchXml(string? existingFetchXml, string? newFetchXml)
+    {
+        if (existingFetchXml is null || newFetchXml is null || !existingFetchXml.Contains("savedqueryid", StringComparison.Ordinal))
+        {
+            return existingFetchXml;
+        }
+
+        try
+        {
+            if (XElement.Parse(existingFetchXml).Attribute("savedqueryid") is null || XElement.Parse(newFetchXml).Attribute("savedqueryid") is not null)
+            {
+                return existingFetchXml;
+            }
+        }
+        catch (XmlException)
+        {
+            // Not well-formed: compare as written and let Dataverse have the final word.
+            return existingFetchXml;
+        }
+
+        // The root's attribute is the first match: the root's start tag comes first.
+        return SavedQueryIdAttribute.Replace(existingFetchXml, "", 1);
     }
 
     /// <summary>The file's own mistakes with <c>columns</c>, refused before Dataverse is asked anything (no silent fixes).</summary>

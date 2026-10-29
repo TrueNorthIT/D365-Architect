@@ -63,7 +63,7 @@ public sealed class FormImportService(IDataverseClient dataverseClient, FormJson
         // to write, so validating would only block a no-op import over
         // content Dataverse already holds.
         var existingForm = DecomposeExisting(form, existing.FormXml);
-        var existingComparableFormXml = FormXmlWriter.Write(existingForm, existingRoot);
+        var existingComparableFormXml = WithoutLabelsTheFileLeftOut(FormXmlWriter.Write(existingForm, existingRoot), newFormXml);
 
         // Rebuilt through the exact same writer, base document, and
         // deterministic id rules as newFormXml — see
@@ -138,6 +138,42 @@ public sealed class FormImportService(IDataverseClient dataverseClient, FormJson
 
     public Task PublishAsync(Uri environmentUrl, string accessToken, FormImportPreview preview, CancellationToken cancellationToken)
         => dataverseClient.PublishEntityAsync(environmentUrl, accessToken, preview.Entity, cancellationToken);
+
+    /// <summary>
+    /// <paramref name="existingComparableFormXml"/> without the cell
+    /// <c>&lt;labels&gt;</c> of any cell that has none in
+    /// <paramref name="newFormXml"/>. Dataverse fills a bound control's cell
+    /// label from the column's display name when it saves a form (confirmed
+    /// live: a control written without <c>label</c> reads back with
+    /// <c>&lt;labels&gt;&lt;label description="Invoice Centre Name" languagecode="1033" /&gt;&lt;/labels&gt;</c>),
+    /// so a file that leaves <c>label</c> out would otherwise diff — and
+    /// re-PATCH and republish — on every run. Cells pair up by id, which is
+    /// deterministic on both sides (scope + control id). A label the file
+    /// does give is still compared, so a real label change still shows; an
+    /// exported file carries every live label, so nothing is dropped for it.
+    /// </summary>
+    private static string WithoutLabelsTheFileLeftOut(string existingComparableFormXml, string newFormXml)
+    {
+        var unlabelledCellIds = XElement.Parse(newFormXml).Descendants("cell")
+            .Where(cell => cell.Element("labels") is null)
+            .Select(cell => (string?)cell.Attribute("id"))
+            .ToHashSet();
+
+        var existing = XElement.Parse(existingComparableFormXml);
+        var autoLabels = existing.Descendants("cell")
+            .Where(cell => unlabelledCellIds.Contains((string?)cell.Attribute("id")))
+            .Select(cell => cell.Element("labels"))
+            .OfType<XElement>()
+            .ToList();
+
+        if (autoLabels.Count == 0)
+        {
+            return existingComparableFormXml;
+        }
+
+        autoLabels.ForEach(labels => labels.Remove());
+        return existing.ToString(SaveOptions.DisableFormatting);
+    }
 
     /// <summary>
     /// Decomposes the form's current live FormXML the same way `form

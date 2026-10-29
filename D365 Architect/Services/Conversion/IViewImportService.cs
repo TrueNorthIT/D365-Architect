@@ -48,7 +48,7 @@ public interface IViewImportService : IImportService<ViewDefinition, ViewImportP
 /// <param name="SavedQueryId">The view's id — what <see cref="IImportService{TInput,TPreview}.ApplyAsync"/> updates (<see cref="Guid.Empty"/> for a create).</param>
 /// <param name="ExistingDescription">The view's current live description.</param>
 /// <param name="NewDescription">The local YAML's description — null means the YAML never had one, so it's left untouched, not cleared.</param>
-/// <param name="ExistingFetchXml">The view's current live FetchXML.</param>
+/// <param name="ExistingFetchXml">The view's current live FetchXML, less the <c>savedqueryid</c> Dataverse stamps on its root when <paramref name="NewFetchXml"/> has none (so a hand-written file compares like with like).</param>
 /// <param name="NewFetchXml">The FetchXML to write: the YAML's own, or — with <c>columns</c> — it (else the live one, else a minimal one) plus any listed column it lacked.</param>
 /// <param name="ExistingLayoutXml">The view's current live LayoutXML.</param>
 /// <param name="NewLayoutXml">The LayoutXML to write: the YAML's own (its <c>object</c> corrected to the live type code), or the one generated from its <c>columns</c>.</param>

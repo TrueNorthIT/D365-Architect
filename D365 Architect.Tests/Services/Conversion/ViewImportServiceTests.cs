@@ -62,6 +62,43 @@ public sealed class ViewImportServiceTests
         Assert.True(preview.HasChanges);
     }
 
+    // Live re-run of a view created from a hand-written file: Dataverse
+    // stamps savedqueryid onto the stored <fetch> root, the file has none.
+    private const string LiveFetchXml = """<fetch version="1.0" mapping="logical" savedqueryid="077b48af-46d1-f111-a05b-6045bd0e42a3"><entity name="tn_test"><attribute name="tn_name" /></entity></fetch>""";
+    private const string HandWrittenFetchXml = """<fetch version="1.0" mapping="logical"><entity name="tn_test"><attribute name="tn_name" /></entity></fetch>""";
+
+    [Fact]
+    public async Task PreviewAsync_LiveFetchHasOnlyTheStampedSavedQueryId_HasNoChanges()
+    {
+        var client = new FakeDataverseClient { SavedQuery = new ExistingSavedQuery(Guid.NewGuid(), null, LiveFetchXml, null) };
+
+        var preview = await new ViewImportService(client).PreviewAsync(Environment, "token", View(fetchXml: HandWrittenFetchXml), CancellationToken.None);
+
+        Assert.False(preview.HasChanges);
+    }
+
+    [Fact]
+    public async Task PreviewAsync_ExportedFetchCarryingSavedQueryId_HasNoChanges()
+    {
+        var client = new FakeDataverseClient { SavedQuery = new ExistingSavedQuery(Guid.NewGuid(), null, LiveFetchXml, null) };
+
+        var preview = await new ViewImportService(client).PreviewAsync(Environment, "token", View(fetchXml: LiveFetchXml), CancellationToken.None);
+
+        Assert.False(preview.HasChanges);
+    }
+
+    [Fact]
+    public async Task PreviewAsync_LiveFetchWithSavedQueryIdButARealChange_StillShowsTheChange()
+    {
+        var client = new FakeDataverseClient { SavedQuery = new ExistingSavedQuery(Guid.NewGuid(), null, LiveFetchXml, null) };
+        var edited = HandWrittenFetchXml.Replace("tn_name", "tn_other");
+
+        var preview = await new ViewImportService(client).PreviewAsync(Environment, "token", View(fetchXml: edited), CancellationToken.None);
+
+        Assert.True(preview.HasChanges);
+        Assert.Equal(HandWrittenFetchXml, preview.ExistingFetchXml);
+    }
+
     // ---- Issue #35 (sub-issue of #30): pinning a view by savedQueryId ----
 
     private static readonly Uri Environment = new("https://test.crm.dynamics.com");
