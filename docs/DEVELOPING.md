@@ -609,6 +609,36 @@ is called out by name in its test's own doc comment or `[Fact]` name:
   `SkipBeforePrinting` is where that "even when nothing else differs" case
   actually gets exercised end to end).
 
+### Live tests
+
+A few tests run against a real Dataverse environment, to prove what the fakes
+can't (`TableCreateServiceLiveTests`: that `solution import`'s one-transaction
+table create really rolls back as one, names the failing table, and adds each
+table to the solution). They're marked `[LiveFact]` and
+`[Trait("Category", "Live")]`, and are **off by default**: unless both
+environment variables below are set, a plain `dotnet test` reports them as
+skipped, so CI and everyone else stay green.
+
+- `D365ARCHITECT_LIVE_ENV` — your environment's URL, e.g. `https://yourorg.crm11.dynamics.com`.
+- `D365ARCHITECT_LIVE_PREFIX` — your publisher's customisation prefix, e.g. `bogdan`.
+
+They use your existing sign-in (the same MSAL cache and
+`d365architect_AUTHORITY` as the CLI), so sign in to that environment first:
+
+```
+d365architect auth login --url https://yourorg.crm11.dynamics.com
+dotnet test "D365 Architect.Tests" --filter Category=Live --logger "trx;LogFileName=live.trx"
+```
+
+Each test creates uniquely named `<prefix>_lt*` tables (and a temporary
+solution) and deletes them afterwards, pass or fail. Use **your own throwaway
+environment only**, never a shared one. A table create takes 14-40 s, so
+expect a few minutes. When a change touches what they cover, attach the result
+summary (or the `live.trx` from `D365 Architect.Tests/TestResults/`) to the PR.
+
+They'll move into a GitHub workflow once there's a shared test environment and
+a non-user login (#49).
+
 ## Conventions to follow
 
 - **`Nullable`/`ImplicitUsings` are both enabled**, and
