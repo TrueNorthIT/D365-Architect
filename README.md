@@ -638,6 +638,12 @@ already atomic on its own terms (`table import`'s changeset, in
 particular), but nothing ties multiple files' writes together into one
 larger transaction.
 
+Under `--whatif` a table that doesn't exist yet is reported as one that would
+be created, and its own `*.table.yml` import, views and forms are skipped with
+a note (there's nothing live to preview them against) rather than counted as
+failures. Declining a table's create at its prompt stops the run there, like a
+create Dataverse rejects.
+
 ### `schema`
 
 Work with this tool's YAML schema.

@@ -45,7 +45,11 @@ namespace D365Architect.Commands.Solution;
 ///
 /// A table that can't be created stops the whole run there: no further
 /// creates and no later stages, with the table named — see
-/// <see cref="SolutionImportOrchestrator"/> for why. Past the create stage,
+/// <see cref="SolutionImportOrchestrator"/> for why. Declining a create at
+/// its prompt stops the run the same way. Under <c>--whatif</c> a table that
+/// would be created is reported as such, and its own table import, views
+/// and forms are skipped (there's nothing live to preview them against)
+/// rather than counted as failures. Past the create stage,
 /// one file failing (a validation error, a Dataverse rejection, a missing
 /// live counterpart) doesn't stop the rest — this keeps going through every
 /// remaining file so one bad form doesn't block importing everything else,
@@ -90,7 +94,11 @@ public sealed class ImportSolutionCommand(
         public bool AllowSchemaViolations { get; init; }
     }
 
-    protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
+    protected override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken) =>
+        RunAsync(settings, cancellationToken);
+
+    /// <summary>The command's own logic, independent of Spectre's <see cref="CommandContext"/>. Internal so tests can run it end to end.</summary>
+    internal async Task<int> RunAsync(Settings settings, CancellationToken cancellationToken)
     {
         if (!Directory.Exists(settings.Input))
         {
@@ -99,6 +107,12 @@ public sealed class ImportSolutionCommand(
         }
 
         var result = await new SolutionImportOrchestrator().RunAsync(settings.Input, new StepRunner(this, settings), cancellationToken);
+
+        if (result is { StoppedAtAssetPath: { } declinedAt, StopWasDeclined: true })
+        {
+            ErrorConsole.Print($"Stopped: creating the table in '{declinedAt}' was declined, so nothing after it was imported. {result.Succeeded} succeeded before it.");
+            return 1;
+        }
 
         if (result.StoppedAtAssetPath is { } stoppedAt)
         {
@@ -113,7 +127,7 @@ public sealed class ImportSolutionCommand(
         }
 
         AnsiConsole.MarkupLine(result.Failed == 0
-            ? $"[green]Done.[/] {result.Succeeded} asset(s) processed."
+            ? $"[green]Done.[/] {result.Succeeded} asset(s) processed{(result.Skipped > 0 ? $", {result.Skipped} skipped" : "")}."
             : $"[yellow]Done with errors.[/] {result.Succeeded} succeeded, {result.Failed} failed — see above.");
 
         return result.Failed == 0 ? 0 : 1;
@@ -125,10 +139,19 @@ public sealed class ImportSolutionCommand(
     /// the single place a stage maps to a command so the orchestrator (the
     /// ordering) and the per-asset commands (the safety) stay separate.
     /// </summary>
-    private Task<int> RunStepAsync(Settings settings, SolutionImportStage stage, string assetPath, CancellationToken cancellationToken) => stage switch
+    private async Task<SolutionImportStepOutcome> RunStepAsync(Settings settings, SolutionImportStage stage, string assetPath, CancellationToken cancellationToken)
     {
-        SolutionImportStage.CreateTable => new CreateTableCommand(tableCreateService, importRunner).RunAsync(
-            new CreateTableCommand.Settings { Input = assetPath, Yes = settings.Yes, WhatIf = settings.WhatIf, Solution = settings.Solution }, cancellationToken),
+        if (stage == SolutionImportStage.CreateTable)
+        {
+            return await new CreateTableCommand(tableCreateService, importRunner).RunWithOutcomeAsync(
+                new CreateTableCommand.Settings { Input = assetPath, Yes = settings.Yes, WhatIf = settings.WhatIf, Solution = settings.Solution }, cancellationToken);
+        }
+
+        return await RunImportStepAsync(settings, stage, assetPath, cancellationToken) == 0 ? SolutionImportStepOutcome.Succeeded : SolutionImportStepOutcome.Failed;
+    }
+
+    private Task<int> RunImportStepAsync(Settings settings, SolutionImportStage stage, string assetPath, CancellationToken cancellationToken) => stage switch
+    {
         SolutionImportStage.ImportChoices => new ImportChoiceCommand(globalChoiceImportService, importRunner).RunAsync(
             new ImportChoiceCommand.Settings { Input = assetPath, Yes = settings.Yes, WhatIf = settings.WhatIf, Solution = settings.Solution }, cancellationToken),
         SolutionImportStage.ImportTable => new ImportTableCommand(tableImportService, importRunner).RunAsync(
@@ -143,12 +166,20 @@ public sealed class ImportSolutionCommand(
     /// <summary>The production <see cref="ISolutionImportStepRunner"/>: <see cref="RunStepAsync"/> behind <see cref="TryRunAsync"/>, plus the blank line between assets this command always printed. Internal so tests can check the wiring.</summary>
     internal sealed class StepRunner(ImportSolutionCommand command, Settings settings) : ISolutionImportStepRunner
     {
-        public async Task<bool> RunAsync(SolutionImportStage stage, string assetPath, CancellationToken cancellationToken)
+        public async Task<SolutionImportStepOutcome> RunAsync(SolutionImportStage stage, string assetPath, CancellationToken cancellationToken)
         {
-            var succeeded = await TryRunAsync(assetPath, () => command.RunStepAsync(settings, stage, assetPath, cancellationToken));
+            var outcome = await TryRunAsync(assetPath, () => command.RunStepAsync(settings, stage, assetPath, cancellationToken));
+            if (outcome == SolutionImportStepOutcome.WouldCreate)
+            {
+                AnsiConsole.MarkupLine($"[grey]--whatif: '{Path.GetFileName(Path.GetDirectoryName(assetPath))?.EscapeMarkup()}' would be created; its columns, views and forms are skipped below.[/]");
+            }
+
             AnsiConsole.WriteLine();
-            return succeeded;
+            return outcome;
         }
+
+        public void ReportSkipped(SolutionImportStage stage, string assetPath, string tableLogicalName) =>
+            AnsiConsole.MarkupLine($"[grey]'{assetPath.EscapeMarkup()}' skipped: '{tableLogicalName.EscapeMarkup()}' doesn't exist yet and would be created first.[/]");
     }
 
     /// <summary>
@@ -161,16 +192,16 @@ public sealed class ImportSolutionCommand(
     /// <see cref="InvalidDataException"/>) — anything else used to propagate
     /// straight out of this whole command, aborting every remaining file.
     /// </summary>
-    private static async Task<bool> TryRunAsync(string assetPath, Func<Task<int>> run)
+    private static async Task<SolutionImportStepOutcome> TryRunAsync(string assetPath, Func<Task<SolutionImportStepOutcome>> run)
     {
         try
         {
-            return await run() == 0;
+            return await run();
         }
         catch (Exception ex)
         {
             ErrorConsole.Print($"'{assetPath}' failed: {ex.Message}");
-            return false;
+            return SolutionImportStepOutcome.Failed;
         }
     }
 }

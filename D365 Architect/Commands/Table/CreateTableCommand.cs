@@ -43,9 +43,21 @@ public sealed class CreateTableCommand(ITableCreateService tableCreateService, I
     protected override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken) =>
         RunAsync(settings, cancellationToken);
 
-    /// <summary>The command's own logic, independent of Spectre's <see cref="CommandContext"/> - what `solution import` calls per <c>*.table.yml</c>.</summary>
-    public async Task<int> RunAsync(Settings settings, CancellationToken cancellationToken)
+    /// <summary>The command's own logic, independent of Spectre's <see cref="CommandContext"/>. A declined prompt exits 0, like every import.</summary>
+    public async Task<int> RunAsync(Settings settings, CancellationToken cancellationToken) =>
+        await RunWithOutcomeAsync(settings, cancellationToken) == SolutionImportStepOutcome.Failed ? 1 : 0;
+
+    /// <summary>
+    /// As <see cref="RunAsync"/>, but says what happened to the table - what
+    /// `solution import` calls per <c>*.table.yml</c>, since an exit code of 0
+    /// can't tell "created" or "already exists" from "--whatif" or "declined",
+    /// and the later stages depend on which.
+    /// </summary>
+    public async Task<SolutionImportStepOutcome> RunWithOutcomeAsync(Settings settings, CancellationToken cancellationToken)
     {
+        TableCreatePreview? builtPreview = null;
+        var created = false;
+
         var spec = new ImportFlowSpec<Settings, EntityDefinition, TableCreatePreview>
         {
             ReadInputAsync = (s, ct) => YamlFileReader.TryReadAsync(s.Input, "table", EntityYamlDeserializer.FromYaml, ct),
@@ -53,6 +65,8 @@ public sealed class CreateTableCommand(ITableCreateService tableCreateService, I
             SubjectName = entity => entity.LogicalName,
 
             PreviewStatusMessage = entity => $"Checking whether '{entity.LogicalName}' exists...",
+
+            OnPreviewBuilt = p => builtPreview = p,
 
             SkipBeforePrinting = preview => preview.AlreadyExists
                 ? $"{preview.EntityLogicalName.EscapeMarkup()} already exists, nothing to create."
@@ -72,7 +86,11 @@ public sealed class CreateTableCommand(ITableCreateService tableCreateService, I
 
             ApplyStatusMessage = "Creating...",
 
-            ApplyAsync = (auth, preview, ct) => tableCreateService.ApplyAsync(auth.EnvironmentUrl, auth.AccessToken, preview, settings.Solution, ct),
+            ApplyAsync = async (auth, preview, ct) =>
+            {
+                await tableCreateService.ApplyAsync(auth.EnvironmentUrl, auth.AccessToken, preview, settings.Solution, ct);
+                created = true;
+            },
 
             PrintSuccess = (entity, preview) =>
             {
@@ -92,6 +110,17 @@ public sealed class CreateTableCommand(ITableCreateService tableCreateService, I
             },
         };
 
-        return await importRunner.RunAsync(settings, tableCreateService, spec, cancellationToken);
+        if (await importRunner.RunAsync(settings, tableCreateService, spec, cancellationToken) != 0)
+        {
+            return SolutionImportStepOutcome.Failed;
+        }
+
+        // Exit 0 without a write and without "already exists" leaves only the two ImportRunner exits that skip ApplyAsync.
+        if (created || builtPreview is null || builtPreview.AlreadyExists)
+        {
+            return SolutionImportStepOutcome.Succeeded;
+        }
+
+        return settings.WhatIf ? SolutionImportStepOutcome.WouldCreate : SolutionImportStepOutcome.Declined;
     }
 }

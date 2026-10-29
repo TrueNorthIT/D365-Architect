@@ -57,12 +57,21 @@ public sealed class SolutionImportOrchestratorTests : IDisposable
         /// <summary>Which steps fail; everything else succeeds.</summary>
         public Func<SolutionImportStage, string, bool> Fails { get; set; } = (_, _) => false;
 
-        public Task<bool> RunAsync(SolutionImportStage stage, string assetPath, CancellationToken cancellationToken)
+        /// <summary>The outcome of a step that doesn't fail - e.g. a create that would happen under --whatif, or was declined.</summary>
+        public Func<SolutionImportStage, string, SolutionImportStepOutcome> Outcome { get; set; } = (_, _) => SolutionImportStepOutcome.Succeeded;
+
+        /// <summary>Steps reported as skipped, as "Stage:FileName (table)".</summary>
+        public List<string> Skipped { get; } = [];
+
+        public Task<SolutionImportStepOutcome> RunAsync(SolutionImportStage stage, string assetPath, CancellationToken cancellationToken)
         {
             var fileName = Path.GetFileName(assetPath);
             Steps.Add((stage, fileName));
-            return Task.FromResult(!Fails(stage, fileName));
+            return Task.FromResult(Fails(stage, fileName) ? SolutionImportStepOutcome.Failed : Outcome(stage, fileName));
         }
+
+        public void ReportSkipped(SolutionImportStage stage, string assetPath, string tableLogicalName) =>
+            Skipped.Add($"{stage}:{Path.GetFileName(assetPath)} ({tableLogicalName})");
     }
 
     private Task<SolutionImportResult> Run(RecordingRunner runner) => new SolutionImportOrchestrator().RunAsync(_root, runner, CancellationToken.None);
@@ -169,7 +178,7 @@ public sealed class SolutionImportOrchestratorTests : IDisposable
     {
         public int LaterStageCalls { get; private set; }
 
-        public Task<bool> RunAsync(SolutionImportStage stage, string assetPath, CancellationToken cancellationToken)
+        public Task<SolutionImportStepOutcome> RunAsync(SolutionImportStage stage, string assetPath, CancellationToken cancellationToken)
         {
             if (stage == SolutionImportStage.CreateTable)
             {
@@ -177,8 +186,10 @@ public sealed class SolutionImportOrchestratorTests : IDisposable
             }
 
             LaterStageCalls++;
-            return Task.FromResult(true);
+            return Task.FromResult(SolutionImportStepOutcome.Succeeded);
         }
+
+        public void ReportSkipped(SolutionImportStage stage, string assetPath, string tableLogicalName) => LaterStageCalls++;
     }
 
     // As today: a failing view or form doesn't stop the rest of the solution (only a failed table create does).
@@ -193,6 +204,60 @@ public sealed class SolutionImportOrchestratorTests : IDisposable
         Expect.Equal(1, result.Failed, "REQ-10: only the failed view should count as a failure.");
         Expect.Contains("ImportForm:Main.form.yml", string.Join(" | ", runner.Steps.Select(Describe)), "REQ-10: the form after the failed view should still be imported, as today.");
         Expect.Contains("ImportTable:tn_task.table.yml", string.Join(" | ", runner.Steps.Select(Describe)), "REQ-10: the next table folder should still be imported, as today.");
+    }
+
+    // Declining a create at its prompt leaves the table missing, so it stops the run exactly like a failed create - but says it was declined.
+    [Fact]
+    [Trait("Requirement", "REQ-12")]
+    public async Task RunAsync_TableCreateDeclined_StopsTheRunAtThatTableAsDeclined()
+    {
+        var runner = new RecordingRunner
+        {
+            Outcome = (stage, file) => stage == SolutionImportStage.CreateTable && file == "tn_project.table.yml" ? SolutionImportStepOutcome.Declined : SolutionImportStepOutcome.Succeeded,
+        };
+
+        var result = await Run(runner);
+
+        Expect.Sequence(["CreateTable:tn_project.table.yml"], runner.Steps.Select(Describe).ToList(), "A declined create should stop the run: no further creates and no later stages.");
+        Expect.True(result.StoppedAtAssetPath?.EndsWith("tn_project.table.yml", StringComparison.Ordinal) == true, $"The result should name the declined table's file. Actual: <{result.StoppedAtAssetPath}>.");
+        Expect.True(result.StopWasDeclined, "The result should say the stop was a decline, not a Dataverse failure.");
+        Expect.Equal(1, result.Failed, "A declined create counts as the create not happening.");
+    }
+
+    // --whatif: tn_project would be created, so its own table import, view and form have nothing live to preview against - skipped, not failed.
+    // tn_task already exists and choices.yml belongs to no table: both preview as before.
+    [Fact]
+    [Trait("Requirement", "REQ-10")]
+    public async Task RunAsync_WhatIfTableWouldBeCreated_SkipsItsFolderAndPreviewsTheRest()
+    {
+        var runner = new RecordingRunner
+        {
+            Outcome = (stage, file) => stage == SolutionImportStage.CreateTable && file == "tn_project.table.yml" ? SolutionImportStepOutcome.WouldCreate : SolutionImportStepOutcome.Succeeded,
+        };
+
+        var result = await Run(runner);
+
+        Expect.Sequence(
+            [
+                "CreateTable:tn_project.table.yml",
+                "CreateTable:tn_task.table.yml",
+                "ImportChoices:choices.yml",
+                "ImportTable:tn_task.table.yml",
+                "ImportView:All tasks.view.yml",
+            ],
+            runner.Steps.Select(Describe).ToList(),
+            "Only tn_project's later steps should be skipped; everything else still previews.");
+        Expect.Sequence(
+            [
+                "ImportTable:tn_project.table.yml (tn_project)",
+                "ImportView:Active projects.view.yml (tn_project)",
+                "ImportForm:Main.form.yml (tn_project)",
+            ],
+            runner.Skipped,
+            "Each of tn_project's later steps should be reported as skipped, naming the table.");
+        Expect.Equal(0, result.Failed, "Skipped steps are not failures.");
+        Expect.Equal(3, result.Skipped, "The result should count the skipped steps.");
+        Expect.Equal(null, result.StoppedAtAssetPath, "A would-be-created table doesn't stop the run.");
     }
 
     // REQ-11: "No stage rewrites local YAML files. Each `*.table.yml` is byte-identical before and after `solution import`."
