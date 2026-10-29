@@ -394,6 +394,17 @@ public interface IDataverseClient
     Task UpdateStateValueAsync(Uri environmentUrl, string accessToken, JsonObject body, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Sets the next number an auto-number column's sequential segment will
+    /// use, via the unbound <c>SetAutoNumberSeed</c> action (<c>EntityName</c>,
+    /// <c>AttributeName</c>, <c>Value</c>) - Microsoft Learn, "Create
+    /// autonumber columns", "Set a seed value":
+    /// https://learn.microsoft.com/power-apps/developer/data-platform/create-auto-number-attributes
+    /// Per-environment and not carried by a solution; calling it again resets
+    /// the counter. STUB: not implemented yet (tests only).
+    /// </summary>
+    Task SetAutoNumberSeedAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string attributeLogicalName, int value, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Looks up a global choice (<c>GlobalOptionSetDefinitions</c>) by its
     /// unique <c>Name</c>, including its own options. Confirmed live, not
     /// guessed, after two failed attempts: <c>GlobalOptionSetDefinitions</c>

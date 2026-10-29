@@ -171,6 +171,14 @@
               "ReferentialRestrictDelete",
               "Parental"
             ]
+          },
+          "autoNumberFormat": {
+            "description": "String only: makes this an auto-number column, e.g. MSUM{SEQNUM:6} (Microsoft Learn, \"Create autonumber columns\" - https://learn.microsoft.com/power-apps/developer/data-platform/create-auto-number-attributes). Absent for an ordinary column. STUB: not read, written or compared yet.",
+            "type": "string"
+          },
+          "autoNumberSeed": {
+            "description": "Optional, import-only: the next number the new auto-number column's {SEQNUM} segment will use. Applied only in the same run that creates the column and never written by export (it is not column metadata; it is per-environment state set via SetAutoNumberSeed). Requires AutoNumberFormat. STUB: not used yet.",
+            "type": "integer"
           }
         },
         "additionalProperties": false,

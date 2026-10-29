@@ -30,6 +30,8 @@ public sealed class AttributeDefinitionBuilder(string type, string? schemaName =
     public string? FalseOptionLabel { get; set; }
     public string? RelationshipSchemaName { get; set; }
     public string? RelationshipBehavior { get; set; }
+    public string? AutoNumberFormat { get; set; }
+    public int? AutoNumberSeed { get; set; }
 
     public AttributeDefinition Build() => new()
     {
@@ -53,6 +55,8 @@ public sealed class AttributeDefinitionBuilder(string type, string? schemaName =
         FalseOptionLabel = FalseOptionLabel,
         RelationshipSchemaName = RelationshipSchemaName,
         RelationshipBehavior = RelationshipBehavior,
+        AutoNumberFormat = AutoNumberFormat,
+        AutoNumberSeed = AutoNumberSeed,
     };
 
     public static AttributeDefinition Create(string type, string? schemaName = "tn_Test", Action<AttributeDefinitionBuilder>? configure = null)

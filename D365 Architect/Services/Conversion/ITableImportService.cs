@@ -146,7 +146,13 @@ public enum AttributeImportAction
 /// option-bearing type (Boolean/Picklist/MultiSelectPicklist/State/Status);
 /// null for every other action.
 /// </param>
-public sealed record AttributeImportPlan(string LogicalName, AttributeImportAction Action, string? Reason, JsonObject? RequestBody, IReadOnlyList<string>? Warnings = null, IReadOnlyList<OptionChangePlan>? OptionChanges = null);
+/// <param name="AutoNumberSeed">
+/// Set only on an <see cref="AttributeImportAction.Create"/> whose column
+/// asked for an <c>autoNumberSeed</c>: the value that will be sent via
+/// <c>SetAutoNumberSeed</c> straight after the create. Null for every other
+/// plan. STUB: never populated yet.
+/// </param>
+public sealed record AttributeImportPlan(string LogicalName, AttributeImportAction Action, string? Reason, JsonObject? RequestBody, IReadOnlyList<string>? Warnings = null, IReadOnlyList<OptionChangePlan>? OptionChanges = null, int? AutoNumberSeed = null);
 
 /// <summary>What kind of option-value action <see cref="OptionChangePlan"/> carries — see <see cref="AttributeMetadataJsonBuilder.BuildOptionChangePlans"/>.</summary>
 public enum OptionChangeAction

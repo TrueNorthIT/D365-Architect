@@ -53,6 +53,9 @@ public abstract record DataverseWrite
     /// <summary>See <see cref="IDataverseClient.UpdateStateValueAsync"/>.</summary>
     public sealed record UpdateStateValue(JsonObject Body) : DataverseWrite;
 
+    /// <summary>See <see cref="IDataverseClient.SetAutoNumberSeedAsync"/>. Always follows the <see cref="CreateAttribute"/> of the same column in a plan's write order.</summary>
+    public sealed record SetAutoNumberSeed(string EntityLogicalName, string AttributeLogicalName, int Value) : DataverseWrite;
+
     /// <summary>A short, human-readable label for error messages when a changeset is rolled back — e.g. "create column 'tn_foo'".</summary>
     public string Describe() => this switch
     {

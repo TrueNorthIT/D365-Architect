@@ -544,6 +544,10 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
     public async Task UpdateStateValueAsync(Uri environmentUrl, string accessToken, JsonObject body, CancellationToken cancellationToken) =>
         await SendWriteAsync(environmentUrl, accessToken, new DataverseWrite.UpdateStateValue(body), cancellationToken);
 
+    // STUB: not implemented yet (tests only) - see IDataverseClient.SetAutoNumberSeedAsync.
+    public Task SetAutoNumberSeedAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string attributeLogicalName, int value, CancellationToken cancellationToken) =>
+        throw new NotImplementedException();
+
     /// <summary>
     /// Shared by every simple "POST an action, ignore the response body"
     /// call above that isn't (yet) a <see cref="DataverseWrite"/> case — same

@@ -55,6 +55,14 @@ public sealed class FakeDataverseClient : IDataverseClient
     public List<(Guid MetadataId, JsonObject Body)> UpdateGlobalOptionSetCalls { get; } = [];
     public List<(Guid FormId, string FormXml)> UpdateSystemFormXmlCalls { get; } = [];
     public List<string> PublishEntityCalls { get; } = [];
+    public List<(string EntityLogicalName, string AttributeLogicalName, int Value)> SetAutoNumberSeedCalls { get; } = [];
+
+    /// <summary>
+    /// Column creates and seed writes in the order they were issued (e.g.
+    /// <c>create:tn_Ref</c>, <c>seed:tn_ref=1</c>), across both the
+    /// individual-call and transaction paths - what an ordering test reads.
+    /// </summary>
+    public List<string> ColumnWriteOrder { get; } = [];
 
     public Task<WhoAmIResult> WhoAmIAsync(Uri environmentUrl, string accessToken, CancellationToken cancellationToken) => throw new NotImplementedException();
     public Task<string?> TryGetUserFullNameAsync(Uri environmentUrl, string accessToken, Guid userId, CancellationToken cancellationToken) => throw new NotImplementedException();
@@ -174,6 +182,14 @@ public sealed class FakeDataverseClient : IDataverseClient
     public Task CreateAttributeAsync(Uri environmentUrl, string accessToken, string entityLogicalName, JsonObject attributeMetadata, string? solutionUniqueName, CancellationToken cancellationToken)
     {
         CreateAttributeCalls.Add((entityLogicalName, attributeMetadata, solutionUniqueName));
+        ColumnWriteOrder.Add($"create:{(string?)attributeMetadata["SchemaName"]}");
+        return Task.CompletedTask;
+    }
+
+    public Task SetAutoNumberSeedAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string attributeLogicalName, int value, CancellationToken cancellationToken)
+    {
+        SetAutoNumberSeedCalls.Add((entityLogicalName, attributeLogicalName, value));
+        ColumnWriteOrder.Add($"seed:{attributeLogicalName}={value}");
         return Task.CompletedTask;
     }
 
@@ -278,6 +294,12 @@ public sealed class FakeDataverseClient : IDataverseClient
 
                 case DataverseWrite.CreateAttribute w:
                     CreateAttributeCalls.Add((w.EntityLogicalName, w.Metadata, w.SolutionUniqueName));
+                    ColumnWriteOrder.Add($"create:{(string?)w.Metadata["SchemaName"]}");
+                    break;
+
+                case DataverseWrite.SetAutoNumberSeed w:
+                    SetAutoNumberSeedCalls.Add((w.EntityLogicalName, w.AttributeLogicalName, w.Value));
+                    ColumnWriteOrder.Add($"seed:{w.AttributeLogicalName}={w.Value}");
                     break;
 
                 case DataverseWrite.UpdateAttribute w:

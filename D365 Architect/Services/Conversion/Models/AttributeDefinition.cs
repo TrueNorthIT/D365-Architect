@@ -170,4 +170,23 @@ public sealed class AttributeDefinition
     [YamlMember(Order = 22)]
     [Schema.SchemaEnum(typeof(Dataverse.RelationshipBehaviors), nameof(Dataverse.RelationshipBehaviors.Names))]
     public string? RelationshipBehavior { get; init; }
+
+    /// <summary>
+    /// String only: makes this an auto-number column, e.g. <c>MSUM{SEQNUM:6}</c>
+    /// (Microsoft Learn, "Create autonumber columns" -
+    /// https://learn.microsoft.com/power-apps/developer/data-platform/create-auto-number-attributes).
+    /// Absent for an ordinary column. STUB: not read, written or compared yet.
+    /// </summary>
+    [YamlMember(Order = 23)]
+    public string? AutoNumberFormat { get; init; }
+
+    /// <summary>
+    /// Optional, import-only: the next number the new auto-number column's
+    /// <c>{SEQNUM}</c> segment will use. Applied only in the same run that
+    /// creates the column and never written by export (it is not column
+    /// metadata; it is per-environment state set via <c>SetAutoNumberSeed</c>).
+    /// Requires <see cref="AutoNumberFormat"/>. STUB: not used yet.
+    /// </summary>
+    [YamlMember(Order = 24)]
+    public int? AutoNumberSeed { get; init; }
 }
