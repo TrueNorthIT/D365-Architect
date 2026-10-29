@@ -41,11 +41,11 @@ namespace D365Architect.Commands.Form;
 /// dashboard, same as `build-xml`. `--solution` adds whatever is created or
 /// changed to that solution.
 ///
-/// Publishes the form's owning table immediately after writing it — a
-/// separate <see cref="IFormImportService.PublishAsync"/> call this class
-/// itself makes right after <c>ApplyAsync</c> (see
-/// <see cref="Services.Dataverse.IDataverseClient.PublishEntityAsync"/>) —
-/// so the change is visible to end users without a separate manual publish
+/// Publishes the form's owning table immediately after writing it (unless
+/// <c>--no-publish</c>) — a separate <see cref="IFormImportService.PublishAsync"/>
+/// call (see <see cref="Services.Dataverse.IDataverseClient.PublishEntityAsync"/>)
+/// that <see cref="ImportRunner"/> makes right after <c>ApplyAsync</c> — so
+/// the change is visible to end users without a separate manual publish
 /// step.
 ///
 /// What this doesn't do yet: detect that the live form changed since this
@@ -143,20 +143,13 @@ public sealed class ImportFormCommand(IFormImportService formImportService, Impo
                 return $"{blockingViolations.Count} schema violation(s) above aren't a confirmed-safe pattern — two that looked similarly harmless have already failed live with a raw Dataverse 400 ('parameters' rejecting an invalid child element; a control's missing ClassId), so this is blocked by default rather than left to a human to eyeball correctly every time. Pass [bold]--allow-schema-violations[/] to proceed anyway once you've checked these yourself.";
             },
 
-            ApplyStatusMessage = "Importing and publishing...",
+            ApplyStatusMessage = "Importing...",
 
-            ApplyAsync = async (auth, preview, ct) =>
-            {
-                // PublishAsync is its own call, separate from ApplyAsync's
-                // shared write-only shape — see IFormImportService's own
-                // doc comment for why publishing doesn't fit
-                // IImportService<TInput,TPreview> the way table/view import
-                // (which never publish) do.
-                await formImportService.ApplyAsync(auth.EnvironmentUrl, auth.AccessToken, preview, settings.Solution, ct);
-                await formImportService.PublishAsync(auth.EnvironmentUrl, auth.AccessToken, preview, ct);
-            },
+            ApplyAsync = (auth, preview, ct) => formImportService.ApplyAsync(auth.EnvironmentUrl, auth.AccessToken, preview, settings.Solution, ct),
 
-            PrintSuccess = (form, preview) => AnsiConsole.MarkupLine($"[green]Imported and published.[/] '{form.Name.EscapeMarkup()}' {(preview.IsCreate ? "created" : "updated")} in Dataverse."),
+            PrintSuccess = (form, preview) => AnsiConsole.MarkupLine($"[green]Imported.[/] '{form.Name.EscapeMarkup()}' {(preview.IsCreate ? "created" : "updated")} in Dataverse."),
+
+            PublishAsync = (auth, preview, ct) => formImportService.PublishAsync(auth.EnvironmentUrl, auth.AccessToken, preview, ct),
 
             FormatDomainException = (ex, form) => ex switch
             {

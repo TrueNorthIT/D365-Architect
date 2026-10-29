@@ -45,7 +45,7 @@ public interface IGlobalChoiceImportService : IImportService<IReadOnlyList<Globa
     /// </summary>
     Task ApplyAsync(Uri environmentUrl, string accessToken, GlobalChoicesImportPreview preview, string? solutionUniqueName, CancellationToken cancellationToken);
 
-    /// <summary>Publishes every choice in <paramref name="preview"/>, in file order, in one <see cref="Dataverse.IDataverseClient.PublishGlobalOptionSetsAsync"/> call (<c>choice import --publish</c>, REQ-38).</summary>
+    /// <summary>Publishes every choice in <paramref name="preview"/>, in file order, in one <see cref="Dataverse.IDataverseClient.PublishGlobalOptionSetsAsync"/> call (what <c>choice import</c> does once it has applied, unless <c>--no-publish</c>).</summary>
     Task PublishAsync(Uri environmentUrl, string accessToken, GlobalChoicesImportPreview preview, CancellationToken cancellationToken);
 }
 
@@ -89,9 +89,9 @@ public sealed record GlobalChoicesImportPreview(string ExistingYaml, string NewY
     /// <summary>True when there's at least one actual write to make — a Create or Update plan.</summary>
     public bool HasChanges => ChangeCount > 0;
 
-    /// <summary>How many choices have a write to make (Create or Update) — what <c>choice import --publish</c> reports as unapplied (REQ-36).</summary>
+    /// <summary>How many choices have a write to make (Create or Update).</summary>
     public int ChangeCount => ChoicePlans.Count(p => p.Action is GlobalChoiceImportAction.Create or GlobalChoiceImportAction.Update);
 
-    /// <summary>Every choice named in the input, in file order, each once (a duplicated name is already an Invalid plan) — what <c>choice import --publish</c> publishes.</summary>
+    /// <summary>Every choice named in the input, in file order, each once (a duplicated name is already an Invalid plan) — what <c>choice import</c> publishes.</summary>
     public IReadOnlyList<string> Names => ChoicePlans.Select(p => p.Name).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 }

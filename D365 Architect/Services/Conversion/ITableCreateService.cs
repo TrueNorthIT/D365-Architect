@@ -32,11 +32,12 @@ public interface ITableCreateService : IImportService<EntityDefinition, TableCre
     /// in ONE transaction: a single <see cref="Dataverse.IDataverseClient.ExecuteTransactionAsync"/> call whose writes are
     /// <see cref="Dataverse.DataverseWrite.CreateEntity"/>, in the order given, each carrying <paramref name="solutionUniqueName"/>. If any
     /// create fails none is kept; the <see cref="Dataverse.TableCreateFailedException"/> names the table whose request Dataverse reported
-    /// as failed (<see cref="Dataverse.DataverseTransactionFailedException.FailedContentId"/>, 1-based among the requests actually sent).
+    /// as failed (<see cref="Dataverse.DataverseTransactionFailedException.FailedContentId"/>, 1-based among the requests actually sent), or the
+    /// only table sent; when neither tells which, the client's own exception is rethrown as it came.
     /// </summary>
     Task ApplyAllAsync(Uri environmentUrl, string accessToken, IReadOnlyList<TableCreatePreview> previews, string? solutionUniqueName, CancellationToken cancellationToken);
 
-    /// <summary>Publishes <paramref name="preview"/>'s table (<c>table create --publish</c>, REQ-37) — the same <see cref="Dataverse.IDataverseClient.PublishEntityAsync"/> call form import makes.</summary>
+    /// <summary>Publishes <paramref name="preview"/>'s table (what <c>table create</c> does once it has created it, unless <c>--no-publish</c>) — the same <see cref="Dataverse.IDataverseClient.PublishEntityAsync"/> call form import makes.</summary>
     Task PublishAsync(Uri environmentUrl, string accessToken, TableCreatePreview preview, CancellationToken cancellationToken);
 }
 

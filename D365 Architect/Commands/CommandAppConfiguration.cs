@@ -14,14 +14,15 @@ namespace D365Architect.Commands;
 /// The command tree and parser settings of the app, lifted out of <c>Program.cs</c> so tests can drive the real
 /// thing (the registrations, and the parser behaviour such as an unknown option being an error) through a
 /// <see cref="CommandApp"/> of their own. <c>Program.cs</c> calls <see cref="Configure"/>.
-/// STUB: the registrations are exactly what <c>Program.cs</c> had; <c>config.Settings.StrictParsing</c> is NOT set yet,
-/// so Spectre lets an unrecognised option through instead of failing the parse (REQ-5 needs it to fail).
+/// Parsing is strict: an option a command doesn't declare (a typo, or the removed <c>--publish</c>) fails
+/// the parse with an error rather than being silently ignored.
 /// </summary>
 public static class CommandAppConfiguration
 {
     public static void Configure(IConfigurator config)
     {
         config.SetApplicationName("d365architect");
+        config.Settings.StrictParsing = true;
 
         AuthCommands.Configure(config);
         WhoAmICommand.Configure(config);

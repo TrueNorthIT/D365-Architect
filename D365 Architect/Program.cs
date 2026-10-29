@@ -22,7 +22,10 @@ var services = new ServiceCollection();
 services.AddSingleton<IEnvironmentService, EnvironmentService>();
 services.AddSingleton(AuthenticationOptions.FromEnvironment());
 services.AddSingleton<IAuthenticationService, MsalAuthenticationService>();
-services.AddHttpClient<IDataverseClient, DataverseClient>();
+// No HttpClient-wide timeout: DataverseClient times each request out itself,
+// so a $batch of table creates can be given longer than an ordinary request
+// (see DataverseClient.RequestTimeout/TransactionTimeout).
+services.AddHttpClient<IDataverseClient, DataverseClient>(client => client.Timeout = Timeout.InfiniteTimeSpan);
 
 // Entity definition reader strategies: one per source format (XML for
 // unpacked solution files, JSON for live Dataverse metadata). Each is

@@ -36,9 +36,34 @@ public sealed class TableCreateService(IDataverseClient dataverseClient) : ITabl
     public Task PublishAsync(Uri environmentUrl, string accessToken, TableCreatePreview preview, CancellationToken cancellationToken) =>
         dataverseClient.PublishEntityAsync(environmentUrl, accessToken, preview.EntityLogicalName, cancellationToken);
 
-    // STUB: does nothing yet - see ITableCreateService.ApplyAllAsync for what it must do.
-    public Task ApplyAllAsync(Uri environmentUrl, string accessToken, IReadOnlyList<TableCreatePreview> previews, string? solutionUniqueName, CancellationToken cancellationToken) =>
-        Task.CompletedTask;
+    public async Task ApplyAllAsync(Uri environmentUrl, string accessToken, IReadOnlyList<TableCreatePreview> previews, string? solutionUniqueName, CancellationToken cancellationToken)
+    {
+        var toCreate = previews.Where(p => !p.AlreadyExists && p.RequestBody is not null).ToList();
+        if (toCreate.Count == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            await dataverseClient.ExecuteTransactionAsync(environmentUrl, accessToken,
+                toCreate.Select(p => (DataverseWrite)new DataverseWrite.CreateEntity(p.RequestBody!, solutionUniqueName)).ToList(), cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Content-IDs number the requests sent (1-based), so they index toCreate, not previews. With no
+            // Content-ID only a lone table can be named; otherwise the failure is reported as it came.
+            var failed = (ex as DataverseTransactionFailedException)?.FailedContentId is { } id && id >= 1 && id <= toCreate.Count ? toCreate[id - 1]
+                : toCreate.Count == 1 ? toCreate[0]
+                : null;
+            if (failed is null)
+            {
+                throw;
+            }
+
+            throw new TableCreateFailedException(failed.EntityLogicalName, ex);
+        }
+    }
 
     public async Task ApplyAsync(Uri environmentUrl, string accessToken, TableCreatePreview preview, string? solutionUniqueName, CancellationToken cancellationToken)
     {

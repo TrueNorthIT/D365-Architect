@@ -3,7 +3,10 @@ namespace D365Architect.Services.Conversion;
 /// <summary>The kinds of step <c>solution import</c> runs, one per asset file.</summary>
 public enum SolutionImportStage
 {
-    /// <summary>Create the table in a <c>*.table.yml</c> if it isn't live yet (<c>table create</c>'s flow); a table that already exists is a success.</summary>
+    /// <summary>
+    /// No longer run: tables are created by <see cref="ISolutionImportStepRunner.CreateTablesAsync"/>, once for the whole run.
+    /// Kept only because test runners still tell it apart from the import stages.
+    /// </summary>
     CreateTable,
 
     /// <summary><c>choices.yml</c> at the folder's root (<c>choice import</c>'s flow).</summary>
@@ -28,10 +31,7 @@ public enum SolutionImportStepOutcome
     /// <summary>The step has already reported its own error.</summary>
     Failed,
 
-    /// <summary><see cref="SolutionImportStage.CreateTable"/> under <c>--whatif</c>: the table doesn't exist and would be created, so nothing else of its folder can be previewed.</summary>
-    WouldCreate,
-
-    /// <summary><see cref="SolutionImportStage.CreateTable"/>: the user said no at the confirmation prompt, so the table still doesn't exist.</summary>
+    /// <summary>The create stage only: the user said no at the confirmation prompt, so no table was created.</summary>
     Declined,
 }
 
@@ -59,7 +59,7 @@ public interface ISolutionImportStepRunner
     /// <summary>
     /// The create stage, once for the whole run: given every <c>*.table.yml</c> path (sorted, so the order is stable), lists the tables
     /// that don't exist, asks ONCE ("Create these N tables?", unless <c>--yes</c>; never under <c>--whatif</c>) and creates them all in one
-    /// transaction (<see cref="ITableCreateService.ApplyAllAsync"/>). Replaces the per-table <see cref="SolutionImportStage.CreateTable"/> steps.
+    /// transaction (<see cref="ITableCreateService.ApplyAllAsync"/>).
     /// </summary>
     Task<SolutionTableCreateResult> CreateTablesAsync(IReadOnlyList<string> tableAssetPaths, CancellationToken cancellationToken);
 
@@ -67,9 +67,10 @@ public interface ISolutionImportStepRunner
     void ReportSkipped(SolutionImportStage stage, string assetPath, string tableLogicalName);
 }
 
-/// <param name="Succeeded">Steps that succeeded (a <see cref="SolutionImportStepOutcome.WouldCreate"/> included).</param>
-/// <param name="Failed">Steps that failed (a declined create included).</param>
-/// <param name="StoppedAtAssetPath">Set when a <see cref="SolutionImportStage.CreateTable"/> step failed or was declined and the later stages were not attempted: the <c>*.table.yml</c> path whose table wasn't created. Null otherwise.</param>
+/// <param name="Succeeded">Import steps that succeeded (the create stage isn't counted).</param>
+/// <param name="Failed">Steps that failed (a failed or declined create stage included).</param>
+/// <param name="StoppedAtAssetPath">Set when the create stage failed or was declined and the later stages were not attempted: the <c>*.table.yml</c> path whose table failed,
+/// or the input folder when that can't be told (always, for a decline). Null otherwise.</param>
 /// <param name="StopWasDeclined">True when the stop at <paramref name="StoppedAtAssetPath"/> was the user declining the create, not a failure.</param>
 /// <param name="Skipped">Steps skipped because their table would be created first (<c>--whatif</c> only).</param>
 public sealed record SolutionImportResult(int Succeeded, int Failed, string? StoppedAtAssetPath, bool StopWasDeclined = false, int Skipped = 0);
@@ -77,7 +78,9 @@ public sealed record SolutionImportResult(int Succeeded, int Failed, string? Sto
 /// <summary>
 /// The stage ordering <c>solution import</c> follows, lifted out of
 /// <c>ImportSolutionCommand</c> so it can be tested without Spectre or a
-/// console: create every missing table first, then (each stage reading live
+/// console: create every missing table first (one call to
+/// <see cref="ISolutionImportStepRunner.CreateTablesAsync"/>: one question,
+/// one transaction), then (each stage reading live
 /// state afresh, because no preview is built before creation finishes) the
 /// same sequence as before - choices, then per table folder its table, views
 /// and forms. Never writes to the input folder. Behaviour pinned by
@@ -85,11 +88,12 @@ public sealed record SolutionImportResult(int Succeeded, int Failed, string? Sto
 ///
 /// Failure handling differs by stage on purpose. A failed view or form (or
 /// choice/column import) doesn't stop the rest, as always. A failed create
-/// stops the whole run at that table - no further creates and no later
-/// stages: every later stage of that table would fail against a table that
-/// isn't there, and a later table's lookups may target it, so carrying on
-/// only buries the one error that matters under a cascade of 404s. A
-/// declined create stops the run the same way, for the same reason.
+/// stage (nothing was created: the transaction rolled back) stops the whole
+/// run - no later stages: every later stage of a missing table would fail
+/// against a table that isn't there, and other tables' lookups may target
+/// it, so carrying on only buries the one error that matters under a
+/// cascade of 404s. A declined create stops the run the same way, for the
+/// same reason.
 ///
 /// Under <c>--whatif</c> nothing is created, so a table that would be is
 /// still missing when the later stages preview: every later step in that
@@ -105,23 +109,18 @@ public sealed class SolutionImportOrchestrator
         var succeeded = 0;
         var failed = 0;
         var skipped = 0;
-        var wouldCreateDirectories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var tablePath in tableDirectories.SelectMany(d => Sorted(Directory.GetFiles(d, "*.table.yml"))))
+        // The create stage: every *.table.yml at once - one question, one transaction.
+        var tablePaths = tableDirectories.SelectMany(d => Sorted(Directory.GetFiles(d, "*.table.yml"))).ToList();
+        var create = tablePaths.Count == 0
+            ? new SolutionTableCreateResult(SolutionImportStepOutcome.Succeeded, [])
+            : await TryCreateTablesAsync(runner, tablePaths, cancellationToken);
+        if (create.Outcome is SolutionImportStepOutcome.Failed or SolutionImportStepOutcome.Declined)
         {
-            var outcome = await TryRunAsync(runner, SolutionImportStage.CreateTable, tablePath, cancellationToken);
-            if (outcome is SolutionImportStepOutcome.Failed or SolutionImportStepOutcome.Declined)
-            {
-                return new SolutionImportResult(succeeded, failed + 1, StoppedAtAssetPath: tablePath, StopWasDeclined: outcome == SolutionImportStepOutcome.Declined);
-            }
-
-            if (outcome == SolutionImportStepOutcome.WouldCreate)
-            {
-                wouldCreateDirectories.Add(Path.GetDirectoryName(tablePath)!);
-            }
-
-            succeeded++;
+            return new SolutionImportResult(0, 1, StoppedAtAssetPath: create.FailedAssetPath ?? inputDirectory, StopWasDeclined: create.Outcome == SolutionImportStepOutcome.Declined);
         }
+
+        var wouldCreateDirectories = create.WouldCreateAssetPaths.Select(p => Path.GetDirectoryName(p)!).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var steps = new List<(SolutionImportStage Stage, string Path)>();
         var choicesPath = Path.Combine(inputDirectory, "choices.yml");
@@ -175,6 +174,19 @@ public sealed class SolutionImportOrchestrator
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             return SolutionImportStepOutcome.Failed;
+        }
+    }
+
+    /// <summary>The same backstop for the create stage: a throw is a failed stage (nothing known to be created), which stops the run.</summary>
+    private static async Task<SolutionTableCreateResult> TryCreateTablesAsync(ISolutionImportStepRunner runner, IReadOnlyList<string> tablePaths, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await runner.CreateTablesAsync(tablePaths, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return new SolutionTableCreateResult(SolutionImportStepOutcome.Failed, []);
         }
     }
 }

@@ -15,8 +15,10 @@ namespace D365Architect.Commands.Table;
 /// it supports. Needs sign-in.
 ///
 /// A table that already exists is reported ("... already exists, nothing
-/// to create") and left alone, exit 0 - so this is safe to run on every
-/// file in a solution, which is what `solution import` does. Before
+/// to create") and left alone, exit 0 - so it's safe to run on every
+/// file in a solution (`solution import` instead creates all of a
+/// solution's missing tables in one transaction, through
+/// <see cref="ITableCreateService.ApplyAllAsync"/>). Before
 /// creating, the file is checked by <see cref="TableCreateValidator"/>:
 /// every value the create needs (<c>schemaName</c>, <c>ownershipType</c>,
 /// <c>primaryNameAttribute</c>, both display names) must be in the file,
@@ -26,10 +28,9 @@ namespace D365Architect.Commands.Table;
 ///
 /// Follows <see cref="ImportTableCommand"/>'s shape: the shared
 /// <see cref="ImportRunner"/> flow (plan, confirm unless <c>--yes</c>,
-/// <c>--whatif</c> writes nothing), a public <see cref="RunAsync"/> so
-/// `solution import` can call it, and it never rewrites the input file.
-/// Doesn't publish, same as `table import`, except when run with
-/// <c>--publish</c>, which publishes an existing table and nothing else.
+/// <c>--whatif</c> writes nothing), and it never rewrites the input file.
+/// Publishes the table once it's created, unless <c>--no-publish</c>; a
+/// table that already exists is left alone and not published.
 /// </summary>
 public sealed class CreateTableCommand(ITableCreateService tableCreateService, ImportRunner importRunner)
     : AsyncCommand<CreateTableCommand.Settings>
@@ -45,20 +46,8 @@ public sealed class CreateTableCommand(ITableCreateService tableCreateService, I
         RunAsync(settings, cancellationToken);
 
     /// <summary>The command's own logic, independent of Spectre's <see cref="CommandContext"/>. A declined prompt exits 0, like every import.</summary>
-    public async Task<int> RunAsync(Settings settings, CancellationToken cancellationToken) =>
-        await RunWithOutcomeAsync(settings, cancellationToken) == SolutionImportStepOutcome.Failed ? 1 : 0;
-
-    /// <summary>
-    /// As <see cref="RunAsync"/>, but says what happened to the table - what
-    /// `solution import` calls per <c>*.table.yml</c>, since an exit code of 0
-    /// can't tell "created" or "already exists" from "--whatif" or "declined",
-    /// and the later stages depend on which.
-    /// </summary>
-    public async Task<SolutionImportStepOutcome> RunWithOutcomeAsync(Settings settings, CancellationToken cancellationToken)
+    public async Task<int> RunAsync(Settings settings, CancellationToken cancellationToken)
     {
-        TableCreatePreview? builtPreview = null;
-        var created = false;
-
         var spec = new ImportFlowSpec<Settings, EntityDefinition, TableCreatePreview>
         {
             ReadInputAsync = (s, ct) => YamlFileReader.TryReadAsync(s.Input, "table", EntityYamlDeserializer.FromYaml, ct),
@@ -66,8 +55,6 @@ public sealed class CreateTableCommand(ITableCreateService tableCreateService, I
             SubjectName = entity => entity.LogicalName,
 
             PreviewStatusMessage = entity => $"Checking whether '{entity.LogicalName}' exists...",
-
-            OnPreviewBuilt = p => builtPreview = p,
 
             SkipBeforePrinting = preview => preview.AlreadyExists
                 ? $"{preview.EntityLogicalName.EscapeMarkup()} already exists, nothing to create."
@@ -87,11 +74,7 @@ public sealed class CreateTableCommand(ITableCreateService tableCreateService, I
 
             ApplyStatusMessage = "Creating...",
 
-            ApplyAsync = async (auth, preview, ct) =>
-            {
-                await tableCreateService.ApplyAsync(auth.EnvironmentUrl, auth.AccessToken, preview, settings.Solution, ct);
-                created = true;
-            },
+            ApplyAsync = (auth, preview, ct) => tableCreateService.ApplyAsync(auth.EnvironmentUrl, auth.AccessToken, preview, settings.Solution, ct),
 
             PrintSuccess = (entity, preview) =>
             {
@@ -101,7 +84,10 @@ public sealed class CreateTableCommand(ITableCreateService tableCreateService, I
                     AnsiConsole.MarkupLine("[grey]Run 'table import' on the same file to add its other columns.[/]");
                 }
 
-                AnsiConsole.MarkupLine("[grey]Note: the table isn't published — re-run with --publish (or publish customizations separately) before end users see it.[/]");
+                if (settings.NoPublish)
+                {
+                    AnsiConsole.MarkupLine("[grey]Note: --no-publish — publish customizations separately (e.g. in the maker portal) before end users see it.[/]");
+                }
             },
 
             FormatDomainException = (ex, _) => ex switch
@@ -110,25 +96,9 @@ public sealed class CreateTableCommand(ITableCreateService tableCreateService, I
                 _ => null,
             },
 
-            // Only the table has to exist: its other columns are table import's job, not a reason to refuse.
-            PublishRefusal = preview => preview.AlreadyExists ? null : ImportRunner.NotYetCreated(preview.EntityLogicalName, "table create"),
-
-            PublishTargets = preview => [preview.EntityLogicalName],
-
             PublishAsync = (auth, preview, ct) => tableCreateService.PublishAsync(auth.EnvironmentUrl, auth.AccessToken, preview, ct),
         };
 
-        if (await importRunner.RunAsync(settings, tableCreateService, spec, cancellationToken) != 0)
-        {
-            return SolutionImportStepOutcome.Failed;
-        }
-
-        // Exit 0 without a write and without "already exists" leaves only the two ImportRunner exits that skip ApplyAsync.
-        if (created || builtPreview is null || builtPreview.AlreadyExists)
-        {
-            return SolutionImportStepOutcome.Succeeded;
-        }
-
-        return settings.WhatIf ? SolutionImportStepOutcome.WouldCreate : SolutionImportStepOutcome.Declined;
+        return await importRunner.RunAsync(settings, tableCreateService, spec, cancellationToken);
     }
 }

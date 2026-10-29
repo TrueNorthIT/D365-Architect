@@ -33,11 +33,10 @@ namespace D365Architect.Services.Conversion;
 /// rebuilt FormXML (see
 /// <see cref="Dataverse.IDataverseClient.UpdateSystemFormXmlAsync(Uri, string, Guid, string, CancellationToken)"/>) — it
 /// deliberately doesn't publish. Publishing the form's owning table is
-/// <see cref="PublishAsync"/>'s own, separate step instead: it doesn't fit
-/// <see cref="IImportService{TInput,TPreview}"/>'s shared shape (table/view
-/// import never publish at all), so `form import` calls it explicitly right
-/// after <c>ApplyAsync</c> rather than it happening as a hidden side effect
-/// of the write.
+/// <see cref="PublishAsync"/>'s own, separate step instead, as for every
+/// other import: `form import` calls it right after <c>ApplyAsync</c>
+/// (unless <c>--no-publish</c>) rather than it happening as a hidden side
+/// effect of the write.
 /// </summary>
 public interface IFormImportService : IImportService<FormDefinition, FormImportPreview>
 {

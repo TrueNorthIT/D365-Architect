@@ -205,7 +205,7 @@ public interface IDataverseClient
     /// Publishes the named global choices (option sets) via the
     /// <c>PublishXml</c> action, one <c>&lt;optionset&gt;</c> per unique name
     /// under <c>&lt;optionsets&gt;</c>, in the order given: what
-    /// <c>choice import --publish</c> (REQ-38) calls. Shape confirmed on
+    /// <c>choice import</c> calls after applying. Shape confirmed on
     /// Microsoft Learn, "PublishXmlRequest.ParameterXml": "Publishes an
     /// optionset using the optionset unique name"
     /// (https://learn.microsoft.com/dotnet/api/microsoft.crm.sdk.messages.publishxmlrequest.parameterxml).

@@ -69,22 +69,9 @@ public sealed class ImportFlowSpec<TSettings, TInput, TPreview>
     /// <summary>Given the caught exception and the input, non-null (the complete markup line to print, own color/formatting included) if it's one of this command's own known/expected exceptions; null lets it propagate uncaught, same as before this was centralized.</summary>
     public required Func<Exception, TInput, string?> FormatDomainException { get; init; }
 
-    // --publish (REQ-34 to REQ-39): only read when the settings are a
-    // PublishableImportSettings with Publish set, in which case the flow
-    // previews, refuses or publishes, and never applies.
-
     /// <summary>
-    /// Publish mode only: runs before the preview is built; non-null (the plain-text reason) refuses the
-    /// publish. `table import` uses it to say the table doesn't exist instead of failing to preview it.
+    /// Publishes what <see cref="ApplyAsync"/> just wrote (via the service's own <c>PublishAsync</c>) - run by
+    /// <see cref="ImportRunner"/> right after a successful apply, unless <c>--no-publish</c>. Null for a flow that never publishes.
     /// </summary>
-    public Func<AuthenticatedContext, TInput, CancellationToken, Task<string?>>? PublishPrecheckAsync { get; init; }
-
-    /// <summary>Publish mode only: non-null (the plain-text reason, see <see cref="ImportRunner.NotYetCreated"/>/<see cref="ImportRunner.UnappliedChanges"/>) refuses the publish — what the file describes isn't live yet, or the preview still has changes to write.</summary>
-    public Func<TPreview, string?> PublishRefusal { get; init; } = _ => null;
-
-    /// <summary>Publish mode only: the names shown in "would publish: ..." — tables, or global choices.</summary>
-    public Func<TPreview, IReadOnlyList<string>> PublishTargets { get; init; } = _ => [];
-
-    /// <summary>Publish mode only: publishes <see cref="PublishTargets"/> (via the service's own <c>PublishAsync</c>). Null for a command without <c>--publish</c>.</summary>
     public Func<AuthenticatedContext, TPreview, CancellationToken, Task>? PublishAsync { get; init; }
 }

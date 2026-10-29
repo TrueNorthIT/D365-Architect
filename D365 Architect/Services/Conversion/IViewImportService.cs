@@ -44,7 +44,7 @@ public interface IViewImportService : IImportService<ViewDefinition, ViewImportP
     /// </summary>
     Task ApplyAsync(Uri environmentUrl, string accessToken, ViewImportPreview preview, string? solutionUniqueName, CancellationToken cancellationToken);
 
-    /// <summary>Publishes the view's table, <see cref="ViewImportPreview.Entity"/> (<c>view import --publish</c>, REQ-37): Dataverse publishes a view as part of its table, so there's no narrower request.</summary>
+    /// <summary>Publishes the view's table, <see cref="ViewImportPreview.Entity"/> (what <c>view import</c> does once it has applied, unless <c>--no-publish</c>): Dataverse publishes a view as part of its table, so there's no narrower request.</summary>
     Task PublishAsync(Uri environmentUrl, string accessToken, ViewImportPreview preview, CancellationToken cancellationToken);
 }
 
@@ -94,7 +94,7 @@ public sealed record ViewImportPreview(
     /// </summary>
     public bool HasChanges => IsCreate || ChangeCount > 0;
 
-    /// <summary>How many of the three fields differ (see <see cref="HasChanges"/>) — what <c>view import --publish</c> reports as unapplied (REQ-36).</summary>
+    /// <summary>How many of the three fields differ (see <see cref="HasChanges"/>).</summary>
     public int ChangeCount =>
         (NewDescription is not null && NewDescription != ExistingDescription ? 1 : 0)
         + (NewFetchXml is not null && NewFetchXml != ExistingFetchXml ? 1 : 0)
