@@ -234,10 +234,11 @@ bearer token is passed in per call. Worth knowing before extending it:
   it travels on the write itself (`DataverseWrite.CreateAttribute.SolutionUniqueName`
   and friends) and `ToHttpRequest` turns it into the header on that one
   request; `CreateGlobalOptionSetAsync` isn't part of that batching system,
-  so it sets the header directly. `table import --solution`/`choice import
-  --solution` (both optional) and `solution import`'s own `--solution`
-  (required, and forwarded to every table/choice import it runs) are the
-  only callers that ever pass a non-null value — an update to a column/
+  so it sets the header directly. `table create`/`table import`/`choice
+  import`/`view import`/`form import --solution` (all optional) and
+  `solution import`'s own `--solution` (required, and forwarded to every
+  import it runs) are the only callers that ever pass a non-null value. View
+  and form import send it on updates too; an update to a column/
   choice that already exists never needs this, since it's already scoped
   (or not) however it originally was. See `DataverseClientSolutionHeaderTests`
   for the header itself on both the individual and batched paths, and
