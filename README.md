@@ -109,10 +109,98 @@ access. Your sign-in is stored on your own machine only, under
 `%LOCALAPPDATA%\d365architect`. There's no `auth logout` yet — to sign out,
 delete that folder.
 
+#### Non-interactive sign-in (pipelines)
+
+For a pipeline or any other unattended run, skip `auth login` and set
+environment variables instead: every command then signs in from them
+directly, with no browser and nothing saved to disk. Set
+`d365architect_AUTH_MODE` to choose how, and `d365architect_URL` to the
+environment's URL. While `d365architect_AUTH_MODE` is set, any saved
+`auth login` sign-in is ignored entirely; unset it (or leave it blank) to go
+back to the interactive sign-in.
+
+| `d365architect_AUTH_MODE` | Signs in as | Also needs | Optional |
+|---------------------------|-------------|------------|----------|
+| `clientsecret`     | A service principal, with a client secret | `d365architect_TENANT_ID`, `d365architect_CLIENT_ID`, `d365architect_CLIENT_SECRET` | |
+| `certificate`      | A service principal, with a certificate | `d365architect_TENANT_ID`, `d365architect_CLIENT_ID`, and exactly one of `d365architect_CERTIFICATE_PATH` (a `.pfx` or `.pem` file) or `d365architect_CERTIFICATE_THUMBPRINT` (looked up in the Windows certificate store, `CurrentUser\My` then `LocalMachine\My`) | `d365architect_CERTIFICATE_PASSWORD` (for a password-protected `.pfx`) |
+| `azurecli`         | Whoever the Azure CLI is already signed in as (respecting `AZURE_CONFIG_DIR`) | | `d365architect_TENANT_ID` |
+| `managedidentity`  | The machine's managed identity | | `d365architect_CLIENT_ID` (a user-assigned identity's client ID; without it, the system-assigned identity) |
+| `workloadidentity` | A service principal, via workload identity federation | `d365architect_TENANT_ID`, `d365architect_CLIENT_ID`, `d365architect_FEDERATED_TOKEN_FILE` (or `AZURE_FEDERATED_TOKEN_FILE`) | |
+
+`d365architect_URL` is required in every mode and must be an `https://` URL,
+e.g. `https://yourorg.crm.dynamics.com`. The mode value is case-insensitive;
+variable names are not. Values left empty count as not set.
+
+Whichever identity you use must exist in the environment as a user —
+for a service principal or managed identity, an
+[application user](https://learn.microsoft.com/power-platform/admin/manage-application-users)
+— with a security role that allows whatever the command does.
+
+A missing or invalid variable stops the command straight away with an
+error naming it; it never falls back to opening a browser, and the client
+secret and certificate password are never printed. `whoami` shows which
+mode signed in, e.g. `Non-interactive sign-in: signed in via clientsecret
+as Pipeline Deployer (application 2222...) to https://yourorg.crm.dynamics.com/`.
+
+Note that `d365architect_CLIENT_ID` means something different depending on
+whether `d365architect_AUTH_MODE` is set: without it, it overrides the app
+registration used for the interactive `auth login` (see above); with it, it's
+the service principal or managed identity to sign in as.
+
+##### Azure DevOps examples
+
+Pair this with `--yes`, so imports don't wait for a confirmation prompt
+nobody is there to answer. Both examples assume `d365architect.exe` is
+already on the agent (e.g. checked in under `tools/`, or downloaded by an
+earlier step).
+
+Reusing an Azure Resource Manager service connection through the
+`AzureCLI@2` task — the task signs the Azure CLI in as the service
+connection's service principal, and `azurecli` mode picks that up:
+
+```yaml
+steps:
+  - task: AzureCLI@2
+    displayName: Import account table
+    inputs:
+      azureSubscription: my-dataverse-service-connection
+      scriptType: pscore
+      scriptLocation: inlineScript
+      inlineScript: |
+        ./tools/d365architect.exe whoami
+        ./tools/d365architect.exe table import --input qad/account/account.table.yml --yes
+    env:
+      d365architect_AUTH_MODE: azurecli
+      d365architect_URL: https://yourorg.crm.dynamics.com
+```
+
+With a client secret held in a secret pipeline variable (here
+`DataverseClientSecret`). Secret variables aren't passed to scripts
+automatically, so map it in through `env`:
+
+```yaml
+variables:
+  - group: dataverse-deploy # holds DataverseClientSecret, marked secret
+
+steps:
+  - pwsh: |
+      ./tools/d365architect.exe whoami
+      ./tools/d365architect.exe table import --input qad/account/account.table.yml --yes
+    displayName: Import account table
+    env:
+      d365architect_AUTH_MODE: clientsecret
+      d365architect_URL: https://yourorg.crm.dynamics.com
+      d365architect_TENANT_ID: 00000000-0000-0000-0000-000000000000
+      d365architect_CLIENT_ID: 11111111-1111-1111-1111-111111111111
+      d365architect_CLIENT_SECRET: $(DataverseClientSecret)
+```
+
 ### `whoami`
 
 Shows who you're currently signed in as, and to which environment. Run
-`auth login` first if you see a "not signed in" message.
+`auth login` first if you see a "not signed in" message. For a
+[non-interactive sign-in](#non-interactive-sign-in-pipelines), it also
+shows which `d365architect_AUTH_MODE` was used.
 
 ```
 d365architect whoami

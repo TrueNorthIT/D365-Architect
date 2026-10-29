@@ -21,6 +21,7 @@ using Spectre.Console.Cli;
 var services = new ServiceCollection();
 services.AddSingleton<IEnvironmentService, EnvironmentService>();
 services.AddSingleton(AuthenticationOptions.FromEnvironment());
+services.AddSingleton<NonInteractiveAuthenticator>();
 services.AddSingleton<IAuthenticationService, MsalAuthenticationService>();
 // No HttpClient-wide timeout: DataverseClient times each request out itself,
 // so a $batch of table creates can be given longer than an ordinary request
