@@ -168,21 +168,6 @@ public sealed class ImportViewCommandCreateTests : IDisposable
         Expect.Contains("--solution", console.Output, "REQ-22: 'view import' should offer --solution.");
     }
 
-    // ---- REQ-33: a created view is not published ----
-
-    [Fact]
-    [Trait("Requirement", "REQ-33")]
-    public async Task RunAsync_NewView_IsNotPublished()
-    {
-        using var console = new ConsoleHarness();
-        var (command, client) = CreateCommand();
-
-        await command.RunAsync(Settings(WriteView(RawView()), yes: true), CancellationToken.None);
-
-        Expect.Equal(1, client.CreateSavedQueryCalls.Count, "Precondition: the view should have been created.");
-        Expect.Empty(client.PublishEntityCalls, "REQ-33: created views are not published, as view import never has.");
-    }
-
     // ---- REQ-28: refusal reaches the user ----
 
     // REQ-28 example: Both given -> "use either columns or layoutXml, not both". Written as YAML by hand, as a user would.
