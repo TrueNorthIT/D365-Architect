@@ -21,14 +21,15 @@ namespace D365Architect.Services.Conversion;
 /// moves. A field the YAML moves elsewhere is carried over as its live cell,
 /// leaving a spacer behind when a cell to its right would otherwise shift.
 /// Anything live but missing from the YAML is kept unless
-/// <c>allowRemovals</c> is set.
+/// <c>allowRemovals</c> is set — see <see cref="FormPatchVerifier"/> for how
+/// that's reported.
 /// </summary>
 public static partial class FormXmlWriter
 {
     private static string Patch(FormDefinition yaml, XElement existingForm, bool allowRemovals) =>
         new FormPatcher(yaml, existingForm, allowRemovals).Run().ToString(SaveOptions.DisableFormatting);
 
-    // ---- renders of each component, from either model ----
+    // ---- renders shared by the patcher and FormPatchVerifier ----
 
     /// <summary>The scope a patch renders every existing cell under, so its two renders get identical ids.</summary>
     private const string PatchScope = "patch";

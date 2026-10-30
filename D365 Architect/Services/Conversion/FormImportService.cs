@@ -8,7 +8,10 @@ namespace D365Architect.Services.Conversion;
 
 public sealed class FormImportService(IDataverseClient dataverseClient, FormJsonDefinitionReader formJsonDefinitionReader) : IFormImportService
 {
-    public async Task<FormImportPreview> PreviewAsync(Uri environmentUrl, string accessToken, FormDefinition form, CancellationToken cancellationToken)
+    public Task<FormImportPreview> PreviewAsync(Uri environmentUrl, string accessToken, FormDefinition form, CancellationToken cancellationToken)
+        => PreviewAsync(environmentUrl, accessToken, form, allowRemovals: false, cancellationToken);
+
+    public async Task<FormImportPreview> PreviewAsync(Uri environmentUrl, string accessToken, FormDefinition form, bool allowRemovals, CancellationToken cancellationToken)
     {
         var formType = FormJsonDefinitionReader.TryGetFormTypeCode(form.Type)
             ?? throw new InvalidDataException($"Form '{form.Name}' has type '{form.Type}', which isn't a Dataverse form type. Use one of the labels 'form export' writes (e.g. 'Main', 'Quick View Form', 'Quick Create', 'Card'), or leave 'type' out for a main form.");
@@ -44,7 +47,7 @@ public sealed class FormImportService(IDataverseClient dataverseClient, FormJson
         var identityMismatchWarning = existing.BuildIdentityMismatchWarning(form);
 
         var existingRoot = XElement.Parse(existing.FormXml);
-        var newFormXml = FormXmlWriter.Write(form, existingRoot);
+        var newFormXml = FormXmlWriter.Write(form, existingRoot, allowRemovals);
 
         // FormControlValidator first: it needs the curated FormDefinition
         // and the existing raw document directly (to tell a control that's
@@ -62,14 +65,13 @@ public sealed class FormImportService(IDataverseClient dataverseClient, FormJson
         // check) is skipped when the rebuild matches live: there is nothing
         // to write, so validating would only block a no-op import over
         // content Dataverse already holds.
-        var existingForm = DecomposeExisting(form, existing.FormXml);
-        var existingComparableFormXml = WithoutLabelsTheFileLeftOut(FormXmlWriter.Write(existingForm, existingRoot), newFormXml);
+        // The live form itself, as Dataverse returned it (only its formatting
+        // normalised, the way NewFormXml is written), so anything the patch
+        // would lose shows up in the diff — see
+        // FormImportPreview.ExistingComparableFormXml's own doc comment.
+        var existingComparableFormXml = existingRoot.ToString(SaveOptions.DisableFormatting);
+        var patchReport = FormPatchVerifier.Verify(existingRoot, XElement.Parse(newFormXml), DecomposeExisting(form, existing.FormXml), form);
 
-        // Rebuilt through the exact same writer, base document, and
-        // deterministic id rules as newFormXml — see
-        // FormImportPreview.ExistingComparableFormXml's own doc comment for
-        // why comparing this canonicalized rebuild, rather than
-        // existing.FormXml itself, is what makes the diff meaningful.
         IReadOnlyList<FormXmlValidationMessage> violations = existingComparableFormXml == newFormXml
             ? FormControlValidator.Validate(form, existingRoot).ToList()
             : FormControlValidator.Validate(form, existingRoot)
@@ -82,6 +84,7 @@ public sealed class FormImportService(IDataverseClient dataverseClient, FormJson
         {
             Name = form.Name,
             FormType = formType,
+            PatchReport = patchReport,
         };
     }
 
@@ -140,46 +143,9 @@ public sealed class FormImportService(IDataverseClient dataverseClient, FormJson
         => dataverseClient.PublishEntityAsync(environmentUrl, accessToken, preview.Entity, cancellationToken);
 
     /// <summary>
-    /// <paramref name="existingComparableFormXml"/> without the cell
-    /// <c>&lt;labels&gt;</c> of any cell that has none in
-    /// <paramref name="newFormXml"/>. Dataverse fills a bound control's cell
-    /// label from the column's display name when it saves a form (confirmed
-    /// live: a control written without <c>label</c> reads back with
-    /// <c>&lt;labels&gt;&lt;label description="Invoice Centre Name" languagecode="1033" /&gt;&lt;/labels&gt;</c>),
-    /// so a file that leaves <c>label</c> out would otherwise diff — and
-    /// re-PATCH and republish — on every run. Cells pair up by id, which is
-    /// deterministic on both sides (scope + control id). A label the file
-    /// does give is still compared, so a real label change still shows; an
-    /// exported file carries every live label, so nothing is dropped for it.
-    /// </summary>
-    private static string WithoutLabelsTheFileLeftOut(string existingComparableFormXml, string newFormXml)
-    {
-        var unlabelledCellIds = XElement.Parse(newFormXml).Descendants("cell")
-            .Where(cell => cell.Element("labels") is null)
-            .Select(cell => (string?)cell.Attribute("id"))
-            .ToHashSet();
-
-        var existing = XElement.Parse(existingComparableFormXml);
-        var autoLabels = existing.Descendants("cell")
-            .Where(cell => unlabelledCellIds.Contains((string?)cell.Attribute("id")))
-            .Select(cell => cell.Element("labels"))
-            .OfType<XElement>()
-            .ToList();
-
-        if (autoLabels.Count == 0)
-        {
-            return existingComparableFormXml;
-        }
-
-        autoLabels.ForEach(labels => labels.Remove());
-        return existing.ToString(SaveOptions.DisableFormatting);
-    }
-
-    /// <summary>
     /// Decomposes the form's current live FormXML the same way `form
-    /// export` itself would, so it can be rebuilt back through
-    /// <see cref="FormXmlWriter"/> for a fair comparison — see
-    /// <see cref="FormImportPreview.ExistingComparableFormXml"/>. Only
+    /// export` itself would, so <see cref="FormPatchVerifier"/> can tell
+    /// what the YAML changed from what it left alone. Only
     /// <paramref name="form"/>'s own <c>Name</c>/<c>Entity</c> are needed
     /// alongside the live <paramref name="existingFormXml"/> to decompose
     /// it; its other, record-level fields (<c>Description</c>, <c>Type</c>,
