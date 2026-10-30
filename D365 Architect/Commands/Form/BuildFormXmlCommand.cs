@@ -50,6 +50,10 @@ public sealed class BuildFormXmlCommand(IAuthenticationService authenticationSer
         [CommandOption("-o|--output <PATH>")]
         [Description("Path to write the rebuilt FormXML to. Defaults to <input>.xml.")]
         public string? Output { get; init; }
+
+        [CommandOption("--base <PATH>")]
+        [Description("Patch this local FormXML file (a solution export or a bare form) instead of the live form. No sign-in.")]
+        public string? Base { get; init; }
     }
 
     protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
@@ -58,6 +62,11 @@ public sealed class BuildFormXmlCommand(IAuthenticationService authenticationSer
         if (form is null)
         {
             return 1;
+        }
+
+        if (settings.Base is not null)
+        {
+            return await BuildOnLocalBaseAsync(form, settings, cancellationToken);
         }
 
         try
@@ -107,6 +116,44 @@ public sealed class BuildFormXmlCommand(IAuthenticationService authenticationSer
             // isn't even well-formed — a real bug in this tool, not a
             // known Dataverse quirk.
             ErrorConsole.Print($"Rebuilt FormXML isn't well-formed XML — this is a bug in this tool, not the source YAML: {ex.Message}");
+            return 1;
+        }
+    }
+
+    /// <summary>
+    /// `--base`: patch a local FormXML file instead of the live form, never
+    /// signing in. A solution-export base keeps its wrapper (<c>formid</c>,
+    /// names) around the rebuilt <c>&lt;form&gt;</c>, so the output can be
+    /// compared with, or dropped back over, the file it came from.
+    /// </summary>
+    private static async Task<int> BuildOnLocalBaseAsync(Services.Conversion.Models.FormDefinition form, Settings settings, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var baseText = await File.ReadAllTextAsync(settings.Base!, cancellationToken);
+            var formXml = FormXmlWriter.Write(form, FormXmlFile.LoadForm(settings.Base!));
+
+            FormXmlValidationConsole.PrintViolations(FormXmlValidator.Validate(formXml));
+
+            var outputPath = settings.Output ?? Path.ChangeExtension(settings.Input, ".xml");
+            await File.WriteAllTextAsync(outputPath, FormXmlFile.ReplaceForm(baseText, System.Xml.Linq.XElement.Parse(formXml)), cancellationToken);
+
+            AnsiConsole.MarkupLine($"[green]Wrote[/] {outputPath}");
+            return 0;
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException or InvalidDataException)
+        {
+            ErrorConsole.Print($"Couldn't read the base file '{settings.Base}': {ex.Message}");
+            return 1;
+        }
+        catch (NotSupportedException ex)
+        {
+            ErrorConsole.Print(ex);
+            return 1;
+        }
+        catch (System.Xml.XmlException ex)
+        {
+            ErrorConsole.Print($"Couldn't build on '{settings.Base}': {ex.Message}");
             return 1;
         }
     }

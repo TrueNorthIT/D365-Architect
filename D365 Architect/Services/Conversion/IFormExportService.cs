@@ -39,6 +39,18 @@ public interface IFormExportService
     /// <exception cref="InvalidDataException">Dataverse returned metadata this tool doesn't understand yet.</exception>
     /// <exception cref="Dataverse.SolutionNotFoundException"><paramref name="solutionUniqueName"/> doesn't match any solution in the environment.</exception>
     Task<IReadOnlyList<FormSummary>> ListFormsAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string? solutionUniqueName, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Exports one form from a local FormXML file — a solution export or a
+    /// bare <c>&lt;form&gt;</c> (see <see cref="FormXmlFile"/>) — with no
+    /// Dataverse call, for `form export --from-xml`. The YAML is what
+    /// <see cref="ExportFormsAsync"/> would write for the same FormXML.
+    /// </summary>
+    /// <param name="path">The local FormXML file.</param>
+    /// <param name="entityLogicalName">The table the form belongs to; the file doesn't say.</param>
+    /// <param name="type">The form type label (e.g. "Main", "Quick View Form"); null means Main.</param>
+    /// <exception cref="InvalidDataException"><paramref name="type"/> isn't a form type, or the file isn't a form.</exception>
+    ExportedForm ExportFormFromXml(string path, string entityLogicalName, string? type);
 }
 
 /// <summary>

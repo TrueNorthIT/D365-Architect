@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Xml.Linq;
 using D365Architect.Services.Conversion.Models;
 using D365Architect.Services.Dataverse;
 
@@ -49,6 +51,36 @@ public sealed class FormExportService(IDataverseClient dataverseClient, FormJson
     /// the final safety net, for the rarer case of two forms sharing both a
     /// name and a type.
     /// </summary>
+    public ExportedForm ExportFormFromXml(string path, string entityLogicalName, string? type)
+    {
+        var typeCode = FormJsonDefinitionReader.TryGetFormTypeCode(type)
+            ?? throw new InvalidDataException($"'{type}' isn't a form type. Use one of the systemform type labels, e.g. Main, Quick View Form or Card.");
+
+        var local = FormXmlFile.LoadLocalForm(path);
+
+        // Wrapped in the same shape GetFormDefinitionsJsonAsync returns, so the
+        // file goes through exactly the reader a live export does and yields
+        // the same YAML for the same FormXML. A bare form has no name of its
+        // own; the file name stands in for it.
+        var json = JsonSerializer.Serialize(new
+        {
+            value = new[]
+            {
+                new
+                {
+                    formid = local.FormId,
+                    name = local.Name ?? Path.GetFileNameWithoutExtension(path),
+                    objecttypecode = entityLogicalName,
+                    type = typeCode,
+                    formxml = local.Form.ToString(SaveOptions.DisableFormatting),
+                },
+            },
+        });
+
+        var form = reader.Read(json).Single();
+        return new ExportedForm(BuildStem(form), FormYamlSerializer.ToYaml(form));
+    }
+
     private static string BuildStem(FormDefinition form) =>
         form.Type is null
             ? AssetFileNaming.Slugify(form.Name)
