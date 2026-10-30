@@ -698,13 +698,20 @@ d365architect form import --input account-main-form.form.yml
 | `-y, --yes`                  | Skip the confirmation prompt and import immediately            | No       |
 | `--whatif`                   | Only show the diff — never prompt and never write anything     | No       |
 | `--allow-schema-violations`  | Proceed even with a schema violation that isn't a confirmed-safe pattern | No |
+| `--allow-removals`           | Remove what's live but missing from the YAML (and not just moved). Otherwise it's kept and listed as `~ would remove` | No |
+| `--allow-unexpected`         | Proceed even if the rebuilt FormXML changes something outside what the YAML changed | No |
 | `--no-publish`               | Don't publish the form's table after importing                 | No       |
 
 On an existing form, the import **patches** the live FormXML rather than
 rebuilding it (issue #58): only what the YAML changed is written, and
 everything else on the form — spacers, section label settings, header
 layout, ids, attributes this tool doesn't model — stays exactly as it was.
-Anything live but missing from the YAML is kept.
+The diff is against the live form exactly as Dataverse returned it. Anything
+live but missing from the YAML is kept unless `--allow-removals` is passed,
+and the plan lists it as `~ would remove ...`. If the rebuild would change
+anything outside what the YAML changed, those changes are printed and the
+import stops unless `--allow-unexpected` is passed — that would be a bug in
+this tool, not your edit.
 
 Before writing anything, this looks up the form — by the YAML's own
 `formId` when it has one (the ordinary case for anything exported since
@@ -837,6 +844,8 @@ d365architect solution import --input ./examplesolution --solution examplesoluti
 | `--whatif`                   | Only show each changed asset's diff/plan — never prompt and never write anything | No       |
 | `--no-transaction`           | For every table import: send column create/update one request at a time instead of as a single atomic Dataverse changeset | No |
 | `--allow-schema-violations`  | For every form import: proceed even if the rebuilt FormXML has a schema violation Dataverse might reject outright | No |
+| `--allow-removals`           | For every form import: remove what's live but missing from the YAML instead of keeping it | No |
+| `--allow-unexpected`         | For every form import: proceed even if the rebuilt FormXML changes something outside what the YAML changed | No |
 | `--no-publish`               | For every table, choice, view and form import: don't publish after importing | No |
 
 After the create stage, every file is previewed, through the same logic as

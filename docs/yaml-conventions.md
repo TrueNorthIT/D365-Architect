@@ -388,7 +388,8 @@ authoritative.
   when it's the last field, otherwise after the field before it), so no
   existing cell moves; a moved field carries its live cell with it, leaving
   a spacer behind when a cell to its right would otherwise shift. Anything
-  live but missing from the YAML is **kept**. An unedited export → build reproduces the live form exactly — the
+  live but missing from the YAML is **kept** unless `--allow-removals` is
+  passed. An unedited export → build reproduces the live form exactly — the
   round-trip tests in `FormXmlRoundTripTests` prove it on a real,
   anonymised, heavily customised form. Everything else on that document — `Navigation`,
   `clientresources`, `RibbonDiffXml`, `formparameters`,
@@ -603,24 +604,28 @@ one of the three auto-made forms updates that form rather than creating a new
 one. Setting `formId` is the way to say which one is meant.
 
 **"Must have a way to check differences between client and server"** (this
-feature's own originating requirement) is `TextDiff`, applied to the actual
-FormXML on both sides — but not naively. Diffing the live document's *raw*
-FormXML directly against the rebuild was tried first, and confirmed live
-(against a real, richly-customized production form, not a synthetic test
-case) to be nearly useless for this: every tab, section, and cell showed up
-as "changed", purely because their wrapper ids are resynthesized fresh on
-every rebuild — a wall of noise even when re-importing a file with no
-meaningful edits at all.
+feature's own originating requirement) is `TextDiff`, applied to the live
+FormXML exactly as Dataverse returned it (`FormImportPreview.ExistingComparableFormXml`,
+only its formatting normalised) against what's about to be written.
 
-The fix, once that was seen: rebuild the *live* form's own content through
-the exact same `FormXmlWriter` call, base document, and deterministic id
-rules that produced the new FormXML (`FormImportPreview.ExistingComparableFormXml` —
-decompose the live FormXML the same way `form export` would, then run that
-back through `FormXmlWriter.Write` against the same base document). Since
-both sides are now canonicalized through the identical pipeline, unchanged
-content produces identical ids and identical attribute-stripping on both
-sides and disappears from the diff entirely — only a genuine difference in
-the underlying `FormDefinition` content survives to show up. Both sides
+This used to diff a *rebuild* of the live form instead, because the writer
+regenerated every id and the raw diff was a wall of noise. Rebuilding both
+sides cancelled the noise out — and also cancelled out everything the
+writer lost (spacers, section label settings, header layout), so a form
+could be damaged behind a clean-looking diff. That is how issue #58 went
+unnoticed. Now that the writer patches rather than rebuilds, unchanged
+content is byte-identical and the diff is against the real thing.
+
+Before anything is written, `FormPatchVerifier` splits every difference
+into what the YAML asked for and what it didn't. It works out on the model
+which controls, sections, tabs, header/footer and form-level blocks the
+YAML changed (or added, moved or dropped), then attributes each difference
+to the nearest of those that contains it. A difference outside them — a
+dropped spacer in an untouched section, a regenerated id, a header the YAML
+left alone — is **unexpected**, printed, and blocks the import unless
+`--allow-unexpected` is passed: it's a bug in this tool, not the user's
+edit. What is live but missing from the YAML (and not simply moved) is
+listed as `~ would remove ...` and kept, or removed with `--allow-removals`. Both sides
 are pretty-printed (one element per line) purely for this display; the
 actual payload sent to Dataverse is untouched by that. Only the changed
 lines plus a couple of lines of context are shown, not the whole document.
@@ -629,9 +634,8 @@ nothing is written, nothing is asked and validation is skipped — confirmed liv
 true in practice for an unedited file on a real, complex form, not just in
 a minimal test case.
 
-**Be precise about what this diff does and doesn't catch**: it compares a
-canonicalized rebuild of the live document against what's about to be
-written, not against what the live document looked like when this YAML was
+**Be precise about what this diff does and doesn't catch**: it compares the
+live document against what's about to be written, not against what the live document looked like when this YAML was
 last exported. It will not by itself notice "someone else changed this
 form after I exported it, before I imported my own change" — only that the
 live document currently differs from the rebuild, which could be *because*
