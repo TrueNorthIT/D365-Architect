@@ -113,7 +113,7 @@ public static class FormXmlComparer
     /// or repeats among its siblings falls back to position, so every segment
     /// is unique within its parent.
     /// </summary>
-    private static List<(string Segment, XElement Element)> SegmentsOf(XElement parent)
+    internal static List<(string Segment, XElement Element)> SegmentsOf(XElement parent)
     {
         var segments = new List<(string, XElement)>();
         var used = new HashSet<string>();
@@ -154,7 +154,7 @@ public static class FormXmlComparer
     private static Dictionary<string, string> AttributesOf(XElement element) =>
         element.Attributes().Where(a => !a.IsNamespaceDeclaration).ToDictionary(a => a.Name.LocalName, a => a.Value);
 
-    private static string TextOf(XElement element) => string.IsNullOrWhiteSpace(element.Value) ? "" : element.Value;
+    internal static string TextOf(XElement element) => string.IsNullOrWhiteSpace(element.Value) ? "" : element.Value;
 
     private static string Join(string path, string segment) => path.Length == 0 ? segment : $"{path}/{segment}";
 
