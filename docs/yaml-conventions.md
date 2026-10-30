@@ -372,12 +372,25 @@ authoritative.
 
 - **The form already exists** (the common case — editing YAML for a form
   `form export` already produced): its current, live FormXML is the base
-  document. `FormXmlWriter.Write(form, existingRoot)` only replaces the
-  top-level elements this tool actually manages — `ancestor`,
-  `hiddencontrols`, `tabs`, `header`/`footer`, `events`, `formLibraries`,
-  `DisplayConditions`, `controlDescriptions` — each one in place if the
-  document already had it, appended if not, removed if the YAML no longer
-  calls for one. Everything else on that document — `Navigation`,
+  document, and `FormXmlWriter.Write(form, existingRoot)` **patches** it
+  (issue #58) rather than rebuilding anything. Each tab and section is
+  matched by name (within its own tab first — real forms repeat section
+  names across tabs), each cell by its control's id and occurrence (real
+  forms repeat control ids too), each handler by function name and each
+  library by name. A matched element is changed by a three-way merge:
+  render it from the live form's own model and from the YAML, and apply
+  only the difference between those two renders. Whatever the model
+  doesn't capture — spacer cells, empty rows, a section's `labelwidth` or
+  `celllabelposition`, a cell's `locklevel`, every id, attributes that only
+  restate Dataverse's default — renders the same on both sides, so it never
+  appears in that difference and stays byte-for-byte. A new tab or section
+  is written out in full; a new field goes in a row of its own (appended
+  when it's the last field, otherwise after the field before it), so no
+  existing cell moves; a moved field carries its live cell with it, leaving
+  a spacer behind when a cell to its right would otherwise shift. Anything
+  live but missing from the YAML is **kept**. An unedited export → build reproduces the live form exactly — the
+  round-trip tests in `FormXmlRoundTripTests` prove it on a real,
+  anonymised, heavily customised form. Everything else on that document — `Navigation`,
   `clientresources`, `RibbonDiffXml`, `formparameters`,
   `externaldependencies`, a tab's own `tabheader`/`tabfooter`, and the form
   root's own chrome attributes (`showImage`, `headerdensity`, ...) — is
@@ -409,9 +422,8 @@ which is how the round trip is tested against real, anonymised forms in
 
 **Dashboards are still refused outright either way** — not just in the
 from-scratch case. A dashboard's tiles (`<Visualization>`/`<SavedQuery>`)
-live *inside* `<tabs>`, which this tool always replaces wholesale in both
-modes, so patching a live dashboard's FormXML would delete its tiles just
-as surely as building one from scratch would.
+live *inside* `<tabs>` and this tool never decomposes them, so it doesn't
+vouch for a rebuild of one either way.
 
 **What this still doesn't do**: write anything back into Dataverse. `form
 build-xml` only ever reads (the lookup) and writes a local file — the
@@ -468,11 +480,8 @@ control checked. `FormControlValidator` catches this specifically —
 walking every control on the form and flagging any with no `ClassId`,
 *unless* the existing live control with that same id also has none (the
 same "don't block on a value nobody's actually trying to change" carve-out
-as the Precision/MaxLength case above, needed here because
-`FormXmlWriter` always replaces `header`/`footer`/`tabs` wholesale rather
-than patching one control at a time, so an untouched classid-less control
-would otherwise get flagged every time something *else* on the form
-changed). `FormControlValidator` also catches two purely local mistakes
+as the Precision/MaxLength case above, so an untouched classid-less
+control isn't flagged every time something *else* on the form changes). `FormControlValidator` also catches two purely local mistakes
 that don't need Dataverse at all to know are wrong: `control` and
 `customControlId` both set on the same control (mutually exclusive — see
 Rule 4), and a `control` value that isn't one of `StandardFormControls`'

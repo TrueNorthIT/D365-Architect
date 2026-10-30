@@ -56,6 +56,19 @@ public sealed class FormJsonDefinitionReader
     public IReadOnlyList<FormDefinition> Read(string content) => Read(content, allowedFormIds: null);
 
     /// <summary>
+    /// The model `form export` would produce for just this FormXML — what
+    /// <see cref="FormXmlWriter"/>'s patcher compares the YAML against to
+    /// tell what the YAML actually changed. Only the FormXML-derived content
+    /// is meaningful; the record-level fields (name, entity, ...) are blank.
+    /// </summary>
+    internal static FormDefinition ReadFormXml(XElement formRoot)
+    {
+        var json = JsonSerializer.Serialize(new { name = "", objecttypecode = "", formxml = formRoot.ToString(SaveOptions.DisableFormatting) });
+        using var doc = JsonDocument.Parse(json);
+        return ParseForm(doc.RootElement);
+    }
+
+    /// <summary>
     /// As <see cref="Read(string)"/>, but keeps only the forms whose formid
     /// is in <paramref name="allowedFormIds"/> — how <see cref="FormExportService"/>
     /// scopes an export down to just the forms a given solution actually

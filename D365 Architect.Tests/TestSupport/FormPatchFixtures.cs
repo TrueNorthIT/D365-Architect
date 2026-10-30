@@ -128,6 +128,10 @@ internal static class FormPatchFixtures
     /// <summary>The model after being written to a <c>*.form.yml</c> and read back, i.e. what an unedited re-import starts from.</summary>
     public static FormDefinition ThroughYaml(FormDefinition model) => FormYamlDeserializer.FromYaml(FormYamlSerializer.ToYaml(model));
 
+    /// <summary>What <c>form build-xml</c>/<c>form import</c> produce for <paramref name="yaml"/> on top of <paramref name="live"/>.</summary>
+    public static XElement Patch(XElement live, FormDefinition yaml, bool allowRemovals = false) =>
+        XElement.Parse(FormXmlWriter.Write(yaml, live, allowRemovals));
+
     // ---- editing the model the way a person edits the YAML ----
 
     private static readonly MethodInfo CloneMethod = typeof(object).GetMethod("MemberwiseClone", BindingFlags.Instance | BindingFlags.NonPublic)!;
