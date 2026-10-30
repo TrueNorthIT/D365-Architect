@@ -70,6 +70,14 @@ public sealed class ImportFormCommand(IFormImportService formImportService, Impo
         [CommandOption("--allow-schema-violations")]
         [Description("Proceed even if the rebuilt FormXML has a schema violation Dataverse might reject outright — see FormXmlValidationMessage.IsKnownHarmless. Off by default: a genuine 'invalid child element'/'invalid content' violation has been confirmed live to fail the write with a raw Dataverse 400, not just a cosmetic warning.")]
         public bool AllowSchemaViolations { get; init; }
+
+        [CommandOption("--allow-removals")]
+        [Description("Remove what's on the live form but missing from the YAML (and not just moved). Off by default: it's kept and listed as 'would remove', so deleting something from the YAML never deletes it from the form by accident.")]
+        public bool AllowRemovals { get; init; }
+
+        [CommandOption("--allow-unexpected")]
+        [Description("Proceed even if the rebuilt FormXML changes something outside what the YAML changed (a dropped spacer, a regenerated id, a header the YAML left alone). Off by default: that is a bug in this tool, not your edit.")]
+        public bool AllowUnexpected { get; init; }
     }
 
     protected override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken) =>
@@ -115,7 +123,9 @@ public sealed class ImportFormCommand(IFormImportService formImportService, Impo
             // HasChanges.
             SkipBeforePrinting = preview => preview.HasChanges || preview.Violations.Any(v => !v.IsKnownHarmless)
                 ? null
-                : "the rebuilt FormXML already matches what's live in Dataverse. Nothing to import.",
+                : preview.PatchReport?.WouldRemove is { Count: > 0 } kept
+                    ? $"the rebuilt FormXML already matches what's live in Dataverse. Nothing to import. {kept.Count} item(s) live but missing from the YAML were kept: {string.Join(", ", kept)} — pass --allow-removals to remove them."
+                    : "the rebuilt FormXML already matches what's live in Dataverse. Nothing to import.",
 
             PrintChanges = preview =>
             {
@@ -129,10 +139,16 @@ public sealed class ImportFormCommand(IFormImportService formImportService, Impo
                 AnsiConsole.WriteLine();
 
                 FormXmlValidationConsole.PrintViolations(preview.Violations);
+                PrintPatchReport(preview.PatchReport, settings.AllowRemovals);
             },
 
             BlockReason = (s, preview) =>
             {
+                if (preview.PatchReport?.Unexpected is { Count: > 0 } unexpected && !s.AllowUnexpected)
+                {
+                    return $"{unexpected.Count} change(s) above are outside what the YAML changed, so this tool would alter parts of the form nobody asked it to. That's a bug in the tool, not your edit — please report it. Pass [bold]--allow-unexpected[/] to proceed anyway once you've checked them yourself.";
+                }
+
                 var blockingViolations = preview.Violations.Where(v => !v.IsKnownHarmless).ToList();
                 if (blockingViolations.Count == 0 || s.AllowSchemaViolations)
                 {
@@ -161,7 +177,7 @@ public sealed class ImportFormCommand(IFormImportService formImportService, Impo
     }
 
     public Task<int> RunAsync(Settings settings, CancellationToken cancellationToken) =>
-        importRunner.RunAsync(settings, formImportService, BuildSpec(settings), cancellationToken);
+        importRunner.RunAsync(settings, new RemovalAwareImport(formImportService, settings.AllowRemovals), BuildSpec(settings), cancellationToken);
 
     /// <summary>
     /// Previews without prompting or writing: the first half of
@@ -169,5 +185,54 @@ public sealed class ImportFormCommand(IFormImportService formImportService, Impo
     /// collect several previews and confirm once.
     /// </summary>
     public Task<PreparedImport> PreviewAsync(Settings settings, bool printUnchanged, CancellationToken cancellationToken) =>
-        importRunner.PreviewAsync(settings, formImportService, BuildSpec(settings), printUnchanged, cancellationToken);
+        importRunner.PreviewAsync(settings, new RemovalAwareImport(formImportService, settings.AllowRemovals), BuildSpec(settings), printUnchanged, cancellationToken);
+
+    /// <summary>
+    /// What's live but missing from the YAML (kept, or removed with
+    /// --allow-removals), and anything the patch changed that the YAML
+    /// didn't ask for (which blocks the import, see BlockReason).
+    /// </summary>
+    private static void PrintPatchReport(FormPatchReport? report, bool allowRemovals)
+    {
+        if (report is null)
+        {
+            return;
+        }
+
+        foreach (var item in report.WouldRemove)
+        {
+            AnsiConsole.MarkupLine(allowRemovals
+                ? $"[red]- remove {item.EscapeMarkup()}[/] (live, missing from the YAML)"
+                : $"[yellow]~ would remove {item.EscapeMarkup()}[/] (live, missing from the YAML) — kept; pass --allow-removals to remove it");
+        }
+
+        if (report.Unexpected.Count > 0)
+        {
+            AnsiConsole.MarkupLine($"[red]{report.Unexpected.Count} change(s) outside what the YAML changed:[/]");
+            foreach (var difference in report.Unexpected.Take(20))
+            {
+                AnsiConsole.MarkupLine($"  [red]{$"{difference.Kind} {difference.Path} [{difference.Before}] -> [{difference.After}]".EscapeMarkup()}[/]");
+            }
+
+            if (report.Unexpected.Count > 20)
+            {
+                AnsiConsole.MarkupLine($"  [red]... and {report.Unexpected.Count - 20} more[/]");
+            }
+        }
+
+        if (report.WouldRemove.Count > 0 || report.Unexpected.Count > 0)
+        {
+            AnsiConsole.WriteLine();
+        }
+    }
+
+    /// <summary>Passes <c>--allow-removals</c> through to the preview, which the shared import runner doesn't know about.</summary>
+    private sealed class RemovalAwareImport(IFormImportService inner, bool allowRemovals) : IImportService<FormDefinition, FormImportPreview>
+    {
+        public Task<FormImportPreview> PreviewAsync(Uri environmentUrl, string accessToken, FormDefinition input, CancellationToken cancellationToken) =>
+            inner.PreviewAsync(environmentUrl, accessToken, input, allowRemovals, cancellationToken);
+
+        public Task ApplyAsync(Uri environmentUrl, string accessToken, FormImportPreview preview, CancellationToken cancellationToken) =>
+            inner.ApplyAsync(environmentUrl, accessToken, preview, cancellationToken);
+    }
 }

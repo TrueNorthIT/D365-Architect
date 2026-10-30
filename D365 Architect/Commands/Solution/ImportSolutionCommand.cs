@@ -110,6 +110,14 @@ public sealed class ImportSolutionCommand(
         [Description("For every form import: proceed even if the rebuilt FormXML has a schema violation Dataverse might reject outright.")]
         public bool AllowSchemaViolations { get; init; }
 
+        [CommandOption("--allow-removals")]
+        [Description("For every form import: remove what's on the live form but missing from the YAML (and not just moved), instead of keeping it.")]
+        public bool AllowRemovals { get; init; }
+
+        [CommandOption("--allow-unexpected")]
+        [Description("For every form import: proceed even if the rebuilt FormXML changes something outside what the YAML changed.")]
+        public bool AllowUnexpected { get; init; }
+
         [CommandOption("--no-publish")]
         [Description("For every table/choice/view/form import: don't publish after importing.")]
         public bool NoPublish { get; init; }
@@ -189,7 +197,7 @@ public sealed class ImportSolutionCommand(
         SolutionImportStage.ImportView => new ImportViewCommand(viewImportService, importRunner).PreviewAsync(
             new ImportViewCommand.Settings { Input = assetPath, Yes = settings.Yes, WhatIf = settings.WhatIf, NoPublish = settings.NoPublish, Solution = settings.Solution }, printUnchanged, cancellationToken),
         SolutionImportStage.ImportForm => new ImportFormCommand(formImportService, importRunner).PreviewAsync(
-            new ImportFormCommand.Settings { Input = assetPath, Yes = settings.Yes, WhatIf = settings.WhatIf, NoPublish = settings.NoPublish, Solution = settings.Solution, AllowSchemaViolations = settings.AllowSchemaViolations }, printUnchanged, cancellationToken),
+            new ImportFormCommand.Settings { Input = assetPath, Yes = settings.Yes, WhatIf = settings.WhatIf, NoPublish = settings.NoPublish, Solution = settings.Solution, AllowSchemaViolations = settings.AllowSchemaViolations, AllowRemovals = settings.AllowRemovals, AllowUnexpected = settings.AllowUnexpected }, printUnchanged, cancellationToken),
         _ => throw new ArgumentOutOfRangeException(nameof(stage), stage, null),
     };
 
