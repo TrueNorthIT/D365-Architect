@@ -17,24 +17,16 @@ namespace D365Architect.Services.Conversion;
 /// walked back into elements/attributes the same way it came from them).
 ///
 /// <see cref="Write"/> takes an optional <c>existingForm</c> — the form's
-/// current, live FormXML (fetched by <c>form build-xml</c> via
-/// <see cref="Dataverse.IDataverseClient.TryGetSystemFormXmlAsync"/> before
-/// calling this). When given, only the top-level elements this tool
-/// actually manages (<c>ancestor</c>, <c>hiddencontrols</c>, <c>tabs</c>,
-/// <c>header</c>/<c>footer</c>, <c>events</c>, <c>formLibraries</c>,
-/// <c>DisplayConditions</c>, <c>controlDescriptions</c>) are replaced on
-/// that document — everything else on it (<c>Navigation</c>,
-/// <c>clientresources</c>, <c>RibbonDiffXml</c>, <c>formparameters</c>,
-/// <c>externaldependencies</c>, a tab's own <c>tabheader</c>/<c>tabfooter</c>,
-/// and the form root's own chrome attributes like <c>showImage</c>/
-/// <c>headerdensity</c>) is left exactly as it was, because it's still
-/// right there in the document being patched rather than something this
-/// tool has to reconstruct from a YAML representation that never captured
-/// it. That's the difference between the two ways this can be called:
+/// current, live FormXML (or a local file's, see <see cref="FormXmlFile"/>).
+/// That's the difference between the two ways this can be called:
 ///
-/// - With <c>existingForm</c>: safe to treat as a faithful update to an
-///   existing, richly customized form — nothing this tool doesn't model
-///   gets lost, because nothing this tool doesn't model is ever touched.
+/// - With <c>existingForm</c>: the live document is patched, not rebuilt
+///   (issue #58, see FormXmlWriter.Patch.cs). Only what the YAML changed is
+///   written; everything else — spacers, empty rows, section label
+///   settings, header layout, ids, attributes this tool doesn't model, and
+///   every element it never manages (<c>Navigation</c>, <c>RibbonDiffXml</c>,
+///   ...) — stays exactly as it was. Anything live but missing from the
+///   YAML is kept unless <c>allowRemovals</c> is set.
 /// - Without it (a brand-new form this YAML describes but that hasn't been
 ///   created in Dataverse yet — <c>TryGetSystemFormXmlAsync</c> returns null
 ///   for that case): built from scratch, so anything in that "documented
@@ -44,10 +36,10 @@ namespace D365Architect.Services.Conversion;
 ///
 /// Dashboards are refused outright either way, not just in the from-scratch
 /// case: a dashboard's tiles (`&lt;Visualization&gt;`/`&lt;SavedQuery&gt;`)
-/// live inside `&lt;tabs&gt;`, which this tool always replaces wholesale, so
-/// patching mode can't protect them either.
+/// live inside `&lt;tabs&gt;` and this tool never decomposes them, so it
+/// doesn't vouch for a rebuild of one either way.
 /// </summary>
-public static class FormXmlWriter
+public static partial class FormXmlWriter
 {
     /// <param name="form">The curated form to render as FormXML.</param>
     /// <param name="existingForm">
@@ -56,8 +48,9 @@ public static class FormXmlWriter
     /// omitting) this changes. A defensive deep copy is taken; the caller's
     /// tree is never mutated.
     /// </param>
+    /// <param name="allowRemovals">Patch mode only: remove what's on <paramref name="existingForm"/> but missing from <paramref name="form"/> (and not just moved). Off by default, so it's kept.</param>
     /// <exception cref="NotSupportedException"><paramref name="form"/> is a dashboard — this tool never decomposes dashboard tiles, so reconstructing one would silently produce a dashboard with none of its original visualizations.</exception>
-    public static string Write(FormDefinition form, XElement? existingForm = null)
+    public static string Write(FormDefinition form, XElement? existingForm = null, bool allowRemovals = false)
     {
         if (form.Type is "Dashboard" or "InteractionCentricDashboard" or "Contextual Dashboard" or "Power BI Dashboard")
         {
@@ -66,12 +59,17 @@ public static class FormXmlWriter
                 "so rebuilding FormXML for one would produce a dashboard with none of its original visualizations rather than a faithful copy.");
         }
 
+        if (existingForm is not null)
+        {
+            return Patch(form, existingForm, allowRemovals);
+        }
+
         // Collects controlDescriptions entries as controls that need one are
         // written — see WriteCell. Order doesn't matter: FormType declares
         // its top-level children as an unordered xs:all group.
         var controlDescriptions = new List<XElement>();
 
-        var formEl = existingForm is not null ? new XElement(existingForm) : new XElement("form");
+        var formEl = new XElement("form");
 
         ReplaceManagedChild(formEl, "ancestor", form.Ancestor is not null
             ? new XElement("ancestor", new XAttribute("id", form.Ancestor))

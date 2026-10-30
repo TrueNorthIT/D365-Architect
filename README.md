@@ -656,9 +656,8 @@ d365architect form build-xml --input account.form.yml --base "Entities/Account/F
 ```
 
 This refuses to run on a dashboard-type form rather than silently produce
-one with none of its visualizations — patching can't protect a dashboard's
-tiles either, since they live inside `<tabs>`, which this tool always
-replaces wholesale. For a genuinely new form with no live counterpart yet,
+one with none of its visualizations: their tiles live inside `<tabs>` and
+this tool never decomposes them. For a genuinely new form with no live counterpart yet,
 it's safe to treat the output as complete for a form built entirely from
 this tool's own YAML, but the same gap list as before still applies in that
 case: anything this tool documents as a deliberate gap simply won't be in
@@ -700,6 +699,12 @@ d365architect form import --input account-main-form.form.yml
 | `--whatif`                   | Only show the diff — never prompt and never write anything     | No       |
 | `--allow-schema-violations`  | Proceed even with a schema violation that isn't a confirmed-safe pattern | No |
 | `--no-publish`               | Don't publish the form's table after importing                 | No       |
+
+On an existing form, the import **patches** the live FormXML rather than
+rebuilding it (issue #58): only what the YAML changed is written, and
+everything else on the form — spacers, section label settings, header
+layout, ids, attributes this tool doesn't model — stays exactly as it was.
+Anything live but missing from the YAML is kept.
 
 Before writing anything, this looks up the form — by the YAML's own
 `formId` when it has one (the ordinary case for anything exported since
