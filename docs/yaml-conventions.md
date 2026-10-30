@@ -393,6 +393,20 @@ authoritative.
   the unavoidable reason that there's no live document to preserve those
   features from.
 
+**From local files, with no sign-in** (`form export --from-xml`, `form
+build-xml --base`, issue #59): the base document can be a local FormXML file
+instead of the live form — a solution export (`forms/systemform/form`) or a
+bare `<form>` (`FormXmlFile`). The export wraps the file's `<form>` in the
+same shape the Web API returns and runs it through the same
+`FormJsonDefinitionReader`, so it yields the same YAML as a live export. The
+build patches onto the file exactly as it would onto the live form, and a
+solution-export base keeps its wrapper byte-for-byte (`FormXmlFile.ReplaceForm`
+splices the text rather than re-serializing). `FormXmlComparer` then reports
+every difference between the base and the output — nothing is ignored except
+whitespace, attribute order, namespace declarations and the XML declaration —
+which is how the round trip is tested against real, anonymised forms in
+`D365 Architect.Tests/Fixtures/FormXml`.
+
 **Dashboards are still refused outright either way** — not just in the
 from-scratch case. A dashboard's tiles (`<Visualization>`/`<SavedQuery>`)
 live *inside* `<tabs>`, which this tool always replaces wholesale in both

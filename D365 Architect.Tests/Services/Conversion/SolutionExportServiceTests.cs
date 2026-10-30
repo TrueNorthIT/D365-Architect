@@ -55,6 +55,9 @@ public sealed class SolutionExportServiceTests
 
         public Task<IReadOnlyList<FormSummary>> ListFormsAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string? solutionUniqueName, CancellationToken cancellationToken) =>
             throw new NotImplementedException("Solution export never needs the interactive-picker summary list — it always exports every form.");
+
+        public ExportedForm ExportFormFromXml(string path, string entityLogicalName, string? type) =>
+            throw new NotImplementedException("Solution export always exports from the live environment, never from a local file.");
     }
 
     private sealed class FakeGlobalChoiceExportService : IGlobalChoiceExportService

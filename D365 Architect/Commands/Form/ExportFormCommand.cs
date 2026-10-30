@@ -38,10 +38,23 @@ public sealed class ExportFormCommand(IAuthenticationService authenticationServi
         [CommandOption("-o|--output <DIRECTORY>")]
         [Description("Directory to write the exported YAML file into. Defaults to the current directory.")]
         public string? Output { get; init; }
+
+        [CommandOption("--from-xml <PATH>")]
+        [Description("Export from this local FormXML file (a solution export or a bare form) instead of a live environment. No sign-in.")]
+        public string? FromXml { get; init; }
+
+        [CommandOption("--type <TYPE>")]
+        [Description("With --from-xml: the form type, e.g. Main, Quick View Form, Card. Defaults to Main.")]
+        public string? Type { get; init; }
     }
 
     protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
+        if (settings.FromXml is not null)
+        {
+            return await ExportFromXmlAsync(settings, cancellationToken);
+        }
+
         try
         {
             var auth = await authenticationService.GetCurrentContextAsync(cancellationToken);
@@ -99,6 +112,28 @@ public sealed class ExportFormCommand(IAuthenticationService authenticationServi
         catch (HttpRequestException ex)
         {
             ErrorConsole.Print(ex);
+            return 1;
+        }
+    }
+
+    /// <summary>`--from-xml`: the whole export from a local file, never signing in.</summary>
+    private async Task<int> ExportFromXmlAsync(Settings settings, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var form = formExportService.ExportFormFromXml(settings.FromXml!, settings.Table, settings.Type);
+
+            var outputDirectory = settings.Output ?? ".";
+            Directory.CreateDirectory(outputDirectory);
+
+            var outputPath = Path.Combine(outputDirectory, $"{form.FileNameStem}.form.yml");
+            await File.WriteAllTextAsync(outputPath, form.Yaml, cancellationToken);
+            AnsiConsole.MarkupLine($"[green]Exported.[/] Wrote {outputPath}");
+            return 0;
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException or InvalidDataException or System.Xml.XmlException)
+        {
+            ErrorConsole.Print($"Couldn't export the form from '{settings.FromXml}': {ex.Message}");
             return 1;
         }
     }

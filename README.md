@@ -541,6 +541,19 @@ d365architect form export --table account --solution examplesolution
 | `-f, --form-id`   | Id of the form to export. Omit to choose interactively from a list           | No       |
 | `-s, --solution`  | Unique name of a solution to scope the list (or the form id check) to        | No       |
 | `-o, --output`    | Directory to write the exported YAML file into. Defaults to the current directory | No |
+| `--from-xml`      | Export from this local FormXML file instead of a live environment. No sign-in | No |
+| `--type`          | With `--from-xml`: the form type (`Main`, `Quick View Form`, `Card`, ...). Defaults to `Main` | No |
+
+`--from-xml` reads a form from a local file instead of Dataverse, with no
+sign-in: either a solution export's `Entities/<table>/FormXml/<type>/{id}.xml`
+(its `formid` and form name come from the file) or a bare `<form>` (the
+file name stands in for the form name). The YAML is exactly what a live
+export would write for the same FormXML. With `form build-xml --base`
+(below) this makes the whole round trip a file operation — see issue #59.
+
+```
+d365architect form export --from-xml "Entities/Account/FormXml/main/{id}.xml" --table account
+```
 
 The form is written as `<form-name>.form.yml`, following the same
 `<name>.<asset type>.yml` convention as `table export`/`view export` — e.g.
@@ -631,6 +644,16 @@ d365architect form build-xml --input account-main-form.form.yml
 |-----------------|----------------------------------------------------------|----------|
 | `-i, --input`   | Path to the `*.form.yml` file to rebuild FormXML from     | Yes      |
 | `-o, --output`  | Path to write the rebuilt FormXML to. Defaults to `<input>.xml` | No |
+| `--base`        | Patch this local FormXML file instead of the live form. No sign-in | No |
+
+`--base` patches a local FormXML file (a solution export or a bare
+`<form>`) instead of the live form, with no sign-in. A solution-export base
+keeps its wrapper (`formid`, names) around the rebuilt `<form>`, so the
+output can be compared directly with the file it came from:
+
+```
+d365architect form build-xml --input account.form.yml --base "Entities/Account/FormXml/main/{id}.xml" -o rebuilt.xml
+```
 
 This refuses to run on a dashboard-type form rather than silently produce
 one with none of its visualizations — patching can't protect a dashboard's
