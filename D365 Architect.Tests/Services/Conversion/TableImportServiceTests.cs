@@ -250,9 +250,13 @@ public sealed class TableImportServiceTests
         // tn_extra is live-only (WouldRemove) — OrderForDiff has no local
         // position to sort it by, so it should fall in after every matched
         // column rather than disappearing or reordering unpredictably.
+        // Fixture carries "IsCustomAttribute": true, as the live API always
+        // reports for a custom column. Without it tn_extra reads as a system
+        // column, which the table import diff deliberately hides (see
+        // "System columns in the diff" below).
         var existing = Entity("""
             { "LogicalName": "tn_b", "SchemaName": "tn_B", "AttributeType": "String" },
-            { "LogicalName": "tn_extra", "SchemaName": "tn_Extra", "AttributeType": "String" },
+            { "LogicalName": "tn_extra", "SchemaName": "tn_Extra", "AttributeType": "String", "IsCustomAttribute": true },
             { "LogicalName": "tn_a", "SchemaName": "tn_A", "AttributeType": "String" }
             """);
         var (service, _) = CreateService(existing);
@@ -466,5 +470,262 @@ public sealed class TableImportServiceTests
         Assert.Equal(2, writes.Count);
         Assert.IsType<DataverseWrite.UpdateEntity>(writes[0]);
         Assert.IsType<DataverseWrite.CreateAttribute>(writes[1]);
+    }
+}
+
+/// <summary>
+/// Issue #34 (sub-issue of #30, "Solution import fixes"): system columns
+/// never listed as deletions in the table import diff, and table-level
+/// properties that can't be applied are reported with a
+/// reason. Kept apart from <see cref="TableImportServiceTests"/> only so
+/// the issue's two changes read as one unit.
+///
+/// What "system column" means here: a live column that Dataverse reports as
+/// not custom (<c>IsCustomAttribute</c> false, i.e.
+/// <see cref="AttributeDefinition.IsCustomField"/> null once read) AND that
+/// is absent from the local YAML. Those are the platform-owned columns every
+/// table carries (createdby, modifiedby, ownerid, statecode, statuscode,
+/// versionnumber, and their ...name/...yominame companions) - ones this
+/// import can neither create nor delete (<see cref="AttributeImportAction.WouldRemove"/>
+/// is never applied), so listing them as removals is pure noise. A
+/// custom-flagged live-only column is NOT a system column and still shows.
+/// </summary>
+public sealed class TableImportServiceDiffNoiseAndUnappliedPropertyTests
+{
+    private static readonly Uri Environment = new("https://test.crm.dynamics.com");
+
+    private static (TableImportService Service, FakeDataverseClient Client) CreateService(string existingEntityJson)
+    {
+        var client = new FakeDataverseClient
+        {
+            EntityDefinitionJson = existingEntityJson,
+            // Option-bearing system columns (statecode/statuscode) make the
+            // import fetch their option sets; an empty body means "no options".
+            AttributeOptionSetJson = (_, _) => "{}",
+            AttributeMetadataJson = (name, _) => $$"""{ "LogicalName": "{{name}}", "SchemaName": "{{name}}" }""",
+        };
+        var service = new TableImportService(client, new EntityJsonDefinitionReader(), new AttributeOptionSetFetcher(client));
+        return (service, client);
+    }
+
+    private static string Entity(string attributesJson, string extraEntityProperties = "") => $$"""
+        {
+          "LogicalName": "tn_test",
+          "SchemaName": "tn_Test",
+          "OwnershipType": "UserOwned",
+          {{extraEntityProperties}}
+          "Attributes": [ {{attributesJson}} ]
+        }
+        """;
+
+    /// <summary>The platform-owned columns a real custom table always carries - the issue's own examples (createdby, modifiedby, ownerid, statecode) plus statuscode and a ...name companion.</summary>
+    private const string SystemColumnsJson = """
+        { "LogicalName": "createdby", "SchemaName": "CreatedBy", "AttributeType": "Lookup", "IsCustomAttribute": false, "Targets": ["systemuser"] },
+        { "LogicalName": "createdbyname", "SchemaName": "CreatedByName", "AttributeType": "String", "IsCustomAttribute": false },
+        { "LogicalName": "modifiedby", "SchemaName": "ModifiedBy", "AttributeType": "Lookup", "IsCustomAttribute": false, "Targets": ["systemuser"] },
+        { "LogicalName": "ownerid", "SchemaName": "OwnerId", "AttributeType": "Owner", "IsCustomAttribute": false, "Targets": ["systemuser", "team"] },
+        { "LogicalName": "statecode", "SchemaName": "StateCode", "AttributeType": "State", "IsCustomAttribute": false },
+        { "LogicalName": "statuscode", "SchemaName": "StatusCode", "AttributeType": "Status", "IsCustomAttribute": false }
+        """;
+
+    private static readonly string[] SystemColumnNames = ["createdby", "createdbyname", "modifiedby", "ownerid", "statecode", "statuscode"];
+
+    private static AttributeDefinition Attr(string name, string type, string schemaName, Action<AttributeDefinitionBuilder>? configure = null)
+    {
+        var builder = new AttributeDefinitionBuilder(type, schemaName) { Name = name };
+        configure?.Invoke(builder);
+        return builder.Build();
+    }
+
+    private static List<string> RemovedLines(TableImportPreview preview) =>
+        TextDiff.Compute(preview.ExistingYaml, preview.NewYaml)
+            .Where(line => line.Kind == TextDiffLineKind.Removed)
+            .Select(line => line.Text)
+            .ToList();
+
+    private static TablePropertyNotApplied SingleNotApplied(TableImportPreview preview)
+    {
+        Assert.True(preview.NotAppliedTableProperties.Count == 1,
+            "expected exactly one table-level property reported as \"not applied: <reason>\" in TableImportPreview.NotAppliedTableProperties, but there were "
+            + $"{preview.NotAppliedTableProperties.Count}: [{string.Join(", ", preview.NotAppliedTableProperties.Select(p => p.Property))}].");
+        return preview.NotAppliedTableProperties[0];
+    }
+
+    // ---- System columns in the diff ----
+
+    // Given a live table carrying the platform's own system columns that the
+    // local YAML doesn't mention, when TableImportService.PreviewAsync builds
+    // the diff (ExistingYaml vs NewYaml, what `table import` prints), then no
+    // removed line names any of them.
+    [Fact]
+    public async Task PreviewAsync_LiveOnlySystemColumns_AreNeverShownAsRemovedInTheDiff()
+    {
+        var live = Entity("""{ "LogicalName": "tn_name", "SchemaName": "tn_Name", "AttributeType": "String", "IsCustomAttribute": true },""" + SystemColumnsJson);
+        var (service, _) = CreateService(live);
+        var local = new EntityDefinition { LogicalName = "tn_test", Attributes = [Attr("tn_name", "String", "tn_Name")] };
+
+        var preview = await service.PreviewAsync(Environment, "token", local, CancellationToken.None);
+
+        var removed = RemovedLines(preview);
+        var leaked = SystemColumnNames.Where(column => removed.Any(line => line.Contains(column, StringComparison.Ordinal))).ToList();
+        Assert.True(leaked.Count == 0,
+            $"expected no system columns in the diff as deletions, but these were listed as removed: {string.Join(", ", leaked)}.");
+    }
+
+    // Real changes still show: a genuine edit to a column both sides
+    // have must still appear in the diff alongside the hidden system columns.
+    // Given tn_name's live DisplayName is "Old Name" and the local YAML says
+    // "New Name", then the diff removes the old text and adds the new.
+    [Fact]
+    public async Task PreviewAsync_RealColumnChange_StillShowsInTheDiffAlongsideHiddenSystemColumns()
+    {
+        var live = Entity("""{ "LogicalName": "tn_name", "SchemaName": "tn_Name", "AttributeType": "String", "IsCustomAttribute": true, "DisplayName": { "UserLocalizedLabel": { "Label": "Old Name" } } },""" + SystemColumnsJson);
+        var (service, _) = CreateService(live);
+        var local = new EntityDefinition { LogicalName = "tn_test", Attributes = [Attr("tn_name", "String", "tn_Name", b => b.DisplayName = "New Name")] };
+
+        var preview = await service.PreviewAsync(Environment, "token", local, CancellationToken.None);
+
+        var diff = TextDiff.Compute(preview.ExistingYaml, preview.NewYaml);
+        Assert.Contains(diff, line => line.Kind == TextDiffLineKind.Removed && line.Text.Contains("Old Name", StringComparison.Ordinal));
+        Assert.Contains(diff, line => line.Kind == TextDiffLineKind.Added && line.Text.Contains("New Name", StringComparison.Ordinal));
+    }
+
+    // Only live-only columns are hidden: a system column the local
+    // YAML DOES list is being compared, not deleted, so a real difference on
+    // it must still show. Given live createdbyname's DisplayName is "Old"
+    // and the local YAML sets "New", then the diff shows the change.
+    [Fact]
+    public async Task PreviewAsync_SystemColumnPresentInLocalYamlWithARealChange_StillShowsInTheDiff()
+    {
+        var live = Entity("""{ "LogicalName": "createdbyname", "SchemaName": "CreatedByName", "AttributeType": "String", "IsCustomAttribute": false, "DisplayName": { "UserLocalizedLabel": { "Label": "Old" } } }""");
+        var (service, _) = CreateService(live);
+        var local = new EntityDefinition { LogicalName = "tn_test", Attributes = [Attr("createdbyname", "String", "CreatedByName", b => b.DisplayName = "New")] };
+
+        var preview = await service.PreviewAsync(Environment, "token", local, CancellationToken.None);
+
+        var diff = TextDiff.Compute(preview.ExistingYaml, preview.NewYaml);
+        Assert.Contains(diff, line => line.Kind == TextDiffLineKind.Removed && line.Text.Contains("Old", StringComparison.Ordinal));
+        Assert.Contains(diff, line => line.Kind == TextDiffLineKind.Added && line.Text.Contains("New", StringComparison.Ordinal));
+    }
+
+    // Definition boundary, a design decision this test records: a
+    // live-only column flagged custom (IsCustomAttribute true) is not a
+    // platform-owned system column, so it is still shown. Without this the
+    // filter could be "hide every live-only column", which would also hide a
+    // custom column someone dropped from the YAML by mistake.
+    [Fact]
+    public async Task PreviewAsync_LiveOnlyCustomColumn_IsStillShownAsRemovedInTheDiff()
+    {
+        var live = Entity("""{ "LogicalName": "tn_orphan", "SchemaName": "tn_Orphan", "AttributeType": "String", "IsCustomAttribute": true },""" + SystemColumnsJson);
+        var (service, _) = CreateService(live);
+        var local = new EntityDefinition { LogicalName = "tn_test", Attributes = [] };
+
+        var preview = await service.PreviewAsync(Environment, "token", local, CancellationToken.None);
+
+        Assert.Contains(RemovedLines(preview), line => line.Contains("tn_orphan", StringComparison.Ordinal));
+    }
+
+    // ---- Table-level properties that can't be applied ----
+
+    // Given the live table has HasNotes false and the local YAML asks for
+    // hasNotes: true (this import only writes DisplayName/PluralDisplayName/
+    // Description), when TableImportService.PreviewAsync runs, then
+    // NotAppliedTableProperties lists "hasNotes" with a non-empty reason.
+    [Fact]
+    public async Task PreviewAsync_LocalHasNotesTrueButLiveFalse_ReportsHasNotesAsNotApplied()
+    {
+        var (service, _) = CreateService(Entity("", extraEntityProperties: "\"HasNotes\": false,"));
+        var local = new EntityDefinition { LogicalName = "tn_test", HasNotes = true };
+
+        var preview = await service.PreviewAsync(Environment, "token", local, CancellationToken.None);
+
+        var notApplied = SingleNotApplied(preview);
+        Assert.Equal("hasNotes", notApplied.Property, ignoreCase: true);
+        Assert.False(string.IsNullOrWhiteSpace(notApplied.Reason),
+            "a property that isn't applied must say why (\"not applied: <reason>\"), but the reason was empty.");
+    }
+
+    // The same applies to every other table-level property the model
+    // documents as "applying this file back won't ...": HasActivities and
+    // IsActivity (and, below, OwnershipType).
+    [Theory]
+    [InlineData("HasActivities")]
+    [InlineData("IsActivity")]
+    public async Task PreviewAsync_LocalBooleanTablePropertyTrueButLiveFalse_ReportsItAsNotApplied(string property)
+    {
+        var (service, _) = CreateService(Entity("", extraEntityProperties: $"\"{property}\": false,"));
+        var local = new EntityDefinition
+        {
+            LogicalName = "tn_test",
+            HasActivities = property == "HasActivities" ? true : null,
+            IsActivity = property == "IsActivity" ? true : null,
+        };
+
+        var preview = await service.PreviewAsync(Environment, "token", local, CancellationToken.None);
+
+        var notApplied = SingleNotApplied(preview);
+        Assert.Equal(property, notApplied.Property, ignoreCase: true);
+        Assert.False(string.IsNullOrWhiteSpace(notApplied.Reason), $"'{property}' must be reported with a reason.");
+    }
+
+    // OwnershipType can't be changed after creation (see
+    // EntityDefinition.OwnershipType). Given live UserOwned and local
+    // OrganizationOwned, then it is reported as not applied.
+    [Fact]
+    public async Task PreviewAsync_LocalOwnershipTypeDiffersFromLive_ReportsItAsNotApplied()
+    {
+        var (service, _) = CreateService(Entity(""));
+        var local = new EntityDefinition { LogicalName = "tn_test", OwnershipType = "OrganizationOwned" };
+
+        var preview = await service.PreviewAsync(Environment, "token", local, CancellationToken.None);
+
+        var notApplied = SingleNotApplied(preview);
+        Assert.Equal("ownershipType", notApplied.Property, ignoreCase: true);
+        Assert.False(string.IsNullOrWhiteSpace(notApplied.Reason), "'ownershipType' must be reported with a reason.");
+    }
+
+    // No false alarms: when the local YAML already agrees with live,
+    // nothing is "not applied". Given live HasNotes true and local
+    // hasNotes: true, the list is empty.
+    [Fact]
+    public async Task PreviewAsync_LocalHasNotesMatchesLive_ReportsNothingAsNotApplied()
+    {
+        var (service, _) = CreateService(Entity("", extraEntityProperties: "\"HasNotes\": true,"));
+        var local = new EntityDefinition { LogicalName = "tn_test", HasNotes = true };
+
+        var preview = await service.PreviewAsync(Environment, "token", local, CancellationToken.None);
+
+        Assert.Empty(preview.NotAppliedTableProperties);
+    }
+
+    // Absent means "don't touch": a property the local YAML omits is
+    // never reported (yaml-conventions Rule 1). Given a live table with
+    // HasNotes true and a local YAML that doesn't mention it, the list is
+    // empty.
+    [Fact]
+    public async Task PreviewAsync_LocalOmitsHasNotes_ReportsNothingAsNotApplied()
+    {
+        var (service, _) = CreateService(Entity("", extraEntityProperties: "\"HasNotes\": true,"));
+        var local = new EntityDefinition { LogicalName = "tn_test" };
+
+        var preview = await service.PreviewAsync(Environment, "token", local, CancellationToken.None);
+
+        Assert.Empty(preview.NotAppliedTableProperties);
+    }
+
+    // An un-appliable property is not a write. It must not make the
+    // preview claim there is something to import (so the "Nothing to import"
+    // summary - where the reason is shown - still fires), and no table
+    // update body is built for it.
+    [Fact]
+    public async Task PreviewAsync_OnlyAnUnappliableTablePropertyDiffers_HasNoWritesToApply()
+    {
+        var (service, _) = CreateService(Entity("", extraEntityProperties: "\"HasNotes\": false,"));
+        var local = new EntityDefinition { LogicalName = "tn_test", HasNotes = true };
+
+        var preview = await service.PreviewAsync(Environment, "token", local, CancellationToken.None);
+
+        Assert.False(preview.HasChanges, "An unappliable property must not count as a change to import.");
+        Assert.Null(preview.TableUpdateBody);
     }
 }

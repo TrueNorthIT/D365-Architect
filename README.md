@@ -306,6 +306,14 @@ changes in Dataverse, and if there's genuinely nothing to apply, nothing is
 written at all. Pass `--whatif` to see the diff/plan and stop there — no
 prompt, no write, regardless of `--yes`.
 
+Live-only system columns (`createdby`, `ownerid`, `statecode` and similar,
+which Dataverse reports as non-custom) are hidden from the diff, since this
+import never creates or deletes them. Table-level properties the file sets
+that this import can't apply are listed in the plan as `not applied: <reason>`
+and never written: `hasNotes`/`hasActivities` (use the Maker portal), and
+`isActivity`/`ownershipType` (Dataverse can't change these after creation).
+Those alone never count as a change.
+
 Every create/update is also checked for common invalid changes *before*
 anything is sent — changing a column's type or SchemaName after creation,
 creating a column whose SchemaName has no customization prefix or contains
