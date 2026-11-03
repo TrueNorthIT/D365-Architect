@@ -2,9 +2,7 @@ name: Issue analysis
 
 on:
   issues:
-    types: [opened]
-
-concurrency: issue-${{ github.event.issue.number }}
+    types: [opened, labeled]
 
 permissions:
   issues: write
@@ -12,8 +10,13 @@ permissions:
 
 jobs:
   analyse:
-    # Only BPMichon or JCottrell-TrueNorthIT may trigger bigmac (sender = whoever opened the issue)
-    if: contains(fromJSON('["BPMichon", "JCottrell-TrueNorthIT"]'), github.event.sender.login)
+    # Runs when an issue is opened, or when the `analyse` label is added (e.g. old issues).
+    # Only BPMichon or JCottrell-TrueNorthIT may trigger bigmac (sender = opener / labeller).
+    if: >-
+      (github.event.action == 'opened' || github.event.label.name == 'analyse') &&
+      contains(fromJSON('["BPMichon", "JCottrell-TrueNorthIT"]'), github.event.sender.login)
+    # Job-level, so the skipped runs from other label changes never touch the queue.
+    concurrency: issue-analysis-${{ github.event.issue.number }}
     runs-on: [self-hosted, bigmac]
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -23,11 +26,19 @@ jobs:
       OLLAMA: http://localhost:11434
     steps:
       - name: Claim
-        run: gh issue edit "$N" --add-label analysis-in-progress
+        run: |
+          gh label create analyse --color 1d76db --description "Run the flint analysis on this issue" --force
+          gh issue edit "$N" --add-label analysis-in-progress --remove-label analyse
 
       - name: Analyse (local model)
         run: |
-          { gh issue view "$N"; gh issue view "$N" --comments; } > issue.txt
+          # Title + body, plus comments from TrueNorthIT org members only: this output is
+          # trusted by the agent, so outsiders' comments must not flow through it.
+          { gh issue view "$N"
+            gh api "repos/$GH_REPO/issues/$N/comments" --paginate \
+              --jq '.[] | select(.author_association == "MEMBER" or .author_association == "OWNER")
+                    | "\n--- \(.user.login) commented:\n\(.body)"'
+          } > issue.txt
           jq -n --rawfile issue issue.txt --arg model "$MODEL" '{
             model: $model, stream: false, think: false,
             messages: [
