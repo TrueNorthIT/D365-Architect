@@ -53,10 +53,18 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh issue view "$N" --json title,body,comments > "$RUNNER_TEMP/issue.json"
-          # Only comments from TrueNorthIT org members reach the model (prompt-injection guard).
-          jq -r '
-            .comments |= map(select(.authorAssociation == "MEMBER" or .authorAssociation == "OWNER")) |
+          gh issue view "$N" --json title,body > "$RUNNER_TEMP/issue.json"
+          # REST, not `gh issue view`: it keeps the "[bot]" suffix and user.type, which
+          # a human account cannot fake.
+          gh api "repos/$GH_REPO/issues/$N/comments" --paginate --jq '.[]' | jq -s . > "$RUNNER_TEMP/comments.json"
+          # Prompt-injection guard: only TrueNorthIT org members' comments, plus the
+          # flint analysis posted by our own app, reach the model.
+          jq -r --slurpfile c "$RUNNER_TEMP/comments.json" '
+            .comments = ($c[0] | map(select(
+                .author_association == "MEMBER" or .author_association == "OWNER" or
+                (.user.login == "truenorth-big-mac[bot]" and .user.type == "Bot"
+                 and (.body | startswith("## Automated analysis")))
+              ) | {login: .user.login, body})) |
             "You are working in a git repository checked out at /workspace (your current directory).",
             "Resolve the GitHub issue below by editing files in /workspace.",
             "If the issue only asks a question, answer it and do not change any files.",
@@ -69,7 +77,7 @@ jobs:
             "",
             (.body // ""),
             (if (.comments | length) > 0 then "\n# Comments" else empty end),
-            (.comments[] | "\n## \(.author.login) wrote:\n\(.body)")
+            (.comments[] | "\n## \(.login) wrote:\n\(.body)")
           ' "$RUNNER_TEMP/issue.json" > "$RUNNER_TEMP/prompt.txt"
 
       - name: Build image

@@ -37,7 +37,18 @@ jobs:
           curl -sS --fail-with-body "$OLLAMA/api/chat" -d @req.json | jq -r '.message.content' > analysis.md
           test -s analysis.md
 
+      # Posted as the app so the agent can trust it (truenorth-big-mac[bot]); only
+      # workflows holding the app key can comment under that identity.
+      - name: Mint app token
+        id: app
+        uses: actions/create-github-app-token@v3.3.0
+        with:
+          app-id: ${{ vars.BIGMAC_APP_ID }}
+          private-key: ${{ secrets.BIGMAC_APP_PRIVATE_KEY }}
+
       - name: Post comment and mark complete
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
         run: |
           { echo "## Automated analysis"; echo; cat analysis.md; echo; echo "_${MODEL} on bigmac_"; } > comment.md
           gh issue comment "$N" --body-file comment.md
