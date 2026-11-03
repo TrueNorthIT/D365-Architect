@@ -18,7 +18,11 @@ permissions:
 
 jobs:
   agent:
-    if: github.event.label.name == 'agent' && contains(fromJSON('["BPMichon", "JCottrell-TrueNorthIT"]'), github.event.sender.login)
+    # Both the issue author and whoever added the label must be on the list.
+    if: >-
+      github.event.label.name == 'agent' &&
+      contains(fromJSON('["BPMichon", "JCottrell-TrueNorthIT"]'), github.event.sender.login) &&
+      contains(fromJSON('["BPMichon", "JCottrell-TrueNorthIT"]'), github.event.issue.user.login)
     runs-on: [self-hosted, bigmac]
     env:
       GH_REPO: ${{ github.repository }}
@@ -50,7 +54,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh issue view "$N" --json title,body,comments > "$RUNNER_TEMP/issue.json"
+          # Only comments from TrueNorthIT org members reach the model (prompt-injection guard).
           jq -r '
+            .comments |= map(select(.authorAssociation == "MEMBER" or .authorAssociation == "OWNER")) |
             "You are working in a git repository checked out at /workspace (your current directory).",
             "Resolve the GitHub issue below by editing files in /workspace.",
             "If the issue only asks a question, answer it and do not change any files.",
@@ -77,12 +83,25 @@ jobs:
           set -o pipefail
           rm -rf "$WORK" && mkdir -p "$WORK"
           rsync -a --exclude=.git ./ "$WORK/"
+          IMAGE=omp-runner-d365-architect
+
+          # 1. Restore NuGet packages WITH internet, before the agent exists.
+          docker run --rm -v "$WORK:/workspace" -v omp-nuget-d365:/root/.nuget/packages \
+            "$IMAGE" dotnet restore "D365 Architect.slnx"
+
+          # 2. The agent's network has no outside access. The only thing on it is a
+          #    relay answering as host.docker.internal:11434 and forwarding to Ollama.
+          docker network inspect omp-isolated >/dev/null 2>&1 || docker network create --internal omp-isolated
+          docker run -d --rm --name "$CONTAINER-ollama" --add-host=host.docker.internal:host-gateway \
+            "$IMAGE" socat TCP-LISTEN:11434,fork,reuseaddr TCP:host.docker.internal:11434
+          docker network connect --alias host.docker.internal omp-isolated "$CONTAINER-ollama"
+
+          # 3. Agent: isolated network, package cache read-only (cannot add or tamper with packages).
           PROMPT="$(cat "$RUNNER_TEMP/prompt.txt")"
-          docker run --rm --name "$CONTAINER" \
+          docker run --rm --name "$CONTAINER" --network omp-isolated \
             --memory 6g --cpus 4 --pids-limit 1024 \
-            --add-host=host.docker.internal:host-gateway \
-            -v "$WORK:/workspace" \
-            omp-runner-d365-architect \
+            -v "$WORK:/workspace" -v omp-nuget-d365:/root/.nuget/packages:ro \
+            "$IMAGE" \
             omp -p --auto-approve --model "$MODEL" "$PROMPT" | tee "$OUT"
 
       - name: Sync back and detect changes
@@ -159,5 +178,5 @@ jobs:
       - name: Clean up
         if: always()
         run: |
-          docker rm -f "$CONTAINER" 2>/dev/null || true
+          docker rm -f "$CONTAINER" "$CONTAINER-ollama" 2>/dev/null || true
           rm -rf "$WORK" "$OUT"

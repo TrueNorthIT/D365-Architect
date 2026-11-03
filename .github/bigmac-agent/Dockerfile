@@ -3,7 +3,7 @@
 FROM oven/bun:1.4.3-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      git ripgrep jq ca-certificates curl \
+      git ripgrep jq ca-certificates curl socat \
  && rm -rf /var/lib/apt/lists/*
 
 # .NET 10 SDK, to match the projects' net10.0 target. Invariant globalisation
