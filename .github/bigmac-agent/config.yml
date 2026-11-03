@@ -1,0 +1,3 @@
+shellPath: /bin/bash
+modelRoles:
+  default: bigmac/qwen3.8:27b

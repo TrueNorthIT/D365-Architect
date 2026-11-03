@@ -1,0 +1,163 @@
+name: Issue agent
+
+# Label an issue `agent` (as an allow-listed user) and omp, running on qwen3.8:27b in
+# a Colima container on bigmac, works on it and opens a PR.
+on:
+  issues:
+    types: [labeled]
+
+# One run per issue at a time; a second label event queues instead of cancelling.
+concurrency:
+  group: issue-agent-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  agent:
+    if: github.event.label.name == 'agent' && contains(fromJSON('["BPMichon", "JCottrell-TrueNorthIT"]'), github.event.sender.login)
+    runs-on: [self-hosted, bigmac]
+    env:
+      GH_REPO: ${{ github.repository }}
+      N: ${{ github.event.issue.number }}
+      BRANCH: agent/issue-${{ github.event.issue.number }}
+      CONTAINER: omp-issue-${{ github.event.issue.number }}-${{ github.run_id }}
+      MODEL: bigmac/qwen3.8:27b
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Claim
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # runner.temp is not available in job-level env.
+          echo "WORK=$RUNNER_TEMP/agent-ws-$N" >> "$GITHUB_ENV"
+          echo "OUT=$RUNNER_TEMP/omp-out-$N.txt" >> "$GITHUB_ENV"
+          gh label create agent --color 5319e7 --description "Run the coding agent on this issue" --force
+          gh label create agent-in-progress --color fbca04 --description "Coding agent is working" --force
+          gh label create agent-complete --color 0e8a16 --description "Coding agent finished" --force
+          gh issue edit "$N" --add-label agent-in-progress --remove-label agent-complete
+
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          clean: true
+
+      - name: Build prompt
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue view "$N" --json title,body,comments > "$RUNNER_TEMP/issue.json"
+          jq -r '
+            "You are working in a git repository checked out at /workspace (your current directory).",
+            "Resolve the GitHub issue below by editing files in /workspace.",
+            "If the issue only asks a question, answer it and do not change any files.",
+            "After making changes, build and test the solution: dotnet build \"D365 Architect.slnx\" && dotnet test \"D365 Architect.slnx\". Fix any failures you caused.",
+            "Do not run git commands; committing is handled for you.",
+            "Do not modify anything under .github/.",
+            "Finish with a short summary of what you changed and why (or your answer).",
+            "",
+            "# Issue: \(.title)",
+            "",
+            (.body // ""),
+            (if (.comments | length) > 0 then "\n# Comments" else empty end),
+            (.comments[] | "\n## \(.author.login) wrote:\n\(.body)")
+          ' "$RUNNER_TEMP/issue.json" > "$RUNNER_TEMP/prompt.txt"
+
+      - name: Build image
+        run: docker build -q -t omp-runner-d365-architect .github/bigmac-agent/
+
+      - name: Run omp in container
+        timeout-minutes: ${{ fromJSON(vars.AGENT_TIMEOUT_MIN || '30') }}
+        run: |
+          # The container gets a copy of the tree WITHOUT .git (a planted hook
+          # would otherwise run on the host at commit), no env and no tokens.
+          set -o pipefail
+          rm -rf "$WORK" && mkdir -p "$WORK"
+          rsync -a --exclude=.git ./ "$WORK/"
+          PROMPT="$(cat "$RUNNER_TEMP/prompt.txt")"
+          docker run --rm --name "$CONTAINER" \
+            --memory 6g --cpus 4 --pids-limit 1024 \
+            --add-host=host.docker.internal:host-gateway \
+            -v "$WORK:/workspace" \
+            omp-runner-d365-architect \
+            omp -p --auto-approve --model "$MODEL" "$PROMPT" | tee "$OUT"
+
+      - name: Sync back and detect changes
+        id: diff
+        run: |
+          # .github is never synced back: the agent cannot change workflows or its own sandbox.
+          rsync -a --delete --exclude=.git --exclude=.github --exclude=bin --exclude=obj "$WORK/" ./
+          git add -A
+          if git diff --cached --quiet; then echo changed=false >> "$GITHUB_OUTPUT"
+          else echo changed=true >> "$GITHUB_OUTPUT"; git diff --cached --stat; fi
+          # Strip ANSI escapes from omp's output for comments/PR body.
+          sed $'s/\x1b\\[[0-9;?]*[a-zA-Z]//g' "$OUT" | tail -c 60000 > "$RUNNER_TEMP/summary.md"
+
+      # Minted only after omp has finished, so the agent never coexists with it.
+      - name: Mint app token
+        id: app
+        if: vars.BIGMAC_APP_ID != ''
+        uses: actions/create-github-app-token@v3.3.0
+        with:
+          app-id: ${{ vars.BIGMAC_APP_ID }}
+          private-key: ${{ secrets.BIGMAC_APP_PRIVATE_KEY }}
+
+      - name: Commit, push and open PR
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token || secrets.GITHUB_TOKEN }}
+          APP_SLUG: ${{ steps.app.outputs.app-slug }}
+          TITLE: ${{ github.event.issue.title }}
+        run: |
+          if [ -n "$APP_SLUG" ]; then
+            NAME="$APP_SLUG[bot]"
+            EMAIL="$(gh api "users/$APP_SLUG%5Bbot%5D" --jq .id)+$APP_SLUG[bot]@users.noreply.github.com"
+          else
+            NAME="github-actions[bot]"
+            EMAIL="41898282+github-actions[bot]@users.noreply.github.com"
+          fi
+          git switch -C "$BRANCH"
+          git -c core.hooksPath=/dev/null -c user.name="$NAME" -c user.email="$EMAIL" \
+            commit -q -m "Agent: $TITLE" -m "Closes #$N"
+          # Empty credential.helper: never let osxkeychain store the token.
+          git -c core.hooksPath=/dev/null -c credential.helper= push --force \
+            "https://x-access-token:$GH_TOKEN@github.com/$GH_REPO.git" "HEAD:refs/heads/$BRANCH"
+
+          { echo "Closes #$N"; echo; echo "## Agent summary"; echo; cat "$RUNNER_TEMP/summary.md";
+            echo; echo "_omp on ${MODEL} via bigmac - [run]($RUN_URL)_"; } > "$RUNNER_TEMP/pr.md"
+          PR="$(gh pr list --head "$BRANCH" --state open --json url --jq '.[0].url')"
+          if [ -n "$PR" ]; then
+            gh pr edit "$PR" --body-file "$RUNNER_TEMP/pr.md"
+          else
+            PR="$(gh pr create --base "${{ github.event.repository.default_branch }}" --head "$BRANCH" \
+              --title "Agent: $TITLE" --body-file "$RUNNER_TEMP/pr.md")"
+          fi
+          gh issue comment "$N" --body "Agent opened/updated a pull request: $PR"
+          gh issue edit "$N" --remove-label agent-in-progress --add-label agent-complete
+
+      - name: Report no changes
+        if: steps.diff.outputs.changed == 'false'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token || secrets.GITHUB_TOKEN }}
+        run: |
+          { echo "No changes made."; echo; cat "$RUNNER_TEMP/summary.md";
+            echo; echo "_omp on ${MODEL} via bigmac - [run]($RUN_URL)_"; } > "$RUNNER_TEMP/comment.md"
+          gh issue comment "$N" --body-file "$RUNNER_TEMP/comment.md"
+          gh issue edit "$N" --remove-label agent-in-progress --add-label agent-complete
+
+      - name: Report failure
+        if: failure() || cancelled()
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token || secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue edit "$N" --remove-label agent-in-progress || true
+          gh issue comment "$N" --body "Agent run failed: $RUN_URL"
+
+      - name: Clean up
+        if: always()
+        run: |
+          docker rm -f "$CONTAINER" 2>/dev/null || true
+          rm -rf "$WORK" "$OUT"

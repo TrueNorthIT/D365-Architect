@@ -1,0 +1,48 @@
+name: Issue analysis
+
+on:
+  issues:
+    types: [opened]
+
+concurrency: issue-${{ github.event.issue.number }}
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  analyse:
+    # Only BPMichon or JCottrell-TrueNorthIT may trigger bigmac (sender = whoever opened the issue)
+    if: contains(fromJSON('["BPMichon", "JCottrell-TrueNorthIT"]'), github.event.sender.login)
+    runs-on: [self-hosted, bigmac]
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      N: ${{ github.event.issue.number }}
+      MODEL: flint:latest
+      OLLAMA: http://localhost:11434
+    steps:
+      - name: Claim
+        run: gh issue edit "$N" --add-label analysis-in-progress
+
+      - name: Analyse (local model)
+        run: |
+          { gh issue view "$N"; gh issue view "$N" --comments; } > issue.txt
+          jq -n --rawfile issue issue.txt --arg model "$MODEL" '{
+            model: $model, stream: false, think: false,
+            messages: [
+              {role: "system", content: "You analyse GitHub issues. Reply in Markdown with these sections: Summary (2-3 sentences), Type (bug/feature/question/other), Likely area, Probable cause or approach, Open questions, Suggested next step. Be concise."},
+              {role: "user", content: $issue}
+            ]}' > req.json
+          curl -sS --fail-with-body "$OLLAMA/api/chat" -d @req.json | jq -r '.message.content' > analysis.md
+          test -s analysis.md
+
+      - name: Post comment and mark complete
+        run: |
+          { echo "## Automated analysis"; echo; cat analysis.md; echo; echo "_${MODEL} on bigmac_"; } > comment.md
+          gh issue comment "$N" --body-file comment.md
+          gh issue edit "$N" --remove-label analysis-in-progress --add-label analysis-complete
+
+      - name: Release claim on failure
+        if: failure()
+        run: gh issue edit "$N" --remove-label analysis-in-progress
