@@ -12,9 +12,9 @@ A command-line tool for managing Dynamics 365 environments.
 
 ## Getting the tool
 
-Every push to `main` and `develop` publishes a standalone `d365architect.exe`
-build to [GitHub Releases](https://github.com/TrueNorthIT/D365-Architect/releases) —
-`main` builds are full releases, `develop` builds are marked "Pre-release".
+Each `vX.Y.Z` release tag on `main`, and every push to `develop`, publishes a
+standalone `d365architect.exe` build to [GitHub Releases](https://github.com/TrueNorthIT/D365-Architect/releases) —
+tagged builds are full releases, `develop` builds are marked "Pre-release".
 Grab the `d365architect-<version>-win-x64.zip` asset from there if you just
 want to run the tool.
 

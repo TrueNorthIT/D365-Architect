@@ -1,28 +1,28 @@
 name: Publish release
 
 # Builds the standalone win-x64 d365architect.exe and publishes it as a
-# GitHub Release asset on every push to main/develop.
+# GitHub Release asset.
 #
 # Versioning (via MinVer, see the MinVer* properties in the .csproj):
-#   - main:    each push is a real release. If the pushed commit is already
-#              tagged "vX.Y.Z" (pushed manually to control a major/minor
-#              bump), that version is used as-is. Otherwise the patch
-#              version is auto-incremented and the workflow tags+pushes it
-#              itself. Published as a full (non-prerelease) GitHub Release.
+#   - "vX.Y.Z" tag push: a real release. A maintainer tags a commit on main
+#              and pushes the tag; MinVer reads that tag as the version.
+#              The run fails if the tagged commit is not on main. Published
+#              as a full (non-prerelease) GitHub Release. A push to main
+#              without a tag publishes nothing.
 #   - develop: each push is a pre-release. MinVer computes a semver
 #              pre-release version from the commit height since the last
-#              release tag on main (e.g. 1.2.4-alpha.0.7). Published as a
-#              GitHub Release marked "Pre-release", tagged with that raw
-#              version string (no "v" prefix, so it can never collide with
-#              or be picked up by MinVer's own "v"-prefixed tag search).
+#              release tag (e.g. 1.2.4-alpha.0.7). Published as a GitHub
+#              Release marked "Pre-release", tagged with that raw version
+#              string (no "v" prefix, so it never matches the "v*" tag
+#              trigger below or MinVer's own "v"-prefixed tag search).
 on:
   push:
-    branches: [main, develop]
+    branches: [develop]
+    tags: ["v*"]
   # Lets a run be kicked off by hand (e.g. `gh workflow run publish-release.yml
-  # --ref <branch>`) against any branch, for testing or to retry a failed
-  # publish without needing a new commit. Branch behavior is unchanged: only
-  # an actual push to main is treated as a release, every other ref
-  # (including a manual run on a feature branch) takes the pre-release path.
+  # --ref <branch-or-tag>`), for testing or to retry a failed publish without
+  # a new commit. Run against a "v*" tag it takes the release path (with the
+  # same on-main check); against any branch it takes the pre-release path.
   workflow_dispatch:
 
 permissions:
@@ -59,23 +59,24 @@ jobs:
           version=$(dotnet build "$PROJECT" -c Release --no-restore -t:Build -getProperty:Version)
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - name: Tag release version (main only)
-        id: main_tag
-        if: github.ref_name == 'main'
+      - name: Check release tag (tag runs only)
+        id: release_tag
+        if: github.ref_type == 'tag'
         run: |
+          tag="${{ github.ref_name }}"
           version="${{ steps.current_version.outputs.version }}"
-          if [[ "$version" == *-* ]]; then
-            # HEAD isn't manually tagged: auto-cut a release from MinVer's
-            # own auto-incremented (pre-release-suffixed) version.
-            tag="v${version%%-*}"
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git tag -a "$tag" -m "Release $tag"
-            git push origin "$tag"
-          else
-            # HEAD is already tagged (a maintainer pushed it manually to
-            # control a major/minor bump) - use it as-is.
-            tag="v${version}"
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Release tags must look like vX.Y.Z, got '$tag'."
+            exit 1
+          fi
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Tag '$tag' points at $GITHUB_SHA, which is not on main. Tag a commit on main."
+            exit 1
+          fi
+          if [ "v$version" != "$tag" ]; then
+            echo "::error::MinVer computed '$version' for tag '$tag'. Check MinVerTagPrefix and that the tag is on this commit."
+            exit 1
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
@@ -93,8 +94,8 @@ jobs:
       - name: Determine release metadata
         id: release
         run: |
-          if [ "${{ github.ref_name }}" = "main" ]; then
-            tag="${{ steps.main_tag.outputs.tag }}"
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            tag="${{ steps.release_tag.outputs.tag }}"
             echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
             echo "tag=$tag" >> "$GITHUB_OUTPUT"
             echo "prerelease=false" >> "$GITHUB_OUTPUT"

@@ -517,13 +517,20 @@ model's version-sensitive output**:
   against the computed version yourself.
 
 `.github/workflows/publish-release.yml` builds and publishes the standalone
-win-x64 exe as a GitHub Release on every push to `main` (a real release —
-either a maintainer's own pushed `vX.Y.Z` tag, or an auto-tagged patch bump)
-and `develop` (always a pre-release, tagged with the raw MinVer version
-string and marked "Pre-release" on GitHub). It also accepts
-`workflow_dispatch` for a manual re-run against any branch (once the workflow
-file itself has reached `main` — GitHub won't let you dispatch a workflow
-that doesn't exist yet on the default branch).
+win-x64 exe as a GitHub Release in two cases:
+- **A pushed `vX.Y.Z` tag** is a real release. Tag a commit on `main` and
+  push the tag (`git tag -a v1.2.0 -m "Release v1.2.0" <commit>`, then
+  `git push origin v1.2.0`). The run fails if the tagged commit is not on
+  `main`. A push to `main` on its own publishes nothing, so merging a
+  release PR and choosing its version are separate steps.
+- **Every push to `develop`** is a pre-release, tagged with the raw MinVer
+  version string (no `v` prefix, so it never triggers the release path) and
+  marked "Pre-release" on GitHub.
+
+It also accepts `workflow_dispatch` for a manual re-run against a branch
+(pre-release) or a `v*` tag (release), once the workflow file itself has
+reached `main` — GitHub won't let you dispatch a workflow that doesn't exist
+yet on the default branch.
 
 ## Testing
 
