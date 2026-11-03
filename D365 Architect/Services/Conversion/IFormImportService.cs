@@ -50,6 +50,13 @@ public interface IFormImportService : IImportService<FormDefinition, FormImportP
     /// — see <see cref="Dataverse.IDataverseClient.CreateSystemFormAsync"/> for the body.
     /// </summary>
     Task ApplyAsync(Uri environmentUrl, string accessToken, FormImportPreview preview, string? solutionUniqueName, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// As <see cref="IImportService{TInput,TPreview}.PreviewAsync"/>, but with
+    /// <paramref name="allowRemovals"/> set, anything live that's missing from
+    /// the YAML (and not simply moved) is removed rather than kept.
+    /// </summary>
+    Task<FormImportPreview> PreviewAsync(Uri environmentUrl, string accessToken, FormDefinition form, bool allowRemovals, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -70,26 +77,17 @@ public interface IFormImportService : IImportService<FormDefinition, FormImportP
 /// <param name="ExistingFormXml">The form's real, current, unmodified live FormXML, exactly as Dataverse returned it.</param>
 /// <param name="NewFormXml">The rebuilt FormXML <see cref="IImportService{TInput,TPreview}.ApplyAsync"/> will write — <see cref="FormXmlWriter"/>'s output, patched onto <paramref name="ExistingFormXml"/>.</param>
 /// <param name="ExistingComparableFormXml">
-/// <paramref name="ExistingFormXml"/> rebuilt through <see cref="FormXmlWriter"/>
-/// from its own decomposed content — the same writer, the same base
-/// document (<paramref name="ExistingFormXml"/> itself), and the same
-/// deterministic id rules that produced <paramref name="NewFormXml"/>. This
-/// — not <paramref name="ExistingFormXml"/> itself — is what actually gets
-/// diffed against <paramref name="NewFormXml"/> before confirming.
+/// <paramref name="ExistingFormXml"/> itself, only its formatting normalised
+/// the way <paramref name="NewFormXml"/> is written — what gets diffed
+/// against <paramref name="NewFormXml"/> before confirming.
 ///
-/// Diffing the two *raw* documents directly was tried first and confirmed
-/// live, on a real, richly-customized production form, to be nearly
-/// useless: every tab, section, and cell showed up as "changed", purely
-/// because their wrapper ids are resynthesized fresh on every rebuild (see
-/// `docs/yaml-conventions.md`) — noise, not signal, even when re-importing
-/// a file with no meaningful edits at all. Rebuilding *both* sides through
-/// the identical pipeline cancels that noise out: unchanged content
-/// produces the same ids and the same attribute-stripping on both sides
-/// (so it disappears from the diff entirely), and only a genuine
-/// difference in the underlying <see cref="FormDefinition"/> content
-/// survives to show up — the same reason `terraform plan` diffs against a
-/// normalized view of current state rather than a provider's raw
-/// last-applied payload.
+/// This used to be the live form rebuilt through the same writer as
+/// <paramref name="NewFormXml"/>, which cancelled out the noise of every id
+/// being regenerated. It also cancelled out everything the writer lost —
+/// spacers, section label settings, header layout — so a form could be
+/// damaged with a clean-looking diff (issue #58). Now that the writer
+/// patches the live form instead of rebuilding it, unchanged content is
+/// byte-identical anyway, and the diff is against the real thing.
 /// </param>
 /// <param name="Violations"><see cref="FormXmlValidator"/>'s findings against <paramref name="NewFormXml"/>.</param>
 /// <param name="IdentityMismatchWarning">
@@ -105,8 +103,15 @@ public interface IFormImportService : IImportService<FormDefinition, FormImportP
 /// </param>
 public sealed record FormImportPreview(Guid FormId, string Entity, string ExistingFormXml, string NewFormXml, string ExistingComparableFormXml, IReadOnlyList<FormXmlValidationMessage> Violations, string? IdentityMismatchWarning = null)
 {
-    /// <summary>False when <see cref="ExistingComparableFormXml"/> and <see cref="NewFormXml"/> are identical — see that parameter's own doc comment for why comparing those two, not the raw live document, is what makes this accurate rather than "true" almost every time.</summary>
+    /// <summary>False when <see cref="ExistingComparableFormXml"/> (the live form) and <see cref="NewFormXml"/> are identical.</summary>
     public bool HasChanges => IsCreate || ExistingComparableFormXml != NewFormXml;
+
+    /// <summary>
+    /// What the patch changed, split by <see cref="FormPatchVerifier"/> into
+    /// what the YAML asked for and what it didn't, plus what is live but
+    /// missing from the YAML. Null for a create: there's no live form to compare.
+    /// </summary>
+    public FormPatchReport? PatchReport { get; init; }
 
     /// <summary>
     /// True when no existing form matched the YAML (no <c>FormId</c>, and no form of that name and type on that
