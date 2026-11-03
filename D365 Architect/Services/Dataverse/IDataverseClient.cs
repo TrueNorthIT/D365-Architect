@@ -22,6 +22,23 @@ public interface IDataverseClient
     Task<string> GetEntityDefinitionJsonAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken);
 
     /// <summary>
+    /// True when a table with this logical name exists live, false when
+    /// Dataverse answers 404 for it; any other failure throws. What
+    /// <c>table create</c> checks before writing anything, so a table that is
+    /// already there is reported and left alone rather than POSTed again.
+    /// </summary>
+    Task<bool> EntityExistsAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Creates a brand-new table: <c>POST EntityDefinitions</c> with
+    /// <paramref name="entityMetadata"/> (see <see cref="EntityMetadataJsonBuilder.BuildCreateBody"/>).
+    /// <paramref name="solutionUniqueName"/>, when given, is sent as the
+    /// <c>MSCRM.SolutionUniqueName</c> header so the table joins that
+    /// solution as it is created - see <see cref="CreateAttributeAsync"/>.
+    /// </summary>
+    Task CreateEntityAsync(Uri environmentUrl, string accessToken, JsonObject entityMetadata, string? solutionUniqueName, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Resolves a solution's unique name to the MetadataIds of the Attribute
     /// components it contains — i.e. which columns that solution actually
     /// customizes, as opposed to a table's full merged metadata. Returns
@@ -70,7 +87,7 @@ public interface IDataverseClient
     /// the Web API, as raw JSON — the shape
     /// <see cref="Conversion.ViewJsonDefinitionReader"/> reads. Reflects the
     /// *published* state, same as <see cref="TryGetSavedQueryAsync"/> — see
-    /// <see cref="UpdateSavedQueryAsync"/>'s own doc comment for what that
+    /// <see cref="UpdateSavedQueryAsync(Uri, string, Guid, string?, string?, string?, CancellationToken)"/>'s own doc comment for what that
     /// means for a just-written, not-yet-published change.
     /// </summary>
     Task<string> GetViewDefinitionsJsonAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken);
@@ -185,6 +202,17 @@ public interface IDataverseClient
     Task PublishEntityAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Publishes the named global choices (option sets) via the
+    /// <c>PublishXml</c> action, one <c>&lt;optionset&gt;</c> per unique name
+    /// under <c>&lt;optionsets&gt;</c>, in the order given: what
+    /// <c>choice import</c> calls after applying. Shape confirmed on
+    /// Microsoft Learn, "PublishXmlRequest.ParameterXml": "Publishes an
+    /// optionset using the optionset unique name"
+    /// (https://learn.microsoft.com/dotnet/api/microsoft.crm.sdk.messages.publishxmlrequest.parameterxml).
+    /// </summary>
+    Task PublishGlobalOptionSetsAsync(Uri environmentUrl, string accessToken, IReadOnlyList<string> optionSetNames, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Looks up a single view's id, description, fetchxml, and layoutxml
     /// together by table + display name — the same identity <c>view
     /// export</c> uses (see <see cref="Conversion.Models.ViewDefinition"/>'s
@@ -196,6 +224,15 @@ public interface IDataverseClient
     Task<ExistingSavedQuery?> TryGetSavedQueryAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string viewName, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Looks a view up by its <c>savedqueryid</c> directly - the by-id
+    /// counterpart of <see cref="TryGetSavedQueryAsync"/>, as
+    /// <see cref="TryGetSystemFormByIdAsync"/> is for forms. Unlike the
+    /// by-name lookup it can't be ambiguous. Returns null when no view has
+    /// that id (a 404).
+    /// </summary>
+    Task<ExistingSavedQuery?> TryGetSavedQueryByIdAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Updates an existing <c>savedquery</c>'s <c>description</c>/
     /// <c>fetchxml</c>/<c>layoutxml</c> via a PATCH request — the actual
     /// write <c>view import</c> performs. Only the non-null arguments are
@@ -203,12 +240,12 @@ public interface IDataverseClient
     /// means don't touch it" convention (see `docs/yaml-conventions.md`
     /// Rule 1) — pass null for anything the local YAML didn't have, not an
     /// empty string, or it would be cleared rather than left alone. Doesn't
-    /// publish the change itself, and unlike <see cref="UpdateSystemFormXmlAsync"/>
+    /// publish the change itself, and unlike <see cref="UpdateSystemFormXmlAsync(Uri, string, Guid, string, CancellationToken)"/>
     /// (which <c>form import</c> now follows with its own call to
     /// <see cref="PublishEntityAsync"/>), <c>view import</c> doesn't call
     /// that either yet — a still-open gap, not a closed one, for views.
     ///
-    /// Confirmed live, the same platform behavior <see cref="UpdateSystemFormXmlAsync"/>'s
+    /// Confirmed live, the same platform behavior <see cref="UpdateSystemFormXmlAsync(Uri, string, Guid, string, CancellationToken)"/>'s
     /// own doc comment already notes for forms: a plain <c>savedqueries</c>
     /// GET (what <see cref="TryGetSavedQueryAsync"/> reads, and what a
     /// follow-up <c>view export</c> would use to verify this write) reflects
@@ -368,6 +405,18 @@ public interface IDataverseClient
     Task UpdateStateValueAsync(Uri environmentUrl, string accessToken, JsonObject body, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Sets the next number an auto-number column's sequential segment will
+    /// use, via the unbound <c>SetAutoNumberSeed</c> action (<c>EntityName</c>,
+    /// <c>AttributeName</c>, <c>Value</c>) - Microsoft Learn, "Create
+    /// autonumber columns", "Set a seed value":
+    /// https://learn.microsoft.com/power-apps/developer/data-platform/create-auto-number-attributes
+    /// Per-environment and not carried by a solution; calling it again resets
+    /// the counter, which is why <c>table import</c> only sends it in the run
+    /// that creates the column.
+    /// </summary>
+    Task SetAutoNumberSeedAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string attributeLogicalName, int value, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Looks up a global choice (<c>GlobalOptionSetDefinitions</c>) by its
     /// unique <c>Name</c>, including its own options. Confirmed live, not
     /// guessed, after two failed attempts: <c>GlobalOptionSetDefinitions</c>
@@ -458,4 +507,72 @@ public interface IDataverseClient
     /// <paramref name="writes"/> is left applied when that happens.
     /// </summary>
     Task ExecuteTransactionAsync(Uri environmentUrl, string accessToken, IReadOnlyList<DataverseWrite> writes, CancellationToken cancellationToken);
+
+    // ---- Simpler hand-written forms and views. ----
+
+    /// <summary>
+    /// Reads the three things <c>view import</c> needs from a table to build or
+    /// repair a view's layout: <c>ObjectTypeCode</c> (the <c>object</c> attribute of
+    /// <c>&lt;grid&gt;</c>, which Dataverse insists on and which a brand-new table only
+    /// has once created), <c>PrimaryIdAttribute</c> (the layout's <c>row id</c>) and
+    /// <c>PrimaryNameAttribute</c> (its <c>jump</c>).
+    /// <c>GET EntityDefinitions(LogicalName='...')?$select=ObjectTypeCode,PrimaryIdAttribute,PrimaryNameAttribute</c>;
+    /// all three are properties of EntityMetadata per Microsoft Learn,
+    /// https://learn.microsoft.com/power-apps/developer/data-platform/webapi/reference/entitymetadata .
+    /// Returns null when Dataverse answers 404 (no such table); any other failure throws.
+    /// </summary>
+    Task<EntityIdentity?> TryGetEntityIdentityAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Creates a view: <c>POST savedqueries</c> with <paramref name="body"/> unchanged
+    /// (<c>name</c>, <c>returnedtypecode</c>, <c>fetchxml</c>, <c>layoutxml</c>, <c>querytype</c> 0, optionally <c>description</c>),
+    /// per Microsoft Learn, "Customize Views in Model-driven Apps" (Create views),
+    /// https://learn.microsoft.com/power-apps/developer/model-driven-apps/customize-entity-views .
+    /// <paramref name="solutionUniqueName"/>, when given, is sent as the
+    /// <c>MSCRM.SolutionUniqueName</c> header so the view joins that solution as it is
+    /// created, per Learn, "Use optional parameters",
+    /// https://learn.microsoft.com/power-apps/developer/data-platform/optional-parameters#associate-a-solution-component-with-a-solution .
+    /// </summary>
+    Task CreateSavedQueryAsync(Uri environmentUrl, string accessToken, JsonObject body, string? solutionUniqueName, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// As <see cref="UpdateSavedQueryAsync(Uri, string, Guid, string?, string?, string?, CancellationToken)"/>,
+    /// plus <paramref name="solutionUniqueName"/> sent as <c>MSCRM.SolutionUniqueName</c> on the PATCH
+    /// so the changed view joins that solution. Learn lists Update (PATCH) among the operations that
+    /// accept the header, and the AddSolutionComponent page itself calls the header "a better option"
+    /// for a component being created or updated
+    /// (https://learn.microsoft.com/power-apps/developer/data-platform/webapi/reference/addsolutioncomponent ),
+    /// so no separate AddSolutionComponent call (component type 26, Saved Query) is made. A call with
+    /// nothing to write sends nothing, header or not. Null sends no header.
+    /// </summary>
+    Task UpdateSavedQueryAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, string? description, string? fetchXml, string? layoutXml, string? solutionUniqueName, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Every form on <paramref name="entityLogicalName"/> whose name is <paramref name="formName"/> and whose
+    /// systemform <c>type</c> is <paramref name="formType"/> (the option-set value: 2 Main, 6 Quick View Form,
+    /// 7 Quick Create, 11 Card, ... per Learn's SystemForm reference,
+    /// https://learn.microsoft.com/power-apps/developer/data-platform/reference/entities/systemform ).
+    /// Empty when none; more than one is returned as-is (the caller decides whether that is ambiguous) -
+    /// unlike <see cref="TryGetSystemFormAsync"/> this never throws for a shared name.
+    /// <c>GET systemforms?$filter=objecttypecode eq '...' and name eq '...' and type eq N</c>.
+    /// </summary>
+    Task<IReadOnlyList<ExistingSystemForm>> FindSystemFormsAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string formName, int formType, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Creates a form: <c>POST systemforms</c> with <paramref name="body"/> unchanged
+    /// (<c>name</c>, <c>objecttypecode</c>, <c>type</c> as the option-set integer, <c>formxml</c>, optionally <c>description</c>);
+    /// those are writable SystemForm columns per Learn's SystemForm reference
+    /// (https://learn.microsoft.com/power-apps/developer/data-platform/reference/entities/systemform ),
+    /// which lists <c>POST /systemforms</c> as the Create message. Learn gives no worked Web API example for
+    /// creating a form, so the minimum accepted set is UNCONFIRMED until run live.
+    /// <paramref name="solutionUniqueName"/> is sent as <c>MSCRM.SolutionUniqueName</c>, as for <see cref="CreateSavedQueryAsync"/>.
+    /// </summary>
+    Task CreateSystemFormAsync(Uri environmentUrl, string accessToken, JsonObject body, string? solutionUniqueName, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// As <see cref="UpdateSystemFormXmlAsync(Uri, string, Guid, string, CancellationToken)"/>, plus
+    /// <paramref name="solutionUniqueName"/> sent as <c>MSCRM.SolutionUniqueName</c> on the PATCH (component type 60, System Form,
+    /// so is never added by a separate AddSolutionComponent call - see <see cref="UpdateSavedQueryAsync(Uri, string, Guid, string?, string?, string?, string?, CancellationToken)"/>).
+    /// </summary>
+    Task UpdateSystemFormXmlAsync(Uri environmentUrl, string accessToken, Guid formId, string formXml, string? solutionUniqueName, CancellationToken cancellationToken);
 }

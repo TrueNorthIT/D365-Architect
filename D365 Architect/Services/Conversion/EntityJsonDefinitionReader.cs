@@ -187,6 +187,7 @@ public sealed class EntityJsonDefinitionReader : IEntityDefinitionReader
                 IsActivity = DefaultValueConventions.TrueOrNull(GetBool(root, "IsActivity")),
                 HasActivities = DefaultValueConventions.TrueOrNull(GetBool(root, "HasActivities")),
                 HasNotes = DefaultValueConventions.TrueOrNull(GetBool(root, "HasNotes")),
+                PrimaryNameAttribute = GetString(root, "PrimaryNameAttribute"),
                 Attributes = attributes,
             };
         }
@@ -228,7 +229,10 @@ public sealed class EntityJsonDefinitionReader : IEntityDefinitionReader
             PrecisionSource = GetInt(attribute, "PrecisionSource"),
             MinValue = GetDouble(attribute, "MinValue"),
             MaxValue = GetDouble(attribute, "MaxValue"),
-            Format = GetString(attribute, "Format"),
+            Format = ReadFormat(attribute, type),
+            // Dataverse reports an ordinary String's AutoNumberFormat as ""
+            // (and other types don't carry it at all) — both mean "none".
+            AutoNumberFormat = GetString(attribute, "AutoNumberFormat") is { Length: > 0 } autoNumberFormat ? autoNumberFormat : null,
             Targets = GetStringArray(attribute, "Targets"),
             IsCustomField = DefaultValueConventions.TrueOrNull(GetBool(attribute, "IsCustomAttribute")),
             ValidForAdvancedFind = GetManagedPropertyBool(attribute, "IsValidForAdvancedFind"),
@@ -239,6 +243,18 @@ public sealed class EntityJsonDefinitionReader : IEntityDefinitionReader
             FalseOptionLabel = optionSetFields.FalseOptionLabel,
         };
     }
+
+    /// <summary>
+    /// The legacy <c>Format</c>, except a rich text Memo: confirmed live
+    /// (2026-10-26) that one reads back as <c>Format: "Text"</c> and only
+    /// <c>FormatName.Value</c> says <c>"RichText"</c> (see
+    /// <see cref="Dataverse.MemoFormats"/>). Only RichText is taken from
+    /// <c>FormatName</c>, so every other Memo exports exactly as before.
+    /// </summary>
+    private static string? ReadFormat(JsonElement attribute, string type) =>
+        type == "Memo" && GetManagedPropertyString(attribute, "FormatName") == Dataverse.MemoFormats.RichText
+            ? Dataverse.MemoFormats.RichText
+            : GetString(attribute, "Format");
 
     private readonly record struct OptionSetFields(
         IReadOnlyList<AttributeOptionDefinition>? Options,

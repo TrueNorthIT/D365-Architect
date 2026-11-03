@@ -61,4 +61,174 @@ public sealed class ViewImportServiceTests
 
         Assert.True(preview.HasChanges);
     }
+
+    // Live re-run of a view created from a hand-written file: Dataverse
+    // stamps savedqueryid onto the stored <fetch> root, the file has none.
+    private const string LiveFetchXml = """<fetch version="1.0" mapping="logical" savedqueryid="077b48af-46d1-f111-a05b-6045bd0e42a3"><entity name="tn_test"><attribute name="tn_name" /></entity></fetch>""";
+    private const string HandWrittenFetchXml = """<fetch version="1.0" mapping="logical"><entity name="tn_test"><attribute name="tn_name" /></entity></fetch>""";
+
+    [Fact]
+    public async Task PreviewAsync_LiveFetchHasOnlyTheStampedSavedQueryId_HasNoChanges()
+    {
+        var client = new FakeDataverseClient { SavedQuery = new ExistingSavedQuery(Guid.NewGuid(), null, LiveFetchXml, null) };
+
+        var preview = await new ViewImportService(client).PreviewAsync(Environment, "token", View(fetchXml: HandWrittenFetchXml), CancellationToken.None);
+
+        Assert.False(preview.HasChanges);
+    }
+
+    [Fact]
+    public async Task PreviewAsync_ExportedFetchCarryingSavedQueryId_HasNoChanges()
+    {
+        var client = new FakeDataverseClient { SavedQuery = new ExistingSavedQuery(Guid.NewGuid(), null, LiveFetchXml, null) };
+
+        var preview = await new ViewImportService(client).PreviewAsync(Environment, "token", View(fetchXml: LiveFetchXml), CancellationToken.None);
+
+        Assert.False(preview.HasChanges);
+    }
+
+    [Fact]
+    public async Task PreviewAsync_LiveFetchWithSavedQueryIdButARealChange_StillShowsTheChange()
+    {
+        var client = new FakeDataverseClient { SavedQuery = new ExistingSavedQuery(Guid.NewGuid(), null, LiveFetchXml, null) };
+        var edited = HandWrittenFetchXml.Replace("tn_name", "tn_other");
+
+        var preview = await new ViewImportService(client).PreviewAsync(Environment, "token", View(fetchXml: edited), CancellationToken.None);
+
+        Assert.True(preview.HasChanges);
+        Assert.Equal(HandWrittenFetchXml, preview.ExistingFetchXml);
+    }
+
+    // ---- Issue #35 (sub-issue of #30): pinning a view by savedQueryId ----
+
+    private static readonly Uri Environment = new("https://test.crm.dynamics.com");
+    private static readonly Guid TargetViewId = new("db985fe6-a889-f111-8077-002248426c39");
+    private static readonly Guid SiblingViewId = new("aaaaaaaa-0000-0000-0000-000000000001");
+
+    private static ViewDefinition ViewPinnedTo(Guid savedQueryId, string? fetchXml = null) => new()
+    {
+        Name = "My Inspections",
+        Entity = "tn_inspection",
+        SavedQueryId = savedQueryId,
+        FetchXml = fetchXml,
+    };
+
+    // Given two live views share the name 'My Inspections' on tn_inspection
+    // (a by-name lookup is ambiguous) and the YAML carries the savedQueryId
+    // of one of them, when ViewImportService.PreviewAsync runs, then it
+    // resolves that view instead of refusing.
+    [Fact]
+    public async Task PreviewAsync_WithSavedQueryId_ResolvesThatViewEvenWhenTheNameIsAmbiguous()
+    {
+        var client = new FakeDataverseClient { SavedQueryNameIsAmbiguous = true };
+        client.SavedQueriesById[TargetViewId] = new ExistingSavedQuery(TargetViewId, null, "<fetch>old</fetch>", null);
+        var service = new ViewImportService(client);
+
+        var preview = await service.PreviewAsync(Environment, "token", ViewPinnedTo(TargetViewId, "<fetch>new</fetch>"), CancellationToken.None);
+
+        Assert.True(preview.SavedQueryId == TargetViewId, $"expected the preview to target the view named by the YAML's savedQueryId ({TargetViewId}), but it targeted {preview.SavedQueryId}.");
+        Assert.True(preview.HasChanges, "the pinned view's live FetchXML differs from the YAML's, so a change should be previewed.");
+    }
+
+    // The id, not the name, picks the target. Given the by-name
+    // lookup would find a DIFFERENT view (a sibling that shares the name)
+    // while the YAML pins the target's id, then the preview is for the
+    // target, not the sibling.
+    [Fact]
+    public async Task PreviewAsync_WithSavedQueryId_PrefersTheIdOverWhateverTheNameWouldMatch()
+    {
+        var client = new FakeDataverseClient { SavedQuery = new ExistingSavedQuery(SiblingViewId, null, "<fetch>sibling</fetch>", null) };
+        client.SavedQueriesById[TargetViewId] = new ExistingSavedQuery(TargetViewId, null, "<fetch>target</fetch>", null);
+        var service = new ViewImportService(client);
+
+        var preview = await service.PreviewAsync(Environment, "token", ViewPinnedTo(TargetViewId, "<fetch>new</fetch>"), CancellationToken.None);
+
+        Assert.True(preview.SavedQueryId == TargetViewId, $"expected the preview to target the view named by the YAML's savedQueryId ({TargetViewId}), but it targeted {preview.SavedQueryId}.");
+        Assert.Equal("<fetch>target</fetch>", preview.ExistingFetchXml);
+    }
+
+    // Applying the preview writes to the pinned view and no other.
+    [Fact]
+    public async Task ApplyAsync_WithSavedQueryId_UpdatesTheViewTheIdNames()
+    {
+        var client = new FakeDataverseClient { SavedQueryNameIsAmbiguous = true };
+        client.SavedQueriesById[TargetViewId] = new ExistingSavedQuery(TargetViewId, null, "<fetch>old</fetch>", null);
+        var service = new ViewImportService(client);
+
+        var preview = await service.PreviewAsync(Environment, "token", ViewPinnedTo(TargetViewId, "<fetch>new</fetch>"), CancellationToken.None);
+        await service.ApplyAsync(Environment, "token", preview, CancellationToken.None);
+
+        var call = Assert.Single(client.UpdateSavedQueryCalls);
+        Assert.True(call.SavedQueryId == TargetViewId, $"expected the update to go to {TargetViewId}, but it went to {call.SavedQueryId}.");
+        Assert.Equal("<fetch>new</fetch>", call.FetchXml);
+    }
+
+    // A stale id (nothing live has it) is an error, never a quiet fall back to the name.
+    [Fact]
+    public async Task PreviewAsync_WithSavedQueryIdNotFoundLive_ThrowsViewNotFoundException()
+    {
+        var client = new FakeDataverseClient { SavedQuery = new ExistingSavedQuery(SiblingViewId, null, "<fetch/>", null) };
+        var service = new ViewImportService(client);
+
+        var ex = await Assert.ThrowsAsync<ViewNotFoundException>(() =>
+            service.PreviewAsync(Environment, "token", ViewPinnedTo(TargetViewId, "<fetch>new</fetch>"), CancellationToken.None));
+
+        Assert.Equal(TargetViewId, ex.SavedQueryId);
+    }
+
+    // The id resolves to a view on a different table: refuse, naming both.
+    [Fact]
+    public async Task PreviewAsync_WithSavedQueryIdOnADifferentEntity_RefusesNamingBoth()
+    {
+        var client = new FakeDataverseClient();
+        client.SavedQueriesById[TargetViewId] = new ExistingSavedQuery(TargetViewId, null, "<fetch/>", null, "account", "Active Accounts");
+        var service = new ViewImportService(client);
+
+        var ex = await Assert.ThrowsAsync<ViewIdentityMismatchException>(() =>
+            service.PreviewAsync(Environment, "token", ViewPinnedTo(TargetViewId, "<fetch>new</fetch>"), CancellationToken.None));
+
+        Assert.Contains("'account'", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("'tn_inspection'", ex.Message, StringComparison.Ordinal);
+    }
+
+    // Same table, different name: a legitimate rename, so warn but proceed.
+    [Fact]
+    public async Task PreviewAsync_WithSavedQueryIdWhoseLiveNameDiffers_WarnsButProceeds()
+    {
+        var client = new FakeDataverseClient();
+        client.SavedQueriesById[TargetViewId] = new ExistingSavedQuery(TargetViewId, null, "<fetch>old</fetch>", null, "tn_inspection", "Old Name");
+        var service = new ViewImportService(client);
+
+        var preview = await service.PreviewAsync(Environment, "token", ViewPinnedTo(TargetViewId, "<fetch>new</fetch>"), CancellationToken.None);
+
+        Assert.True(preview.HasChanges);
+        Assert.NotNull(preview.IdentityMismatchWarning);
+        Assert.Contains("'Old Name'", preview.IdentityMismatchWarning, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PreviewAsync_WithSavedQueryIdAndMatchingIdentity_HasNoWarning()
+    {
+        var client = new FakeDataverseClient();
+        client.SavedQueriesById[TargetViewId] = new ExistingSavedQuery(TargetViewId, null, "<fetch>old</fetch>", null, "TN_Inspection", "My Inspections");
+        var service = new ViewImportService(client);
+
+        var preview = await service.PreviewAsync(Environment, "token", ViewPinnedTo(TargetViewId, "<fetch>new</fetch>"), CancellationToken.None);
+
+        Assert.Null(preview.IdentityMismatchWarning);
+    }
+
+    // Without a savedQueryId, an ambiguous name still refuses. Given two live
+    // views sharing the name, PreviewAsync throws AmbiguousSavedQueryException
+    // rather than guessing. (The message content is covered in
+    // DataverseClientAmbiguousSavedQueryTests.)
+    [Fact]
+    public async Task PreviewAsync_WithoutSavedQueryIdAndAnAmbiguousName_StillRefuses()
+    {
+        var client = new FakeDataverseClient { SavedQueryNameIsAmbiguous = true };
+        var service = new ViewImportService(client);
+
+        await Assert.ThrowsAsync<AmbiguousSavedQueryException>(() =>
+            service.PreviewAsync(Environment, "token", View(fetchXml: "<fetch>new</fetch>"), CancellationToken.None));
+    }
 }

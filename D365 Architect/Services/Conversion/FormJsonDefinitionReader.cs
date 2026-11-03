@@ -37,7 +37,36 @@ public sealed class FormJsonDefinitionReader
         [103] = "Power BI Dashboard",
     };
 
+    /// <summary>
+    /// The reverse of what export writes into <see cref="FormDefinition.Type"/>:
+    /// null (omitted, i.e. Main) is 2; a label from <see cref="TypeNames"/> matches
+    /// case-insensitively (a human writes "main"); the bare number export falls
+    /// back to for a type with no label is accepted too. Anything else is null,
+    /// for the caller to refuse rather than guess.
+    /// </summary>
+    internal static int? TryGetFormTypeCode(string? type) =>
+        type is null ? 2
+        : TypeNames.FirstOrDefault(t => string.Equals(t.Value, type, StringComparison.OrdinalIgnoreCase)) is { Value: not null } match ? match.Key
+        : int.TryParse(type, out var code) ? code
+        : null;
+
+    /// <summary>The option-set label for a systemform <c>type</c>, or the number itself when it has none.</summary>
+    internal static string FormTypeLabel(int type) => TypeNames.GetValueOrDefault(type, type.ToString());
+
     public IReadOnlyList<FormDefinition> Read(string content) => Read(content, allowedFormIds: null);
+
+    /// <summary>
+    /// The model `form export` would produce for just this FormXML — what
+    /// <see cref="FormXmlWriter"/>'s patcher compares the YAML against to
+    /// tell what the YAML actually changed. Only the FormXML-derived content
+    /// is meaningful; the record-level fields (name, entity, ...) are blank.
+    /// </summary>
+    internal static FormDefinition ReadFormXml(XElement formRoot)
+    {
+        var json = JsonSerializer.Serialize(new { name = "", objecttypecode = "", formxml = formRoot.ToString(SaveOptions.DisableFormatting) });
+        using var doc = JsonDocument.Parse(json);
+        return ParseForm(doc.RootElement);
+    }
 
     /// <summary>
     /// As <see cref="Read(string)"/>, but keeps only the forms whose formid

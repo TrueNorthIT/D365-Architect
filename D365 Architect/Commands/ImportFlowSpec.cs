@@ -68,4 +68,10 @@ public sealed class ImportFlowSpec<TSettings, TInput, TPreview>
 
     /// <summary>Given the caught exception and the input, non-null (the complete markup line to print, own color/formatting included) if it's one of this command's own known/expected exceptions; null lets it propagate uncaught, same as before this was centralized.</summary>
     public required Func<Exception, TInput, string?> FormatDomainException { get; init; }
+
+    /// <summary>
+    /// Publishes what <see cref="ApplyAsync"/> just wrote (via the service's own <c>PublishAsync</c>) - run by
+    /// <see cref="ImportRunner"/> right after a successful apply, unless <c>--no-publish</c>. Null for a flow that never publishes.
+    /// </summary>
+    public Func<AuthenticatedContext, TPreview, CancellationToken, Task>? PublishAsync { get; init; }
 }

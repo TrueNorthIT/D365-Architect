@@ -8,7 +8,7 @@ using Spectre.Console.Cli;
 namespace D365Architect.Commands.Form;
 
 /// <summary>
-/// `d365architect form import --input account-main-form.form.yml [--yes] [--whatif]`
+/// `d365architect form import --input account-main-form.form.yml [--solution UNIQUE_NAME] [--yes] [--whatif]`
 /// Writes a `*.form.yml` file's rebuilt FormXML directly back into
 /// Dataverse — straight from the YAML, not through `form build-xml` first.
 /// That command exists for a human to inspect/validate the rebuilt FormXML
@@ -31,18 +31,21 @@ namespace D365Architect.Commands.Form;
 /// nothing is written at all. Pass <c>--whatif</c> to see just the diff and
 /// never be prompted or write anything at all.
 ///
-/// Only ever updates a form that already exists — matched by the YAML's own
-/// `formId` when it has one (immune to a rename or a name shared with
-/// another form), or by table + name as a fallback for a file exported
-/// before that field existed. Refuses (rather than creating one) when
-/// nothing matches, and refuses outright for a dashboard, same as
-/// `build-xml`.
+/// Matches the live form by the YAML's own `formId` when it has one (immune
+/// to a rename or a name shared with another form; a stale one is an error),
+/// or otherwise by table + name + type (`type` absent = Main). A hand-written
+/// file that matches nothing is created — shown in the plan as
+/// `+ form '&lt;name&gt;' (&lt;type&gt;, create)` and confirmed like any other change —
+/// and more than one match is refused, listing the ids to choose from as
+/// `formId` (see <see cref="IFormImportService"/>). Refuses outright for a
+/// dashboard, same as `build-xml`. `--solution` adds whatever is created or
+/// changed to that solution.
 ///
-/// Publishes the form's owning table immediately after writing it — a
-/// separate <see cref="IFormImportService.PublishAsync"/> call this class
-/// itself makes right after <c>ApplyAsync</c> (see
-/// <see cref="Services.Dataverse.IDataverseClient.PublishEntityAsync"/>) —
-/// so the change is visible to end users without a separate manual publish
+/// Publishes the form's owning table immediately after writing it (unless
+/// <c>--no-publish</c>) — a separate <see cref="IFormImportService.PublishAsync"/>
+/// call (see <see cref="Services.Dataverse.IDataverseClient.PublishEntityAsync"/>)
+/// that <see cref="ImportRunner"/> makes right after <c>ApplyAsync</c> — so
+/// the change is visible to end users without a separate manual publish
 /// step.
 ///
 /// What this doesn't do yet: detect that the live form changed since this
@@ -58,23 +61,34 @@ namespace D365Architect.Commands.Form;
 public sealed class ImportFormCommand(IFormImportService formImportService, ImportRunner importRunner)
     : AsyncCommand<ImportFormCommand.Settings>
 {
-    public sealed class Settings : ImportSettingsBase
+    public sealed class Settings : PublishableImportSettings
     {
+        [CommandOption("-s|--solution <UNIQUE_NAME>")]
+        [Description("Unique name of a solution to add the form to as it is created or changed.")]
+        public string? Solution { get; init; }
+
         [CommandOption("--allow-schema-violations")]
         [Description("Proceed even if the rebuilt FormXML has a schema violation Dataverse might reject outright — see FormXmlValidationMessage.IsKnownHarmless. Off by default: a genuine 'invalid child element'/'invalid content' violation has been confirmed live to fail the write with a raw Dataverse 400, not just a cosmetic warning.")]
         public bool AllowSchemaViolations { get; init; }
+
+        [CommandOption("--allow-removals")]
+        [Description("Remove what's on the live form but missing from the YAML (and not just moved). Off by default: it's kept and listed as 'would remove', so deleting something from the YAML never deletes it from the form by accident.")]
+        public bool AllowRemovals { get; init; }
+
+        [CommandOption("--allow-unexpected")]
+        [Description("Proceed even if the rebuilt FormXML changes something outside what the YAML changed (a dropped spacer, a regenerated id, a header the YAML left alone). Off by default: that is a bug in this tool, not your edit.")]
+        public bool AllowUnexpected { get; init; }
     }
 
     protected override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken) =>
         RunAsync(settings, cancellationToken);
 
     /// <summary>
-    /// The command's own logic, independent of Spectre's <see cref="CommandContext"/> —
-    /// pulled out of <see cref="ExecuteAsync"/> so <c>solution import</c> can
-    /// run this exact same preview → diff → confirm → apply flow for every
-    /// <c>*.form.yml</c> it finds, without duplicating any of it.
+    /// Builds this command's <see cref="ImportFlowSpec{TSettings,TInput,TPreview}"/>: the parts of the shared
+    /// preview → diff → confirm → apply flow that differ for this asset type. Shared by
+    /// <see cref="RunAsync"/> and <see cref="PreviewAsync(Settings, bool, CancellationToken)"/> (used by <c>solution import</c>).
     /// </summary>
-    public async Task<int> RunAsync(Settings settings, CancellationToken cancellationToken)
+    private ImportFlowSpec<Settings, FormDefinition, FormImportPreview> BuildSpec(Settings settings)
     {
         var spec = new ImportFlowSpec<Settings, FormDefinition, FormImportPreview>
         {
@@ -101,23 +115,40 @@ public sealed class ImportFormCommand(IFormImportService formImportService, Impo
             // PrintChanges/BlockReason below even look at the violation
             // FormControlValidator already caught, leaving a genuinely
             // broken control definition unreported indefinitely as long as
-            // nothing else about the form changes in the same edit. A
-            // blocking violation (not one that's IsKnownHarmless) always
-            // keeps this from skipping, regardless of HasChanges.
+            // nothing else about the form changes in the same edit.
+            // FormImportService therefore always runs FormControlValidator
+            // (only the FormXML schema validator is skipped on a no-op), and a
+            // blocking violation (not one that's IsKnownHarmless) keeps this
+            // from skipping, regardless of
+            // HasChanges.
             SkipBeforePrinting = preview => preview.HasChanges || preview.Violations.Any(v => !v.IsKnownHarmless)
                 ? null
-                : "the rebuilt FormXML already matches what's live in Dataverse. Nothing to import.",
+                : preview.PatchReport?.WouldRemove is { Count: > 0 } kept
+                    ? $"the rebuilt FormXML already matches what's live in Dataverse. Nothing to import. {kept.Count} item(s) live but missing from the YAML were kept: {string.Join(", ", kept)} — pass --allow-removals to remove them."
+                    : "the rebuilt FormXML already matches what's live in Dataverse. Nothing to import.",
 
             PrintChanges = preview =>
             {
-                DiffConsole.PrintDiff(TextDiff.Compute(DiffConsole.PrettyPrintXml(preview.ExistingComparableFormXml), DiffConsole.PrettyPrintXml(preview.NewFormXml)));
+                if (preview.IsCreate)
+                {
+                    AnsiConsole.MarkupLine($"[green]{$"+ form '{preview.Name}' ({FormJsonDefinitionReader.FormTypeLabel(preview.FormType).ToLowerInvariant()}, create)".EscapeMarkup()}[/]");
+                }
+
+                var existingText = preview.IsCreate ? "" : DiffConsole.PrettyPrintXml(preview.ExistingComparableFormXml);
+                DiffConsole.PrintDiff(TextDiff.Compute(existingText, DiffConsole.PrettyPrintXml(preview.NewFormXml)));
                 AnsiConsole.WriteLine();
 
                 FormXmlValidationConsole.PrintViolations(preview.Violations);
+                PrintPatchReport(preview.PatchReport, settings.AllowRemovals);
             },
 
             BlockReason = (s, preview) =>
             {
+                if (preview.PatchReport?.Unexpected is { Count: > 0 } unexpected && !s.AllowUnexpected)
+                {
+                    return $"{unexpected.Count} change(s) above are outside what the YAML changed, so this tool would alter parts of the form nobody asked it to. That's a bug in the tool, not your edit — please report it. Pass [bold]--allow-unexpected[/] to proceed anyway once you've checked them yourself.";
+                }
+
                 var blockingViolations = preview.Violations.Where(v => !v.IsKnownHarmless).ToList();
                 if (blockingViolations.Count == 0 || s.AllowSchemaViolations)
                 {
@@ -127,28 +158,81 @@ public sealed class ImportFormCommand(IFormImportService formImportService, Impo
                 return $"{blockingViolations.Count} schema violation(s) above aren't a confirmed-safe pattern — two that looked similarly harmless have already failed live with a raw Dataverse 400 ('parameters' rejecting an invalid child element; a control's missing ClassId), so this is blocked by default rather than left to a human to eyeball correctly every time. Pass [bold]--allow-schema-violations[/] to proceed anyway once you've checked these yourself.";
             },
 
-            ApplyStatusMessage = "Importing and publishing...",
+            ApplyStatusMessage = "Importing...",
 
-            ApplyAsync = async (auth, preview, ct) =>
-            {
-                // PublishAsync is its own call, separate from ApplyAsync's
-                // shared write-only shape — see IFormImportService's own
-                // doc comment for why publishing doesn't fit
-                // IImportService<TInput,TPreview> the way table/view import
-                // (which never publish) do.
-                await formImportService.ApplyAsync(auth.EnvironmentUrl, auth.AccessToken, preview, ct);
-                await formImportService.PublishAsync(auth.EnvironmentUrl, auth.AccessToken, preview, ct);
-            },
+            ApplyAsync = (auth, preview, ct) => formImportService.ApplyAsync(auth.EnvironmentUrl, auth.AccessToken, preview, settings.Solution, ct),
 
-            PrintSuccess = (form, preview) => AnsiConsole.MarkupLine($"[green]Imported and published.[/] '{form.Name}' updated in Dataverse."),
+            PrintSuccess = (form, preview) => AnsiConsole.MarkupLine($"[green]Imported.[/] '{form.Name.EscapeMarkup()}' {(preview.IsCreate ? "created" : "updated")} in Dataverse."),
+
+            PublishAsync = (auth, preview, ct) => formImportService.PublishAsync(auth.EnvironmentUrl, auth.AccessToken, preview, ct),
 
             FormatDomainException = (ex, form) => ex switch
             {
-                FormNotFoundException or AmbiguousSystemFormException or NotSupportedException => $"[red]{ex.Message.EscapeMarkup()}[/]",
+                FormNotFoundException or AmbiguousSystemFormException or NotSupportedException or InvalidDataException => $"[red]{ex.Message.EscapeMarkup()}[/]",
                 _ => null,
             },
         };
 
-        return await importRunner.RunAsync(settings, formImportService, spec, cancellationToken);
+        return spec;
+    }
+
+    public Task<int> RunAsync(Settings settings, CancellationToken cancellationToken) =>
+        importRunner.RunAsync(settings, new RemovalAwareImport(formImportService, settings.AllowRemovals), BuildSpec(settings), cancellationToken);
+
+    /// <summary>
+    /// Previews without prompting or writing: the first half of
+    /// <see cref="RunAsync"/>, for callers (<c>solution import</c>) that
+    /// collect several previews and confirm once.
+    /// </summary>
+    public Task<PreparedImport> PreviewAsync(Settings settings, bool printUnchanged, CancellationToken cancellationToken) =>
+        importRunner.PreviewAsync(settings, new RemovalAwareImport(formImportService, settings.AllowRemovals), BuildSpec(settings), printUnchanged, cancellationToken);
+
+    /// <summary>
+    /// What's live but missing from the YAML (kept, or removed with
+    /// --allow-removals), and anything the patch changed that the YAML
+    /// didn't ask for (which blocks the import, see BlockReason).
+    /// </summary>
+    private static void PrintPatchReport(FormPatchReport? report, bool allowRemovals)
+    {
+        if (report is null)
+        {
+            return;
+        }
+
+        foreach (var item in report.WouldRemove)
+        {
+            AnsiConsole.MarkupLine(allowRemovals
+                ? $"[red]- remove {item.EscapeMarkup()}[/] (live, missing from the YAML)"
+                : $"[yellow]~ would remove {item.EscapeMarkup()}[/] (live, missing from the YAML) — kept; pass --allow-removals to remove it");
+        }
+
+        if (report.Unexpected.Count > 0)
+        {
+            AnsiConsole.MarkupLine($"[red]{report.Unexpected.Count} change(s) outside what the YAML changed:[/]");
+            foreach (var difference in report.Unexpected.Take(20))
+            {
+                AnsiConsole.MarkupLine($"  [red]{$"{difference.Kind} {difference.Path} [{difference.Before}] -> [{difference.After}]".EscapeMarkup()}[/]");
+            }
+
+            if (report.Unexpected.Count > 20)
+            {
+                AnsiConsole.MarkupLine($"  [red]... and {report.Unexpected.Count - 20} more[/]");
+            }
+        }
+
+        if (report.WouldRemove.Count > 0 || report.Unexpected.Count > 0)
+        {
+            AnsiConsole.WriteLine();
+        }
+    }
+
+    /// <summary>Passes <c>--allow-removals</c> through to the preview, which the shared import runner doesn't know about.</summary>
+    private sealed class RemovalAwareImport(IFormImportService inner, bool allowRemovals) : IImportService<FormDefinition, FormImportPreview>
+    {
+        public Task<FormImportPreview> PreviewAsync(Uri environmentUrl, string accessToken, FormDefinition input, CancellationToken cancellationToken) =>
+            inner.PreviewAsync(environmentUrl, accessToken, input, allowRemovals, cancellationToken);
+
+        public Task ApplyAsync(Uri environmentUrl, string accessToken, FormImportPreview preview, CancellationToken cancellationToken) =>
+            inner.ApplyAsync(environmentUrl, accessToken, preview, cancellationToken);
     }
 }

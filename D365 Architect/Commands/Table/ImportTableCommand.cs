@@ -50,8 +50,9 @@ namespace D365Architect.Commands.Table;
 /// turns out to reject batched metadata writes, or if partial progress on
 /// failure is actually what you want.
 ///
-/// What this doesn't do yet: publish the change — Dataverse customizations
-/// still need publishing separately before end users see it (confirmed
+/// Once the change is applied the table is published, unless
+/// <c>--no-publish</c> (see <see cref="PublishableImportSettings"/>) — Dataverse
+/// customizations need publishing before end users see them (confirmed
 /// required for table/column changes specifically, unlike form/view
 /// import's still-open question — see `docs/yaml-conventions.md`).
 ///
@@ -64,7 +65,7 @@ namespace D365Architect.Commands.Table;
 public sealed class ImportTableCommand(ITableImportService tableImportService, ImportRunner importRunner)
     : AsyncCommand<ImportTableCommand.Settings>
 {
-    public sealed class Settings : ImportSettingsBase
+    public sealed class Settings : PublishableImportSettings
     {
         [CommandOption("--no-transaction")]
         [Description("Send every column create/update one request at a time instead of as a single atomic Dataverse changeset. Use this if the environment rejects batched metadata writes, or to keep whatever succeeded before a later one fails rather than having the whole import rolled back.")]
@@ -83,12 +84,11 @@ public sealed class ImportTableCommand(ITableImportService tableImportService, I
         RunAsync(settings, cancellationToken);
 
     /// <summary>
-    /// The command's own logic, independent of Spectre's <see cref="CommandContext"/> —
-    /// pulled out of <see cref="ExecuteAsync"/> so <c>solution import</c> can
-    /// run this exact same preview → diff → confirm → apply flow for every
-    /// <c>*.table.yml</c> it finds, without duplicating any of it.
+    /// Builds this command's <see cref="ImportFlowSpec{TSettings,TInput,TPreview}"/>: the parts of the shared
+    /// preview → diff → confirm → apply flow that differ for this asset type. Shared by
+    /// <see cref="RunAsync"/> and <see cref="PreviewAsync(Settings, bool, CancellationToken)"/> (used by <c>solution import</c>).
     /// </summary>
-    public async Task<int> RunAsync(Settings settings, CancellationToken cancellationToken)
+    private ImportFlowSpec<Settings, EntityDefinition, TableImportPreview> BuildSpec(Settings settings)
     {
         var spec = new ImportFlowSpec<Settings, EntityDefinition, TableImportPreview>
         {
@@ -113,15 +113,32 @@ public sealed class ImportTableCommand(ITableImportService tableImportService, I
                 }
 
                 var unmanagedCount = GetUnmanaged(preview).Count;
-                return unmanagedCount == 0
+                var summary = unmanagedCount == 0
                     ? "the local YAML already matches what's live in Dataverse. Nothing to import."
                     : $"the local YAML already matches what's live in Dataverse. Nothing to import. ({unmanagedCount} live column{(unmanagedCount == 1 ? "" : "s")} not in this file {(unmanagedCount == 1 ? "is" : "are")} left alone — never deleted automatically.)";
+
+                // Table-level properties that can't be applied are explained
+                // here too, so "nothing to import" isn't mistaken for "matches".
+                return preview.NotAppliedTableProperties.Count == 0
+                    ? summary
+                    : summary + "\n" + string.Join("\n", TablePropertyNotAppliedFormatter.FormatLines(preview.NotAppliedTableProperties));
             },
 
             PrintChanges = preview =>
             {
                 DiffConsole.PrintDiff(TextDiff.Compute(preview.ExistingYaml, preview.NewYaml));
                 AnsiConsole.WriteLine();
+
+                if (preview.NotAppliedTableProperties.Count > 0)
+                {
+                    AnsiConsole.MarkupLine("[bold]Table properties:[/]");
+                    foreach (var line in TablePropertyNotAppliedFormatter.FormatLines(preview.NotAppliedTableProperties))
+                    {
+                        AnsiConsole.MarkupLine(line);
+                    }
+
+                    AnsiConsole.WriteLine();
+                }
 
                 var actionable = GetActionable(preview);
                 if (actionable.Count > 0)
@@ -149,7 +166,10 @@ public sealed class ImportTableCommand(ITableImportService tableImportService, I
             PrintSuccess = (entity, preview) =>
             {
                 AnsiConsole.MarkupLine($"[green]Imported.[/] '{entity.LogicalName}' updated in Dataverse.");
-                AnsiConsole.MarkupLine("[grey]Note: this only updates Dataverse's metadata — publish customizations separately (e.g. in the maker portal) before end users see the change; this tool doesn't publish yet.[/]");
+                if (settings.NoPublish)
+                {
+                    AnsiConsole.MarkupLine("[grey]Note: --no-publish — publish customizations separately (e.g. in the maker portal) before end users see the change.[/]");
+                }
             },
 
             FormatDomainException = (ex, entity) => ex switch
@@ -157,9 +177,41 @@ public sealed class ImportTableCommand(ITableImportService tableImportService, I
                 InvalidDataException => $"[red]Couldn't parse the live metadata for '{entity.LogicalName}':[/] {ex.Message.EscapeMarkup()}",
                 _ => null,
             },
+
+            PublishAsync = (auth, preview, ct) => tableImportService.PublishAsync(auth.EnvironmentUrl, auth.AccessToken, preview, ct),
         };
 
-        return await importRunner.RunAsync(settings, tableImportService, spec, cancellationToken);
+        return spec;
+    }
+
+    public Task<int> RunAsync(Settings settings, CancellationToken cancellationToken) =>
+        importRunner.RunAsync(settings, tableImportService, BuildSpec(settings), cancellationToken);
+
+    /// <summary>
+    /// Previews without prompting or writing: the first half of
+    /// <see cref="RunAsync"/>, for callers (<c>solution import</c>) that
+    /// collect several previews and confirm once.
+    /// </summary>
+    public Task<PreparedImport> PreviewAsync(Settings settings, bool printUnchanged, CancellationToken cancellationToken) =>
+        PreviewAsync(settings, printUnchanged, pendingGlobalChoiceNames: new HashSet<string>(), cancellationToken);
+
+    /// <summary>
+    /// As above, for <c>solution import</c>: <paramref name="pendingGlobalChoiceNames"/>
+    /// are the global choices this run's <c>choices.yml</c> will create before
+    /// any table is applied, so a new column bound to one is planned as a
+    /// create rather than flagged as bound to a missing choice.
+    /// </summary>
+    public Task<PreparedImport> PreviewAsync(Settings settings, bool printUnchanged, IReadOnlySet<string> pendingGlobalChoiceNames, CancellationToken cancellationToken) =>
+        importRunner.PreviewAsync(settings, new PendingChoicePreviewService(tableImportService, pendingGlobalChoiceNames), BuildSpec(settings), printUnchanged, cancellationToken);
+
+    /// <summary>Hands <see cref="ImportRunner"/> the preview-with-pending-choices overload through the shared <see cref="IImportService{TInput,TPreview}"/> shape; apply is never called through it (the spec applies via the real service).</summary>
+    private sealed class PendingChoicePreviewService(ITableImportService inner, IReadOnlySet<string> pendingGlobalChoiceNames) : IImportService<EntityDefinition, TableImportPreview>
+    {
+        public Task<TableImportPreview> PreviewAsync(Uri environmentUrl, string accessToken, EntityDefinition input, CancellationToken cancellationToken) =>
+            inner.PreviewAsync(environmentUrl, accessToken, input, pendingGlobalChoiceNames, cancellationToken);
+
+        public Task ApplyAsync(Uri environmentUrl, string accessToken, TableImportPreview preview, CancellationToken cancellationToken) =>
+            inner.ApplyAsync(environmentUrl, accessToken, preview, cancellationToken);
     }
 
     /// <summary>
@@ -171,10 +223,15 @@ public sealed class ImportTableCommand(ITableImportService tableImportService, I
     /// around it. WouldRemove is deliberately excluded here — see
     /// <see cref="GetUnmanaged"/> — because it's present on essentially
     /// every table (Dataverse's own auto-generated companion columns) and
-    /// isn't something this tool will ever act on regardless.
+    /// isn't something this tool will ever act on regardless. An Unchanged
+    /// plan is kept when it carries a warning (e.g. an autoNumberSeed ignored
+    /// because the column already exists), so a run with nothing to write
+    /// still tells the user why their change did nothing rather than just
+    /// "Nothing to import".
     /// </summary>
     private static List<AttributeImportPlan> GetActionable(TableImportPreview preview)
-        => preview.AttributePlans.Where(p => p.Action is not (AttributeImportAction.Unchanged or AttributeImportAction.WouldRemove)).ToList();
+        => preview.AttributePlans.Where(p => p.Action is not (AttributeImportAction.Unchanged or AttributeImportAction.WouldRemove)
+            || (p.Action == AttributeImportAction.Unchanged && p.Warnings is { Count: > 0 })).ToList();
 
     /// <summary>Live columns absent from the local YAML — never deleted, and never "actionable" (see <see cref="GetActionable"/>), just demoted to a count unless <c>--show-unmanaged</c> is passed.</summary>
     private static List<AttributeImportPlan> GetUnmanaged(TableImportPreview preview)
@@ -207,6 +264,9 @@ public sealed class ImportTableCommand(ITableImportService tableImportService, I
     {
         var line = plan.Action switch
         {
+            // The seed is per-environment state, not column metadata — said
+            // so here because it won't travel with a solution or re-apply.
+            AttributeImportAction.Create when plan.AutoNumberSeed is not null => $"[green]  + {plan.LogicalName.EscapeMarkup()} (create, auto-number seed {plan.AutoNumberSeed} — this environment only)[/]",
             AttributeImportAction.Create => $"[green]  + {plan.LogicalName.EscapeMarkup()} (create)[/]",
             AttributeImportAction.Update => $"[yellow]  ~ {plan.LogicalName.EscapeMarkup()} (update)[/]",
             AttributeImportAction.CreateLookupRelationship => $"[green]  + {plan.LogicalName.EscapeMarkup()} (create lookup relationship)[/]",
@@ -214,6 +274,7 @@ public sealed class ImportTableCommand(ITableImportService tableImportService, I
             AttributeImportAction.SkippedUnsupportedType => $"[grey]  ? {plan.LogicalName.EscapeMarkup()} (not applied: {plan.Reason?.EscapeMarkup()})[/]",
             AttributeImportAction.WouldRemove => $"[red]  - {plan.LogicalName.EscapeMarkup()} (not applied: {plan.Reason?.EscapeMarkup()})[/]",
             AttributeImportAction.Invalid => $"[red]  ! {plan.LogicalName.EscapeMarkup()} (not applied: {plan.Reason?.EscapeMarkup()})[/]",
+            AttributeImportAction.Unchanged => $"[grey]  = {plan.LogicalName.EscapeMarkup()} (unchanged)[/]",
             _ => $"  {plan.LogicalName.EscapeMarkup()}",
         };
 

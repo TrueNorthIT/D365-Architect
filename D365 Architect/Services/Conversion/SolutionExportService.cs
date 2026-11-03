@@ -9,10 +9,15 @@ public sealed class SolutionExportService(
     IFormExportService formExportService,
     IGlobalChoiceExportService globalChoiceExportService) : ISolutionExportService
 {
-    public async Task<SolutionExportResult> ExportSolutionAsync(Uri environmentUrl, string accessToken, string solutionUniqueName, CancellationToken cancellationToken)
+    public async Task<SolutionExportResult> ExportSolutionAsync(Uri environmentUrl, string accessToken, string solutionUniqueName, CancellationToken cancellationToken, IReadOnlyCollection<string>? tables = null)
     {
         var entityLogicalNames = await dataverseClient.TryGetSolutionEntityLogicalNamesAsync(environmentUrl, accessToken, solutionUniqueName, cancellationToken)
             ?? throw new SolutionNotFoundException(solutionUniqueName);
+
+        if (tables is { Count: > 0 })
+        {
+            entityLogicalNames = SolutionTableFilter.Select(entityLogicalNames, tables, $"in solution '{solutionUniqueName}'");
+        }
 
         var entities = new List<SolutionExportEntity>();
         foreach (var entityLogicalName in entityLogicalNames)
@@ -26,6 +31,13 @@ public sealed class SolutionExportService(
             var forms = await formExportService.ExportFormsAsync(environmentUrl, accessToken, entityLogicalName, solutionUniqueName, formId: null, cancellationToken);
 
             entities.Add(new SolutionExportEntity(entityLogicalName, tableYaml, views, forms));
+        }
+
+        // A table-limited export never touches choices: they belong to the
+        // solution, not to any table.
+        if (tables is { Count: > 0 })
+        {
+            return new SolutionExportResult(entities, null);
         }
 
         var choicesYaml = await globalChoiceExportService.ExportGlobalChoicesAsync(environmentUrl, accessToken, solutionUniqueName, cancellationToken);

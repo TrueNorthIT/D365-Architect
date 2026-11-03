@@ -41,6 +41,18 @@ namespace D365Architect.Services.Conversion;
 /// </summary>
 public interface ITableImportService : IImportService<EntityDefinition, TableImportPreview>
 {
+    /// <summary>
+    /// As <see cref="IImportService{TInput,TPreview}.PreviewAsync"/>, for
+    /// <c>solution import</c>, which previews every asset before applying any:
+    /// a picklist column bound to a global choice that doesn't exist live yet
+    /// is planned as a normal create (not <see cref="AttributeImportAction.Invalid"/>)
+    /// when that choice is named in <paramref name="pendingGlobalChoiceNames"/>
+    /// (the choices this run's <c>choices.yml</c> will create first). Names
+    /// are matched case-insensitively by the caller's set comparer; pass a
+    /// <see cref="StringComparer.OrdinalIgnoreCase"/> set.
+    /// </summary>
+    Task<TableImportPreview> PreviewAsync(Uri environmentUrl, string accessToken, EntityDefinition entity, IReadOnlySet<string> pendingGlobalChoiceNames, CancellationToken cancellationToken);
+
     /// <param name="environmentUrl">See <see cref="IImportService{TInput,TPreview}.ApplyAsync"/>.</param>
     /// <param name="accessToken">See <see cref="IImportService{TInput,TPreview}.ApplyAsync"/>.</param>
     /// <param name="preview">See <see cref="IImportService{TInput,TPreview}.ApplyAsync"/>.</param>
@@ -64,6 +76,9 @@ public interface ITableImportService : IImportService<EntityDefinition, TableImp
     /// </param>
     /// <param name="cancellationToken">See <see cref="IImportService{TInput,TPreview}.ApplyAsync"/>.</param>
     Task ApplyAsync(Uri environmentUrl, string accessToken, TableImportPreview preview, bool useTransaction, string? solutionUniqueName, CancellationToken cancellationToken);
+
+    /// <summary>Publishes <paramref name="preview"/>'s table (what <c>table import</c> does once it has applied, unless <c>--no-publish</c>) — the same <see cref="Dataverse.IDataverseClient.PublishEntityAsync"/> call form import makes.</summary>
+    Task PublishAsync(Uri environmentUrl, string accessToken, TableImportPreview preview, CancellationToken cancellationToken);
 }
 
 /// <summary>What (if anything) <see cref="IImportService{TInput,TPreview}.ApplyAsync"/> will do for one column.</summary>
@@ -119,7 +134,9 @@ public enum AttributeImportAction
     /// a customization prefix or containing an invalid character, a Name
     /// that won't match the logical name Dataverse actually derives, two new
     /// columns claiming the same SchemaName, an out-of-range MaxLength/
-    /// MinValue/MaxValue/Precision, or MinValue greater than MaxValue.
+    /// MinValue/MaxValue/Precision, MinValue greater than MaxValue, a Memo
+/// format that can't be created or a switch between plain and rich text,
+/// or autoNumberFormat/autoNumberSeed used where they don't apply.
     /// Caught before ever building a request, not left for Dataverse's own
     /// API error to explain.
     /// </summary>
@@ -135,8 +152,10 @@ public enum AttributeImportAction
 /// that Dataverse allows but warns against (e.g. lowering MaxLength below
 /// what existing data might exceed, or a local option/status value with no
 /// live match this tool won't insert automatically) — see
-/// <see cref="AttributeChangeValidator.Warnings"/>. Null for every other
-/// action.
+/// <see cref="AttributeChangeValidator.Warnings"/>. Also set on an
+/// <see cref="AttributeImportAction.Unchanged"/> or Update plan whose
+/// column has an <c>autoNumberSeed</c> that won't be applied because the
+/// column already exists. Null otherwise.
 /// </param>
 /// <param name="OptionChanges">
 /// Separate option-value actions (insert/rename/reorder) to run alongside
@@ -146,7 +165,24 @@ public enum AttributeImportAction
 /// option-bearing type (Boolean/Picklist/MultiSelectPicklist/State/Status);
 /// null for every other action.
 /// </param>
-public sealed record AttributeImportPlan(string LogicalName, AttributeImportAction Action, string? Reason, JsonObject? RequestBody, IReadOnlyList<string>? Warnings = null, IReadOnlyList<OptionChangePlan>? OptionChanges = null);
+/// <param name="AutoNumberSeed">
+/// Set only on an <see cref="AttributeImportAction.Create"/> whose column
+/// asked for an <c>autoNumberSeed</c>: the value that will be sent via
+/// <c>SetAutoNumberSeed</c> straight after the create. Null for every other
+/// plan: a seed on a column that already exists is never sent (re-importing
+/// must not reset a live counter) and shows as a warning instead.
+/// </param>
+public sealed record AttributeImportPlan(string LogicalName, AttributeImportAction Action, string? Reason, JsonObject? RequestBody, IReadOnlyList<string>? Warnings = null, IReadOnlyList<OptionChangePlan>? OptionChanges = null, int? AutoNumberSeed = null)
+{
+    /// <summary>
+    /// Set on a <see cref="AttributeImportAction.Create"/> whose global choice
+    /// doesn't exist live yet but will be created earlier in the same
+    /// <c>solution import</c> run: the request body carries a placeholder id
+    /// until <see cref="ITableImportService.ApplyAsync(Uri, string, TableImportPreview, bool, string?, CancellationToken)"/>
+    /// resolves the real one. Null for every ordinary plan.
+    /// </summary>
+    public string? PendingGlobalChoiceName { get; init; }
+}
 
 /// <summary>What kind of option-value action <see cref="OptionChangePlan"/> carries — see <see cref="AttributeMetadataJsonBuilder.BuildOptionChangePlans"/>.</summary>
 public enum OptionChangeAction
@@ -184,7 +220,26 @@ public sealed record OptionChangePlan(OptionChangeAction Action, JsonObject Requ
 /// <param name="AttributePlans">One plan per column seen on either side — see <see cref="AttributeImportAction"/>.</param>
 public sealed record TableImportPreview(string EntityLogicalName, string ExistingYaml, string NewYaml, JsonObject? TableUpdateBody, IReadOnlyList<AttributeImportPlan> AttributePlans)
 {
-    /// <summary>True when there's at least one actual write to make — a table-level change, or a column plan that writes something (Create/Update/CreateLookupRelationship/CreateCustomerRelationship).</summary>
-    public bool HasChanges => TableUpdateBody is not null || AttributePlans.Any(p =>
+    /// <summary>
+    /// Table-level properties the local YAML asks for that this import can't
+    /// apply (e.g. <c>hasNotes: true</c>), each with the reason, reported as
+    /// "not applied: reason" the same way skipped columns are. Not a write, so
+    /// they never affect <see cref="HasChanges"/>.
+    /// </summary>
+    public IReadOnlyList<TablePropertyNotApplied> NotAppliedTableProperties { get; init; } = [];
+
+    /// <summary>True when there's at least one actual write to make — see <see cref="ChangeCount"/>.</summary>
+    public bool HasChanges => ChangeCount > 0;
+
+    /// <summary>How many writes there are to make: one for a table-level change, plus one per column plan that writes something (Create/Update/CreateLookupRelationship/CreateCustomerRelationship).</summary>
+    public int ChangeCount => (TableUpdateBody is null ? 0 : 1) + AttributePlans.Count(p =>
         p.Action is AttributeImportAction.Create or AttributeImportAction.Update or AttributeImportAction.CreateLookupRelationship or AttributeImportAction.CreateCustomerRelationship);
 }
+
+/// <summary>
+/// A table-level property the local YAML specifies that
+/// <see cref="TableImportService"/> can't apply, and why.
+/// </summary>
+/// <param name="Property">The YAML key, e.g. "hasNotes".</param>
+/// <param name="Reason">Why it isn't applied, in terms a human can act on.</param>
+public sealed record TablePropertyNotApplied(string Property, string Reason);

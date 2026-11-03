@@ -90,5 +90,20 @@ public sealed record FormXmlValidationMessage(XmlSeverityType Severity, int Line
         Message.Contains("'headerdensity'", StringComparison.Ordinal) ||
         Message.Contains("'showinformselector'", StringComparison.Ordinal) ||
         Message.Contains("'UClientActivitiesConfigurationJSON'", StringComparison.Ordinal) ||
-        Message.Contains("'UClientNotesConfigurationJSON'", StringComparison.Ordinal);
+        Message.Contains("'UClientNotesConfigurationJSON'", StringComparison.Ordinal) ||
+        // Text directly inside a control's <parameters> (PhoneNumberControl,
+        // ValidatedFieldControl, BusinessCardReader ship this shape live).
+        // The message carries no classid, so any control's text is accepted.
+        Message.StartsWith("The element 'parameters' cannot contain text", StringComparison.Ordinal) ||
+        // Quick View controls ship a HideQuickFormBorder child live. Only
+        // when it's the unexpected child of <parameters> (the validator's
+        // "The element 'parameters' has invalid child element ..." shape),
+        // never the same name under some other parent.
+        //
+        // Inherent limitation: the .NET schema validator stops reporting
+        // inside an element after the first invalid child, so a genuinely
+        // invalid sibling (e.g. a stray TypeName) that comes AFTER an
+        // allowlisted HideQuickFormBorder/UClient* child is masked and never
+        // reported. One that comes before is still caught and blocks.
+        Message.StartsWith("The element 'parameters' has invalid child element 'HideQuickFormBorder'", StringComparison.Ordinal);
 }

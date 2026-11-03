@@ -23,6 +23,9 @@ public abstract record DataverseWrite
     /// <summary>See <see cref="IDataverseClient.UpdateEntityAsync"/>.</summary>
     public sealed record UpdateEntity(string EntityLogicalName, JsonObject Metadata) : DataverseWrite;
 
+    /// <summary>See <see cref="IDataverseClient.CreateEntityAsync"/>. <paramref name="SolutionUniqueName"/> null means "wherever Dataverse's own default context puts it".</summary>
+    public sealed record CreateEntity(JsonObject Metadata, string? SolutionUniqueName = null) : DataverseWrite;
+
     /// <summary>See <see cref="IDataverseClient.CreateAttributeAsync"/>. <paramref name="SolutionUniqueName"/> null means "wherever Dataverse's own default context puts it" — see that method's own doc comment.</summary>
     public sealed record CreateAttribute(string EntityLogicalName, JsonObject Metadata, string? SolutionUniqueName = null) : DataverseWrite;
 
@@ -50,6 +53,9 @@ public abstract record DataverseWrite
     /// <summary>See <see cref="IDataverseClient.UpdateStateValueAsync"/>.</summary>
     public sealed record UpdateStateValue(JsonObject Body) : DataverseWrite;
 
+    /// <summary>See <see cref="IDataverseClient.SetAutoNumberSeedAsync"/>. Always follows the <see cref="CreateAttribute"/> of the same column in a plan's write order.</summary>
+    public sealed record SetAutoNumberSeed(string EntityLogicalName, string AttributeLogicalName, int Value) : DataverseWrite;
+
     /// <summary>A short, human-readable label for error messages when a changeset is rolled back — e.g. "create column 'tn_foo'".</summary>
     public string Describe() => this switch
     {
@@ -63,6 +69,7 @@ public abstract record DataverseWrite
         OrderOptions => "reorder options",
         InsertStatusValue => "insert status value",
         UpdateStateValue => "update state value",
+        SetAutoNumberSeed w => $"set auto-number seed of column '{w.AttributeLogicalName}' on '{w.EntityLogicalName}'",
         _ => GetType().Name,
     };
 }

@@ -24,8 +24,11 @@ namespace D365Architect.Services.Dataverse;
 /// </summary>
 internal static class ODataBatchResponseParser
 {
-    /// <summary>One leaf HTTP response found somewhere inside the (possibly nested) multipart body.</summary>
-    public readonly record struct Part(int StatusCode, string Body);
+    /// <summary>
+    /// One leaf HTTP response found somewhere inside the (possibly nested) multipart body. <see cref="ContentId"/> is the part's own
+    /// <c>Content-ID</c> header - the number of the request it answers (in a failed changeset, on the single flat error part) - or null.
+    /// </summary>
+    public readonly record struct Part(int StatusCode, string Body, string? ContentId = null);
 
     public static IReadOnlyList<Part> ParseParts(string multipartBody, string boundary)
     {
@@ -74,7 +77,7 @@ internal static class ODataBatchResponseParser
             return;
         }
 
-        parts.Add(ParseHttpResponse(body));
+        parts.Add(ParseHttpResponse(body) with { ContentId = headers.GetValueOrDefault("content-id") });
     }
 
     /// <summary>Splits on the first blank line (a bare <c>\r\n\r\n</c>) into headers-as-a-map and everything after.</summary>

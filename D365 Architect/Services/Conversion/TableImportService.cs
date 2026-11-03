@@ -6,7 +6,10 @@ namespace D365Architect.Services.Conversion;
 
 public sealed class TableImportService(IDataverseClient dataverseClient, EntityJsonDefinitionReader reader, AttributeOptionSetFetcher optionSetFetcher) : ITableImportService
 {
-    public async Task<TableImportPreview> PreviewAsync(Uri environmentUrl, string accessToken, EntityDefinition entity, CancellationToken cancellationToken)
+    public Task<TableImportPreview> PreviewAsync(Uri environmentUrl, string accessToken, EntityDefinition entity, CancellationToken cancellationToken) =>
+        PreviewAsync(environmentUrl, accessToken, entity, new HashSet<string>(), cancellationToken);
+
+    public async Task<TableImportPreview> PreviewAsync(Uri environmentUrl, string accessToken, EntityDefinition entity, IReadOnlySet<string> pendingGlobalChoiceNames, CancellationToken cancellationToken)
     {
         var existingJson = await dataverseClient.GetEntityDefinitionJsonAsync(environmentUrl, accessToken, entity.LogicalName, cancellationToken);
         var existingOptionSetJsonByAttribute = await optionSetFetcher.FetchAsync(environmentUrl, accessToken, entity.LogicalName, existingJson, cancellationToken);
@@ -17,20 +20,79 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
         // below misreports columns that are simply in a different order
         // (Dataverse's return order vs. whatever order the human wrote them
         // in) as wholesale removed-and-re-added.
-        var existingYaml = EntityYamlSerializer.ToYaml(existingEntity.WithAttributes(OrderForDiff(existingEntity.Attributes, entity.Attributes)));
+        // Live-only system columns are dropped first: this import never
+        // deletes columns, so listing createdby/ownerid/statecode etc. as
+        // removals is noise.
+        var diffAttributes = existingEntity.Attributes.Where(a => !IsLiveOnlySystemColumn(a, entity.Attributes)).ToList();
+        var existingYaml = EntityYamlSerializer.ToYaml(existingEntity.WithAttributes(OrderForDiff(diffAttributes, entity.Attributes)));
         var newYaml = EntityYamlSerializer.ToYaml(entity);
 
         var tableUpdateBody = await BuildTableUpdateBodyAsync(environmentUrl, accessToken, entity, existingEntity, cancellationToken);
-        var attributePlans = await BuildAttributePlansAsync(environmentUrl, accessToken, entity, existingEntity, cancellationToken);
+        var attributePlans = await BuildAttributePlansAsync(environmentUrl, accessToken, entity, existingEntity, pendingGlobalChoiceNames, cancellationToken);
 
-        return new TableImportPreview(entity.LogicalName, existingYaml, newYaml, tableUpdateBody, attributePlans);
+        return new TableImportPreview(entity.LogicalName, existingYaml, newYaml, tableUpdateBody, attributePlans)
+        {
+            NotAppliedTableProperties = FindNotAppliedTableProperties(entity, existingEntity),
+        };
+    }
+
+    /// <summary>
+    /// A system column is one Dataverse reports as non-custom
+    /// (<c>IsCustomAttribute</c> false, so <see cref="AttributeDefinition.IsCustomField"/>
+    /// is null once read) - createdby, ownerid, statecode and their
+    /// companions. When it's live-only it can't be created or deleted by this
+    /// import, so it is hidden from the YAML diff (it still counts in the plan's unmanaged summary). Live-only custom
+    /// columns, and system columns the local YAML does list, still show.
+    /// </summary>
+    private static bool IsLiveOnlySystemColumn(AttributeDefinition live, IReadOnlyList<AttributeDefinition> local) =>
+        live.IsCustomField is not true
+        && !local.Any(a => string.Equals(a.Name, live.Name, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Table-level properties the local YAML specifies, that differ from live,
+    /// and that this import never writes (it only writes DisplayName,
+    /// PluralDisplayName and Description). Absent local values are "don't
+    /// touch" and never reported. Reasons separate a limitation of this tool
+    /// from something Dataverse itself doesn't allow.
+    /// </summary>
+    private static List<TablePropertyNotApplied> FindNotAppliedTableProperties(EntityDefinition local, EntityDefinition existing)
+    {
+        const string toolLimit = "this tool can't change it yet - use the Maker portal";
+        var result = new List<TablePropertyNotApplied>();
+
+        if (local.HasNotes is not null && local.HasNotes != (existing.HasNotes ?? false))
+        {
+            result.Add(new TablePropertyNotApplied("hasNotes", toolLimit));
+        }
+
+        if (local.HasActivities is not null && local.HasActivities != (existing.HasActivities ?? false))
+        {
+            result.Add(new TablePropertyNotApplied("hasActivities", toolLimit));
+        }
+
+        if (local.IsActivity is not null && local.IsActivity != (existing.IsActivity ?? false))
+        {
+            result.Add(new TablePropertyNotApplied("isActivity", "Dataverse can't change whether a table is an activity table after creation"));
+        }
+
+        if (local.OwnershipType is not null && !string.Equals(local.OwnershipType, existing.OwnershipType, StringComparison.OrdinalIgnoreCase))
+        {
+            result.Add(new TablePropertyNotApplied("ownershipType", "Dataverse can't change a table's ownership type after creation"));
+        }
+
+        return result;
     }
 
     public Task ApplyAsync(Uri environmentUrl, string accessToken, TableImportPreview preview, CancellationToken cancellationToken) =>
         ApplyAsync(environmentUrl, accessToken, preview, useTransaction: true, solutionUniqueName: null, cancellationToken);
 
+    public Task PublishAsync(Uri environmentUrl, string accessToken, TableImportPreview preview, CancellationToken cancellationToken) =>
+        dataverseClient.PublishEntityAsync(environmentUrl, accessToken, preview.EntityLogicalName, cancellationToken);
+
     public async Task ApplyAsync(Uri environmentUrl, string accessToken, TableImportPreview preview, bool useTransaction, string? solutionUniqueName, CancellationToken cancellationToken)
     {
+        preview = await ResolvePendingChoicesAsync(environmentUrl, accessToken, preview, cancellationToken);
+
         if (useTransaction)
         {
             var writes = BuildWrites(preview, solutionUniqueName);
@@ -53,6 +115,11 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
             {
                 case AttributeImportAction.Create:
                     await dataverseClient.CreateAttributeAsync(environmentUrl, accessToken, preview.EntityLogicalName, plan.RequestBody!, solutionUniqueName, cancellationToken);
+                    if (plan.AutoNumberSeed is not null)
+                    {
+                        await dataverseClient.SetAutoNumberSeedAsync(environmentUrl, accessToken, preview.EntityLogicalName, plan.LogicalName, plan.AutoNumberSeed.Value, cancellationToken);
+                    }
+
                     break;
 
                 case AttributeImportAction.Update:
@@ -104,6 +171,17 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
             {
                 case AttributeImportAction.Create:
                     writes.Add(new DataverseWrite.CreateAttribute(preview.EntityLogicalName, plan.RequestBody!, solutionUniqueName));
+
+                    // Straight after its own create, in the same changeset,
+                    // so a rollback drops the seed along with the column.
+                    // Not confirmed live that Dataverse accepts the seed in
+                    // the same changeset as the create; --no-transaction
+                    // sends it as its own request after the create instead.
+                    if (plan.AutoNumberSeed is not null)
+                    {
+                        writes.Add(new DataverseWrite.SetAutoNumberSeed(preview.EntityLogicalName, plan.LogicalName, plan.AutoNumberSeed.Value));
+                    }
+
                     break;
 
                 case AttributeImportAction.Update:
@@ -172,7 +250,7 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
         return entityMetadata;
     }
 
-    private async Task<IReadOnlyList<AttributeImportPlan>> BuildAttributePlansAsync(Uri environmentUrl, string accessToken, EntityDefinition local, EntityDefinition existing, CancellationToken cancellationToken)
+    private async Task<IReadOnlyList<AttributeImportPlan>> BuildAttributePlansAsync(Uri environmentUrl, string accessToken, EntityDefinition local, EntityDefinition existing, IReadOnlySet<string> pendingGlobalChoiceNames, CancellationToken cancellationToken)
     {
         var plans = new List<AttributeImportPlan>();
         var existingByName = existing.Attributes.ToDictionary(a => a.Name);
@@ -227,52 +305,11 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
                     continue;
                 }
 
-                plans.Add(await BuildCreatePlanAsync(environmentUrl, accessToken, local.LogicalName, localAttribute, cancellationToken));
+                plans.Add(await BuildCreatePlanAsync(environmentUrl, accessToken, local.LogicalName, localAttribute, pendingGlobalChoiceNames, cancellationToken));
                 continue;
             }
 
-            // Checked before AttributesMatch, and before AttributeChangeValidator,
-            // deliberately: Type/SchemaName aren't in AttributesMatch's own
-            // field list at all (this tool never writes either one back for
-            // an existing column, so they'd otherwise never be compared) —
-            // without this, a type or schema-name change alongside no other
-            // difference would be silently reported as "Unchanged" instead
-            // of the invalid, would-fail change it actually is.
-            if (localAttribute.Type != existingAttribute.Type)
-            {
-                plans.Add(new AttributeImportPlan(localAttribute.Name, AttributeImportAction.Invalid,
-                    $"Can't change type from '{existingAttribute.Type}' to '{localAttribute.Type}' — Dataverse doesn't support changing a column's data type after creation.", null));
-                continue;
-            }
-
-            if (localAttribute.SchemaName is not null && localAttribute.SchemaName != existingAttribute.SchemaName)
-            {
-                plans.Add(new AttributeImportPlan(localAttribute.Name, AttributeImportAction.Invalid,
-                    $"Can't change SchemaName from '{existingAttribute.SchemaName}' to '{localAttribute.SchemaName}' — immutable after creation.", null));
-                continue;
-            }
-
-            // Same reasoning as the Type/SchemaName checks above: Targets
-            // isn't in AttributesMatch's field list either (this tool never
-            // writes it back for an existing Lookup/Customer/Owner column),
-            // so a changed Targets would otherwise be silently ignored
-            // rather than caught as the invalid, would-fail change it is.
-            if (localAttribute.Type is "Lookup" or "Customer" or "Owner"
-                && localAttribute.Targets is not null
-                && !TargetsMatch(localAttribute.Targets, existingAttribute.Targets))
-            {
-                plans.Add(new AttributeImportPlan(localAttribute.Name, AttributeImportAction.Invalid,
-                    $"Can't change Targets on an existing {localAttribute.Type} column — immutable after creation.", null));
-                continue;
-            }
-
-            if (AttributesMatch(localAttribute, existingAttribute))
-            {
-                plans.Add(new AttributeImportPlan(localAttribute.Name, AttributeImportAction.Unchanged, null, null));
-                continue;
-            }
-
-            plans.Add(await BuildUpdatePlanAsync(environmentUrl, accessToken, local.LogicalName, localAttribute, existingAttribute, cancellationToken));
+            plans.Add(WithIgnoredSeedNote(await BuildExistingColumnPlanAsync(environmentUrl, accessToken, local.LogicalName, localAttribute, existingAttribute, cancellationToken), localAttribute));
         }
 
         foreach (var existingAttribute in existing.Attributes)
@@ -285,6 +322,61 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
         }
 
         return plans;
+    }
+
+    /// <summary>
+    /// An <c>autoNumberSeed</c> is only ever sent in the run that creates its
+    /// column (see <see cref="BuildCreatePlanAsync"/>): calling
+    /// <c>SetAutoNumberSeed</c> again would reset a live counter and risk
+    /// duplicate numbers, so re-importing the same file must never do it.
+    /// For a column that already exists the seed is dropped, but said so on
+    /// the plan — even an otherwise Unchanged one — rather than silently.
+    /// </summary>
+    private static AttributeImportPlan WithIgnoredSeedNote(AttributeImportPlan plan, AttributeDefinition local) =>
+        local.AutoNumberSeed is null || plan.Action is not (AttributeImportAction.Unchanged or AttributeImportAction.Update)
+            ? plan
+            : plan with { Warnings = [.. plan.Warnings ?? [], $"autoNumberSeed {local.AutoNumberSeed}: seed ignored — column already exists (a seed is only set in the run that creates the column, so re-importing never resets its counter)."] };
+
+    private async Task<AttributeImportPlan> BuildExistingColumnPlanAsync(Uri environmentUrl, string accessToken, string entityLogicalName, AttributeDefinition localAttribute, AttributeDefinition existingAttribute, CancellationToken cancellationToken)
+    {
+        // Checked before AttributesMatch, and before AttributeChangeValidator,
+        // deliberately: Type/SchemaName aren't in AttributesMatch's own
+        // field list at all (this tool never writes either one back for
+        // an existing column, so they'd otherwise never be compared) —
+        // without this, a type or schema-name change alongside no other
+        // difference would be silently reported as "Unchanged" instead
+        // of the invalid, would-fail change it actually is.
+        if (localAttribute.Type != existingAttribute.Type)
+        {
+            return new AttributeImportPlan(localAttribute.Name, AttributeImportAction.Invalid,
+                $"Can't change type from '{existingAttribute.Type}' to '{localAttribute.Type}' — Dataverse doesn't support changing a column's data type after creation.", null);
+        }
+
+        if (localAttribute.SchemaName is not null && localAttribute.SchemaName != existingAttribute.SchemaName)
+        {
+            return new AttributeImportPlan(localAttribute.Name, AttributeImportAction.Invalid,
+                $"Can't change SchemaName from '{existingAttribute.SchemaName}' to '{localAttribute.SchemaName}' — immutable after creation.", null);
+        }
+
+        // Same reasoning as the Type/SchemaName checks above: Targets
+        // isn't in AttributesMatch's field list either (this tool never
+        // writes it back for an existing Lookup/Customer/Owner column),
+        // so a changed Targets would otherwise be silently ignored
+        // rather than caught as the invalid, would-fail change it is.
+        if (localAttribute.Type is "Lookup" or "Customer" or "Owner"
+            && localAttribute.Targets is not null
+            && !TargetsMatch(localAttribute.Targets, existingAttribute.Targets))
+        {
+            return new AttributeImportPlan(localAttribute.Name, AttributeImportAction.Invalid,
+                $"Can't change Targets on an existing {localAttribute.Type} column — immutable after creation.", null);
+        }
+
+        if (AttributesMatch(localAttribute, existingAttribute))
+        {
+            return new AttributeImportPlan(localAttribute.Name, AttributeImportAction.Unchanged, null, null);
+        }
+
+        return await BuildUpdatePlanAsync(environmentUrl, accessToken, entityLogicalName, localAttribute, existingAttribute, cancellationToken);
     }
 
     private static bool TargetsMatch(IReadOnlyList<string> local, IReadOnlyList<string>? existing) =>
@@ -334,7 +426,7 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
     /// <c>globalOptionSetMetadataId</c> for why a Name-based bind doesn't
     /// work here.
     /// </summary>
-    private async Task<AttributeImportPlan> BuildCreatePlanAsync(Uri environmentUrl, string accessToken, string entityLogicalName, AttributeDefinition local, CancellationToken cancellationToken)
+    private async Task<AttributeImportPlan> BuildCreatePlanAsync(Uri environmentUrl, string accessToken, string entityLogicalName, AttributeDefinition local, IReadOnlySet<string> pendingGlobalChoiceNames, CancellationToken cancellationToken)
     {
         if (local.Type is "Owner" or "State" or "Status")
         {
@@ -383,16 +475,30 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
         // genuine, surfaced error rather than something left for Dataverse's
         // own opaque bind failure to explain.
         Guid? globalOptionSetMetadataId = null;
+        string? pendingGlobalChoiceName = null;
         if (local.Type is "Picklist" or "MultiSelectPicklist" && local.GlobalOptionSetName is not null)
         {
             var globalChoiceJson = await dataverseClient.TryGetGlobalOptionSetJsonAsync(environmentUrl, accessToken, local.GlobalOptionSetName, cancellationToken);
-            if (globalChoiceJson is null)
+            if (globalChoiceJson is not null)
+            {
+                globalOptionSetMetadataId = JsonNode.Parse(globalChoiceJson)!["MetadataId"]!.GetValue<Guid>();
+            }
+            else if (pendingGlobalChoiceNames.Contains(local.GlobalOptionSetName))
+            {
+                // `solution import` previews everything before applying
+                // anything, so a choice that choices.yml will create in this
+                // same run isn't live yet. The bind needs its MetadataId,
+                // which only exists once it has been created, so a
+                // placeholder goes in the body now and ApplyAsync swaps in
+                // the real id (see ResolvePendingChoicesAsync).
+                globalOptionSetMetadataId = Guid.Empty;
+                pendingGlobalChoiceName = local.GlobalOptionSetName;
+            }
+            else
             {
                 return new AttributeImportPlan(local.Name, AttributeImportAction.Invalid,
                     $"Global choice '{local.GlobalOptionSetName}' doesn't exist — create it first via `choice import`.", null);
             }
-
-            globalOptionSetMetadataId = JsonNode.Parse(globalChoiceJson)!["MetadataId"]!.GetValue<Guid>();
         }
 
         JsonObject body;
@@ -409,7 +515,42 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
             return new AttributeImportPlan(local.Name, AttributeImportAction.Invalid, ex.Message, null);
         }
 
-        return new AttributeImportPlan(local.Name, AttributeImportAction.Create, null, body);
+        return new AttributeImportPlan(local.Name, AttributeImportAction.Create, null, body, AutoNumberSeed: local.AutoNumberSeed) { PendingGlobalChoiceName = pendingGlobalChoiceName };
+    }
+
+    /// <summary>
+    /// Swaps the placeholder id in each plan that binds to a global choice
+    /// created earlier in the same <c>solution import</c> run for that
+    /// choice's real MetadataId. A no-op (the same preview back) for every
+    /// ordinary import. Fails loudly, rather than sending a bind to an empty
+    /// id, if the choice still doesn't exist (e.g. its own import failed).
+    /// </summary>
+    private async Task<TableImportPreview> ResolvePendingChoicesAsync(Uri environmentUrl, string accessToken, TableImportPreview preview, CancellationToken cancellationToken)
+    {
+        if (preview.AttributePlans.All(p => p.PendingGlobalChoiceName is null))
+        {
+            return preview;
+        }
+
+        var resolved = new List<AttributeImportPlan>();
+        foreach (var plan in preview.AttributePlans)
+        {
+            if (plan.PendingGlobalChoiceName is not { } choiceName)
+            {
+                resolved.Add(plan);
+                continue;
+            }
+
+            var json = await dataverseClient.TryGetGlobalOptionSetJsonAsync(environmentUrl, accessToken, choiceName, cancellationToken)
+                ?? throw new InvalidOperationException($"Column '{plan.LogicalName}' uses the global choice '{choiceName}', which still doesn't exist — it was meant to be created by this run's choices.yml, so check whether that import failed.");
+            var id = JsonNode.Parse(json)!["MetadataId"]!.GetValue<Guid>();
+
+            var body = (JsonObject)plan.RequestBody!.DeepClone();
+            body["GlobalOptionSet@odata.bind"] = $"/GlobalOptionSetDefinitions({id:D})";
+            resolved.Add(plan with { RequestBody = body, PendingGlobalChoiceName = null });
+        }
+
+        return preview with { AttributePlans = resolved };
     }
 
     private async Task<AttributeImportPlan> BuildUpdatePlanAsync(Uri environmentUrl, string accessToken, string entityLogicalName, AttributeDefinition local, AttributeDefinition existing, CancellationToken cancellationToken)
@@ -453,6 +594,7 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
         && FieldMatches(local.MinValue, existing.MinValue)
         && FieldMatches(local.MaxValue, existing.MaxValue)
         && FieldMatches(local.Format, existing.Format)
+        && FieldMatches(local.AutoNumberFormat, existing.AutoNumberFormat)
         && FieldMatches(local.DefaultValue, existing.DefaultValue)
         && FieldMatches(local.TrueOptionLabel, existing.TrueOptionLabel)
         && FieldMatches(local.FalseOptionLabel, existing.FalseOptionLabel)

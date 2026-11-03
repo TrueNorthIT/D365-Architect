@@ -40,6 +40,10 @@
       "description": "Only present when true — false is the platform default for a table. Omit to leave notes off for this table; applying this file back won't turn them on.",
       "type": "boolean"
     },
+    "primaryNameAttribute": {
+      "description": "Logical name of the String column that is the table's primary name column, e.g. \"tn_name\". Must be listed under Attributes. Needed by table create (Dataverse's create-table call requires the primary name column in the body, flagged IsPrimaryName) and written by table export from the live table's PrimaryNameAttribute.",
+      "type": "string"
+    },
     "attributes": {
       "description": "The table's columns.",
       "type": "array",
@@ -95,7 +99,7 @@
             "type": "number"
           },
           "format": {
-            "description": "Type-specific format, e.g. \"Email\"/\"Text\" (String), \"DateOnly\"/\"DateAndTime\" (DateTime), \"TextArea\" (Memo).",
+            "description": "Type-specific format, e.g. \"Email\"/\"Text\" (String), \"DateOnly\"/\"DateAndTime\" (DateTime), \"TextArea\" or \"RichText\" (Memo). A Memo can't be switched between plain and rich text after it's created.",
             "type": "string"
           },
           "targets": {
@@ -167,6 +171,14 @@
               "ReferentialRestrictDelete",
               "Parental"
             ]
+          },
+          "autoNumberFormat": {
+            "description": "String only: makes this an auto-number column, which Dataverse fills in on every new row, e.g. INV-{SEQNUM:6} or {DATETIMEUTC:yyyyMMdd}-{SEQNUM:4}. Can be added to or changed on an existing text column. The column's format must be Text (or left out).",
+            "type": "string"
+          },
+          "autoNumberSeed": {
+            "description": "Optional, import only: the first number a new auto-number column will use. Only applied in the run that creates the column, and only in that environment; ignored (with a note) once the column exists, so re-importing never resets the counter. Never written by export. Needs autoNumberFormat.",
+            "type": "integer"
           }
         },
         "additionalProperties": false,

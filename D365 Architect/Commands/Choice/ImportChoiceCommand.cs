@@ -30,14 +30,13 @@ namespace D365Architect.Commands.Choice;
 /// to see just the diff/plan and never be prompted or write anything at
 /// all.
 ///
-/// What this doesn't do yet: publish the change — Dataverse customizations
-/// still need publishing separately before end users see it, same as
-/// `table import`.
+/// Once the change is applied the file's choices are published, unless
+/// <c>--no-publish</c>, same as `table import`.
 /// </summary>
 public sealed class ImportChoiceCommand(IGlobalChoiceImportService globalChoiceImportService, ImportRunner importRunner)
     : AsyncCommand<ImportChoiceCommand.Settings>
 {
-    public sealed class Settings : ImportSettingsBase
+    public sealed class Settings : PublishableImportSettings
     {
         [CommandOption("-s|--solution <UNIQUE_NAME>")]
         [Description("Unique name of a solution to add any brand-new global choice to as it's created. Never affects updates to an existing choice. Omit to leave a new choice wherever Dataverse's own default solution context puts it, same as before this option existed.")]
@@ -48,12 +47,11 @@ public sealed class ImportChoiceCommand(IGlobalChoiceImportService globalChoiceI
         RunAsync(settings, cancellationToken);
 
     /// <summary>
-    /// The command's own logic, independent of Spectre's <see cref="CommandContext"/> —
-    /// pulled out of <see cref="ExecuteAsync"/> so <c>solution import</c> can
-    /// run this exact same preview → diff → confirm → apply flow for a
-    /// solution's <c>choices.yml</c>, without duplicating any of it.
+    /// Builds this command's <see cref="ImportFlowSpec{TSettings,TInput,TPreview}"/>: the parts of the shared
+    /// preview → diff → confirm → apply flow that differ for this asset type. Shared by
+    /// <see cref="RunAsync"/> and <see cref="PreviewAsync(Settings, bool, CancellationToken)"/> (used by <c>solution import</c>).
     /// </summary>
-    public async Task<int> RunAsync(Settings settings, CancellationToken cancellationToken)
+    private ImportFlowSpec<Settings, IReadOnlyList<GlobalChoiceDefinition>, GlobalChoicesImportPreview> BuildSpec(Settings settings)
     {
         var spec = new ImportFlowSpec<Settings, IReadOnlyList<GlobalChoiceDefinition>, GlobalChoicesImportPreview>
         {
@@ -98,7 +96,10 @@ public sealed class ImportChoiceCommand(IGlobalChoiceImportService globalChoiceI
                 var created = preview.ChoicePlans.Count(p => p.Action == GlobalChoiceImportAction.Create);
                 var updated = preview.ChoicePlans.Count(p => p.Action == GlobalChoiceImportAction.Update);
                 AnsiConsole.MarkupLine($"[green]Imported.[/] {created} created, {updated} updated in Dataverse.");
-                AnsiConsole.MarkupLine("[grey]Note: this only updates Dataverse's metadata — publish customizations separately (e.g. in the maker portal) before end users see the change; this tool doesn't publish yet.[/]");
+                if (settings.NoPublish)
+                {
+                    AnsiConsole.MarkupLine("[grey]Note: --no-publish — publish customizations separately (e.g. in the maker portal) before end users see the change.[/]");
+                }
             },
 
             FormatDomainException = (ex, choices) => ex switch
@@ -106,10 +107,23 @@ public sealed class ImportChoiceCommand(IGlobalChoiceImportService globalChoiceI
                 InvalidDataException => $"[red]Couldn't parse the live metadata:[/] {ex.Message.EscapeMarkup()}",
                 _ => null,
             },
+
+            PublishAsync = (auth, preview, ct) => globalChoiceImportService.PublishAsync(auth.EnvironmentUrl, auth.AccessToken, preview, ct),
         };
 
-        return await importRunner.RunAsync(settings, globalChoiceImportService, spec, cancellationToken);
+        return spec;
     }
+
+    public Task<int> RunAsync(Settings settings, CancellationToken cancellationToken) =>
+        importRunner.RunAsync(settings, globalChoiceImportService, BuildSpec(settings), cancellationToken);
+
+    /// <summary>
+    /// Previews without prompting or writing: the first half of
+    /// <see cref="RunAsync"/>, for callers (<c>solution import</c>) that
+    /// collect several previews and confirm once.
+    /// </summary>
+    public Task<PreparedImport> PreviewAsync(Settings settings, bool printUnchanged, CancellationToken cancellationToken) =>
+        importRunner.PreviewAsync(settings, globalChoiceImportService, BuildSpec(settings), printUnchanged, cancellationToken);
 
     /// <summary>
     /// A choice can show up as different in the YAML diff without anything

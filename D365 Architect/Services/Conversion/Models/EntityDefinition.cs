@@ -16,10 +16,12 @@ namespace D365Architect.Services.Conversion.Models;
 /// once a table exists — a future "apply" needs them to tell a real change
 /// from a table that was simply never fully described.
 ///
-/// Deliberately excluded: PrimaryNameAttribute. It's read-only/computed —
-/// Dataverse derives it from whichever attribute has IsPrimaryName set — so
-/// it's never something this YAML could actually drive; it would only ever
-/// restate what <see cref="AttributeDefinition"/> already says elsewhere.
+/// <see cref="PrimaryNameAttribute"/> is captured too, for the same reason:
+/// it's read-only on an existing table (Dataverse derives it from whichever
+/// column has <c>IsPrimaryName</c> set), but creating a table needs that
+/// column in the create body flagged <c>IsPrimaryName</c>, and nothing on
+/// <see cref="AttributeDefinition"/> says which column it is. Only
+/// <c>table create</c> acts on it; <c>table import</c> never does.
 ///
 /// Absent optional properties below mean "left at Dataverse's default", not
 /// "unknown" — see <see cref="DefaultValueConventions"/>.
@@ -65,8 +67,19 @@ public sealed class EntityDefinition
     [YamlMember(Order = 8)]
     public bool? HasNotes { get; init; }
 
-    /// <summary>The table's columns.</summary>
+    /// <summary>
+    /// Logical name of the String column that is the table's primary name
+    /// column, e.g. "tn_name". Must be listed under <see cref="Attributes"/>.
+    /// Needed by <c>table create</c> (Dataverse's create-table call requires
+    /// the primary name column in the body, flagged <c>IsPrimaryName</c>) and
+    /// written by <c>table export</c> from the live table's
+    /// <c>PrimaryNameAttribute</c>.
+    /// </summary>
     [YamlMember(Order = 9)]
+    public string? PrimaryNameAttribute { get; init; }
+
+    /// <summary>The table's columns.</summary>
+    [YamlMember(Order = 10)]
     public IReadOnlyList<AttributeDefinition> Attributes { get; init; } = [];
 
     /// <summary>
@@ -94,6 +107,7 @@ public sealed class EntityDefinition
         IsActivity = IsActivity,
         HasActivities = HasActivities,
         HasNotes = HasNotes,
+        PrimaryNameAttribute = PrimaryNameAttribute,
         Attributes = attributes,
     };
 }

@@ -55,6 +55,9 @@ public sealed class SolutionExportServiceTests
 
         public Task<IReadOnlyList<FormSummary>> ListFormsAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string? solutionUniqueName, CancellationToken cancellationToken) =>
             throw new NotImplementedException("Solution export never needs the interactive-picker summary list — it always exports every form.");
+
+        public ExportedForm ExportFormFromXml(string path, string entityLogicalName, string? type) =>
+            throw new NotImplementedException("Solution export always exports from the live environment, never from a local file.");
     }
 
     private sealed class FakeGlobalChoiceExportService : IGlobalChoiceExportService
@@ -130,6 +133,29 @@ public sealed class SolutionExportServiceTests
 
         Assert.NotNull(result.ChoicesYaml);
         Assert.Contains("tn_choice", result.ChoicesYaml);
+    }
+
+    [Fact]
+    public async Task ExportSolutionAsync_TableFilter_ExportsOnlyThoseTablesCaseInsensitivelyAndSkipsChoices()
+    {
+        var (service, _, tableExport, _, _, choiceExport) = CreateService(["account", "contact", "tn_thing"]);
+        choiceExport.Yaml = GlobalChoiceYamlSerializer.ToYaml([new GlobalChoiceDefinition { Name = "tn_choice" }]);
+
+        var result = await service.ExportSolutionAsync(EnvironmentUrl, "token", "examplesolution", CancellationToken.None, ["CONTACT"]);
+
+        Assert.Equal("contact", Assert.Single(result.Entities).EntityLogicalName);
+        Assert.Equal("contact", Assert.Single(tableExport.Calls).EntityLogicalName);
+        Assert.Null(result.ChoicesYaml);
+    }
+
+    [Fact]
+    public async Task ExportSolutionAsync_TableFilterMatchesNothing_Throws()
+    {
+        var (service, _, tableExport, _, _, _) = CreateService(["account"]);
+
+        await Assert.ThrowsAsync<UnknownTableException>(() =>
+            service.ExportSolutionAsync(EnvironmentUrl, "token", "examplesolution", CancellationToken.None, ["nope"]));
+        Assert.Empty(tableExport.Calls);
     }
 
     [Fact]

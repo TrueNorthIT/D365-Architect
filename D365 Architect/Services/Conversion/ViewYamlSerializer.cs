@@ -13,6 +13,7 @@ internal static class ViewYamlSerializer
     private static readonly ISerializer Serializer = new SerializerBuilder()
         .WithNamingConvention(CamelCaseNamingConvention.Instance)
         .ConfigureDefaultValuesHandling(DefaultValuesHandling.OmitNull)
+        .WithTypeConverter(new ViewColumnYamlTypeConverter())
         .Build();
 
     public static string ToYaml(ViewDefinition definition) => Serializer.Serialize(definition);
