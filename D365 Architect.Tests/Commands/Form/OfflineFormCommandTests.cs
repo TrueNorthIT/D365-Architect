@@ -165,4 +165,34 @@ public sealed class OfflineFormCommandTests : IDisposable
         Expect.Equal(0, exitCode, $"form build-xml --base on a bare form should succeed. Output: <{text}>");
         Expect.Equal("form", XDocument.Load(output).Root!.Name.LocalName, "A bare base file should give a bare <form> back.");
     }
+
+    // ---- the whole offline round trip (#58/#59 acceptance) ----
+
+    // Example: account fixture -> export --from-xml -> build-xml --base (same file) -> compare reports 0 differences.
+    [Fact]
+    public async Task OfflineRoundTrip_ExportThenBuildOnTheAccountFixture_ReportsNoDifferences()
+    {
+        await ExportAccountFixtureAsync();
+        var output = _directory.File("out.xml");
+
+        var (exitCode, _, text) = await BuildAsync(Assert.Single(ExportedYamlFiles()), AccountFixture, output);
+
+        Expect.Equal(0, exitCode, $"form build-xml --base should succeed. Output: <{text}>");
+        var differences = FormXmlComparer.Compare(AccountMain(), FormXmlFile.LoadForm(output));
+        Expect.Empty(differences, $"An unedited export then build must reproduce the fixture exactly. {Show(differences)}");
+    }
+
+    // Example: the exported YAML plus one new "Invoice Centres" tab with a subgrid -> every difference is inside that tab.
+    [Fact]
+    public async Task OfflineRoundTrip_AfterAddingATabToTheYaml_ChangesOnlyThatTab()
+    {
+        var form = (await ExportAccountFixtureAsync()).WithTabAppended(InvoiceCentresTab());
+        var output = _directory.File("out.xml");
+
+        await BuildAsync(WriteYaml(form), AccountFixture, output);
+
+        var differences = FormXmlComparer.Compare(AccountMain(), FormXmlFile.LoadForm(output));
+        Expect.True(differences.Count > 0, "The new tab should appear in the output.");
+        Expect.True(differences.All(d => d.Path.Contains("tab[name=invoice_centres]", StringComparison.Ordinal)), $"Every difference should be inside the new tab. {Show(differences)}");
+    }
 }

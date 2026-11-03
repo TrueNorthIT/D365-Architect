@@ -111,7 +111,7 @@ public sealed class FormXmlWriterTests
     }
 
     [Fact]
-    public void Write_PatchMode_RemovesManagedElementNoLongerPresentInYaml()
+    public void Write_PatchMode_KeepsManagedElementMissingFromYamlUnlessRemovalsAreAllowed()
     {
         var existing = XElement.Parse("""
             <form>
@@ -120,9 +120,10 @@ public sealed class FormXmlWriterTests
             </form>
             """);
 
-        // form.Ancestor is null - the existing <ancestor> element must be removed, not left stale.
-        var xml = FormXmlWriter.Write(SimpleForm(), existing);
-        Assert.Null(XElement.Parse(xml).Element("ancestor"));
+        // form.Ancestor is null. Something live but missing from the YAML is
+        // kept (issue #58) and only removed when removals are explicitly allowed.
+        Assert.NotNull(XElement.Parse(FormXmlWriter.Write(SimpleForm(), existing)).Element("ancestor"));
+        Assert.Null(XElement.Parse(FormXmlWriter.Write(SimpleForm(), existing, allowRemovals: true)).Element("ancestor"));
     }
 
     [Fact]
