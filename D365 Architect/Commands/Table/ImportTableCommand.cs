@@ -80,8 +80,18 @@ public sealed class ImportTableCommand(ITableImportService tableImportService, I
         public bool ShowUnmanaged { get; init; }
     }
 
-    protected override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken) =>
-        RunAsync(settings, cancellationToken);
+    protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await RunAsync(settings, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            ErrorConsole.Print(ex);
+            return 1;
+        }
+    }
 
     /// <summary>
     /// Builds this command's <see cref="ImportFlowSpec{TSettings,TInput,TPreview}"/>: the parts of the shared

@@ -68,5 +68,10 @@ public sealed class ExportTableCommand(IAuthenticationService authenticationServ
             ErrorConsole.Print(ex);
             return 1;
         }
+        catch (Exception ex)
+        {
+            ErrorConsole.Print($"Unexpected error: {ex}");
+            return 1;
+        }
     }
 }

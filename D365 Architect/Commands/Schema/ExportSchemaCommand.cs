@@ -69,18 +69,26 @@ public sealed class ExportSchemaCommand : Command<ExportSchemaCommand.Settings>
             return 1;
         }
 
-        var schema = YamlSchemaGenerator.Generate(assetType.ModelType, assetType.Title, assetType.Description);
-
-        var output = settings.Output ?? Path.Combine("schema", assetType.DefaultFileName);
-        var directory = Path.GetDirectoryName(output);
-        if (!string.IsNullOrEmpty(directory))
+        try
         {
-            Directory.CreateDirectory(directory);
+            var schema = YamlSchemaGenerator.Generate(assetType.ModelType, assetType.Title, assetType.Description);
+
+            var output = settings.Output ?? Path.Combine("schema", assetType.DefaultFileName);
+            var directory = Path.GetDirectoryName(output);
+            if (!string.IsNullOrEmpty(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            File.WriteAllText(output, schema.ToJsonString(JsonOptions));
+
+            AnsiConsole.MarkupLine($"[green]Wrote[/] {output}");
+            return 0;
         }
-
-        File.WriteAllText(output, schema.ToJsonString(JsonOptions));
-
-        AnsiConsole.MarkupLine($"[green]Wrote[/] {output}");
-        return 0;
+        catch (Exception ex)
+        {
+            ErrorConsole.Print(ex);
+            return 1;
+        }
     }
 }

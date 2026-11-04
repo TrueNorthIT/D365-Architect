@@ -45,5 +45,10 @@ public sealed class LoginCommand(IAuthenticationService authenticationService) :
             ErrorConsole.Print(ex);
             return 1;
         }
+        catch (Exception ex)
+        {
+            ErrorConsole.Print(ex);
+            return 1;
+        }
     }
 }

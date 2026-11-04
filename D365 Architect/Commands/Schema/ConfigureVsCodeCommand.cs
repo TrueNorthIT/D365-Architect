@@ -69,77 +69,85 @@ public sealed class ConfigureVsCodeCommand : Command<ConfigureVsCodeCommand.Sett
             return 1;
         }
 
-        var branch = settings.PreRelease ? "develop" : "main";
-
-        var vscodeDir = System.IO.Path.Combine(settings.Path, ".vscode");
-        Directory.CreateDirectory(vscodeDir);
-        var settingsPath = System.IO.Path.Combine(vscodeDir, "settings.json");
-
-        var fileExisted = File.Exists(settingsPath);
-        JsonObject root;
-        if (fileExisted)
+        try
         {
-            JsonNode? parsed;
-            try
+            var branch = settings.PreRelease ? "develop" : "main";
+
+            var vscodeDir = System.IO.Path.Combine(settings.Path, ".vscode");
+            Directory.CreateDirectory(vscodeDir);
+            var settingsPath = System.IO.Path.Combine(vscodeDir, "settings.json");
+
+            var fileExisted = File.Exists(settingsPath);
+            JsonObject root;
+            if (fileExisted)
             {
-                parsed = JsonNode.Parse(File.ReadAllText(settingsPath), documentOptions: ParseOptions);
+                JsonNode? parsed;
+                try
+                {
+                    parsed = JsonNode.Parse(File.ReadAllText(settingsPath), documentOptions: ParseOptions);
+                }
+                catch (JsonException ex)
+                {
+                    ErrorConsole.Print($"{settingsPath} isn't valid JSON — fix or remove it first, then re-run this command: {ex.Message}");
+                    return 1;
+                }
+
+                if (parsed is not JsonObject existingRoot)
+                {
+                    ErrorConsole.Print($"{settingsPath}'s top level isn't a JSON object — refusing to overwrite it.");
+                    return 1;
+                }
+
+                root = existingRoot;
             }
-            catch (JsonException ex)
+            else
             {
-                ErrorConsole.Print($"{settingsPath} isn't valid JSON — fix or remove it first, then re-run this command: {ex.Message}");
-                return 1;
+                root = new JsonObject();
             }
 
-            if (parsed is not JsonObject existingRoot)
+            if (root["yaml.schemas"] is not JsonObject yamlSchemas)
             {
-                ErrorConsole.Print($"{settingsPath}'s top level isn't a JSON object — refusing to overwrite it.");
-                return 1;
+                yamlSchemas = new JsonObject();
+                root["yaml.schemas"] = yamlSchemas;
             }
 
-            root = existingRoot;
-        }
-        else
-        {
-            root = new JsonObject();
-        }
-
-        if (root["yaml.schemas"] is not JsonObject yamlSchemas)
-        {
-            yamlSchemas = new JsonObject();
-            root["yaml.schemas"] = yamlSchemas;
-        }
-
-        // Clear out any existing mapping — under some other URL, or a local
-        // "./schema/..." path from a repo checkout — that already owns one
-        // of our three glob patterns, so switching --release/--pre-release
-        // (or re-running this after copying settings.json out of the repo
-        // itself) doesn't leave a stale, conflicting duplicate behind. Only
-        // handles the plain-string form of a yaml.schemas value; the
-        // less common one-URL-to-many-globs array form is left untouched.
-        var ownedGlobs = SchemaFiles.Select(s => s.GlobPattern).ToHashSet();
-        foreach (var existingKey in yamlSchemas.Select(kvp => kvp.Key).ToList())
-        {
-            if (yamlSchemas[existingKey] is JsonValue value
-                && value.TryGetValue<string>(out var glob)
-                && ownedGlobs.Contains(glob))
+            // Clear out any existing mapping — under some other URL, or a local
+            // "./schema/..." path from a repo checkout — that already owns one
+            // of our three glob patterns, so switching --release/--pre-release
+            // (or re-running this after copying settings.json out of the repo
+            // itself) doesn't leave a stale, conflicting duplicate behind. Only
+            // handles the plain-string form of a yaml.schemas value; the
+            // less common one-URL-to-many-globs array form is left untouched.
+            var ownedGlobs = SchemaFiles.Select(s => s.GlobPattern).ToHashSet();
+            foreach (var existingKey in yamlSchemas.Select(kvp => kvp.Key).ToList())
             {
-                yamlSchemas.Remove(existingKey);
+                if (yamlSchemas[existingKey] is JsonValue value
+                    && value.TryGetValue<string>(out var glob)
+                    && ownedGlobs.Contains(glob))
+                {
+                    yamlSchemas.Remove(existingKey);
+                }
             }
-        }
 
-        foreach (var (globPattern, fileName) in SchemaFiles)
+            foreach (var (globPattern, fileName) in SchemaFiles)
+            {
+                yamlSchemas[$"{RepositoryRawBaseUrl}/{branch}/schema/{fileName}"] = JsonValue.Create(globPattern);
+            }
+
+            File.WriteAllText(settingsPath, root.ToJsonString(WriteOptions));
+
+            AnsiConsole.MarkupLine($"[green]Wrote[/] {settingsPath} — *.table.yml/*.view.yml/*.form.yml/*.choice.yml now validate against the [bold]{branch}[/] branch's schemas.");
+            if (fileExisted)
+            {
+                AnsiConsole.MarkupLine("[grey]Note: any comments in the existing settings.json were not preserved.[/]");
+            }
+
+            return 0;
+        }
+        catch (Exception ex)
         {
-            yamlSchemas[$"{RepositoryRawBaseUrl}/{branch}/schema/{fileName}"] = JsonValue.Create(globPattern);
+            ErrorConsole.Print(ex);
+            return 1;
         }
-
-        File.WriteAllText(settingsPath, root.ToJsonString(WriteOptions));
-
-        AnsiConsole.MarkupLine($"[green]Wrote[/] {settingsPath} — *.table.yml/*.view.yml/*.form.yml/*.choice.yml now validate against the [bold]{branch}[/] branch's schemas.");
-        if (fileExisted)
-        {
-            AnsiConsole.MarkupLine("[grey]Note: any comments in the existing settings.json were not preserved.[/]");
-        }
-
-        return 0;
     }
 }

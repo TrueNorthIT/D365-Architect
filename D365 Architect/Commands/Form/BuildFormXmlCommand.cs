@@ -118,6 +118,11 @@ public sealed class BuildFormXmlCommand(IAuthenticationService authenticationSer
             ErrorConsole.Print($"Rebuilt FormXML isn't well-formed XML — this is a bug in this tool, not the source YAML: {ex.Message}");
             return 1;
         }
+        catch (Exception ex)
+        {
+            ErrorConsole.Print(ex);
+            return 1;
+        }
     }
 
     /// <summary>
@@ -154,6 +159,11 @@ public sealed class BuildFormXmlCommand(IAuthenticationService authenticationSer
         catch (System.Xml.XmlException ex)
         {
             ErrorConsole.Print($"Couldn't build on '{settings.Base}': {ex.Message}");
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            ErrorConsole.Print(ex);
             return 1;
         }
     }

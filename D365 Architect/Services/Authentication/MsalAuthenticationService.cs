@@ -73,6 +73,10 @@ public sealed class MsalAuthenticationService(AuthenticationOptions options, Non
         {
             throw new AuthenticationRequiredException("Your sign-in has expired. Run 'auth login --url <environment-url>' again.");
         }
+        catch (MsalException ex)
+        {
+            throw new AuthenticationRequiredException($"Sign-in failed: {ex.Message}", ex);
+        }
     }
 
     internal static string ToDefaultScope(Uri environmentUrl) => $"{environmentUrl.GetLeftPart(UriPartial.Authority)}/.default";

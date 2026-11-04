@@ -42,8 +42,18 @@ public sealed class CreateTableCommand(ITableCreateService tableCreateService, I
         public string? Solution { get; init; }
     }
 
-    protected override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken) =>
-        RunAsync(settings, cancellationToken);
+    protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await RunAsync(settings, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            ErrorConsole.Print(ex);
+            return 1;
+        }
+    }
 
     /// <summary>The command's own logic, independent of Spectre's <see cref="CommandContext"/>. A declined prompt exits 0, like every import.</summary>
     public async Task<int> RunAsync(Settings settings, CancellationToken cancellationToken)

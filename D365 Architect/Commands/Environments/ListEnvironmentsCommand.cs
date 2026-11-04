@@ -13,11 +13,19 @@ public sealed class ListEnvironmentsCommand(IEnvironmentService environments) : 
 
     protected override int Execute(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
-        foreach (var name in environments.ListEnvironments())
+        try
         {
-            AnsiConsole.MarkupLine($"- {name}");
-        }
+            foreach (var name in environments.ListEnvironments())
+            {
+                AnsiConsole.MarkupLine($"- {name}");
+            }
 
-        return 0;
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            ErrorConsole.Print(ex);
+            return 1;
+        }
     }
 }

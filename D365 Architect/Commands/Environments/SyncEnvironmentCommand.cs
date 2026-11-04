@@ -21,10 +21,18 @@ public sealed class SyncEnvironmentCommand(IEnvironmentService environments) : A
 
     protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
-        await AnsiConsole.Status().StartAsync($"Syncing '{settings.Environment}'...",
-            async _ => await environments.SyncAsync(settings.Environment, cancellationToken));
+        try
+        {
+            await AnsiConsole.Status().StartAsync($"Syncing '{settings.Environment}'...",
+                async _ => await environments.SyncAsync(settings.Environment, cancellationToken));
 
-        AnsiConsole.MarkupLine($"[green]Done.[/] Synced '{settings.Environment}'.");
-        return 0;
+            AnsiConsole.MarkupLine($"[green]Done.[/] Synced '{settings.Environment}'.");
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            ErrorConsole.Print(ex);
+            return 1;
+        }
     }
 }
