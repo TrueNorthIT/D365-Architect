@@ -1,7 +1,7 @@
 name: Issue analysis
 
 # A quick analysis comment on new issues and on any issue labelled `analyse`, written by a
-# local model on bigmac. Only members of the TrueNorthIT `local-agents` team can trigger it;
+# local model on bigmac. Only members of the TrueNorthIT `local-agent-access` team can trigger it;
 # admins manage who's in that team.
 #
 # Before it can run in this repo:

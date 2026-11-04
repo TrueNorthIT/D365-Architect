@@ -18,7 +18,7 @@ permissions:
 env:
   KIT_REF: v1.0.0            # bump by PR after testing with the kit's bench
   KIT_PROFILE: D365-Architect
-  AGENT_TEAM: local-agents   # admins manage who can trigger the agent via this team
+  AGENT_TEAM: local-agent-access   # admins manage who can trigger the agent via this team
 
 jobs:
   agent:
