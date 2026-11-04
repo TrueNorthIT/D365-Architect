@@ -82,11 +82,11 @@ jobs:
         if: steps.auth.outputs.ok == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: '"$KIT_DIR/adapters/github/run-agent.sh" claim'
+        run: bash "$KIT_DIR/adapters/github/run-agent.sh" claim
 
       - name: Run agent
         if: steps.auth.outputs.ok == 'true'
-        run: '"$KIT_DIR/adapters/github/run-agent.sh" run'
+        run: bash "$KIT_DIR/adapters/github/run-agent.sh" run
 
       # Write access to this repo, minted only after the agent has finished.
       - id: app
@@ -105,7 +105,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           APP_SLUG: ${{ steps.app.outputs.app-slug }}
-        run: '"$KIT_DIR/adapters/github/run-agent.sh" publish'
+        run: bash "$KIT_DIR/adapters/github/run-agent.sh" publish
 
       - name: Report failure
         if: (failure() || cancelled()) && steps.auth.outputs.ok == 'true'
@@ -118,5 +118,5 @@ jobs:
       - name: Clean up
         if: always()
         run: |
-          [ -x "${KIT_DIR:-/nonexistent}/adapters/github/run-agent.sh" ] && "$KIT_DIR/adapters/github/run-agent.sh" cleanup || true
+          [ -f "${KIT_DIR:-/nonexistent}/adapters/github/run-agent.sh" ] && bash "$KIT_DIR/adapters/github/run-agent.sh" cleanup || true
           rm -rf "$RUNNER_TEMP/kit"
