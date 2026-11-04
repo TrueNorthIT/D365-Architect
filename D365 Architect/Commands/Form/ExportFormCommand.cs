@@ -114,6 +114,11 @@ public sealed class ExportFormCommand(IAuthenticationService authenticationServi
             ErrorConsole.Print(ex);
             return 1;
         }
+        catch (Exception ex)
+        {
+            ErrorConsole.Print(ex);
+            return 1;
+        }
     }
 
     /// <summary>`--from-xml`: the whole export from a local file, never signing in.</summary>

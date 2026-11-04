@@ -64,8 +64,22 @@ public sealed class FakeDataverseClient : IDataverseClient
     /// </summary>
     public List<string> ColumnWriteOrder { get; } = [];
 
-    public Task<WhoAmIResult> WhoAmIAsync(Uri environmentUrl, string accessToken, CancellationToken cancellationToken) => throw new NotImplementedException();
-    public Task<string?> TryGetUserFullNameAsync(Uri environmentUrl, string accessToken, Guid userId, CancellationToken cancellationToken) => throw new NotImplementedException();
+    /// <summary>When set, <see cref="WhoAmIAsync"/> throws this instead of returning a result — simulates the WhoAmI web request failing (e.g. an <c>HttpRequestException</c>).</summary>
+    public Exception? WhoAmIFailure { get; set; }
+
+    /// <summary>When set, <see cref="TryGetUserFullNameAsync"/> throws this instead of returning a name — simulates the systemusers lookup request failing.</summary>
+    public Exception? TryGetUserFullNameFailure { get; set; }
+
+    /// <summary>Answers <see cref="WhoAmIAsync"/> when <see cref="WhoAmIFailure"/> is unset; unset itself throws, like every other unconfigured read.</summary>
+    public WhoAmIResult? WhoAmI { get; set; }
+
+    public Task<WhoAmIResult> WhoAmIAsync(Uri environmentUrl, string accessToken, CancellationToken cancellationToken) =>
+        WhoAmIFailure is not null ? throw WhoAmIFailure :
+        WhoAmI is { } whoAmI ? Task.FromResult(whoAmI) :
+        throw new NotImplementedException();
+
+    public Task<string?> TryGetUserFullNameAsync(Uri environmentUrl, string accessToken, Guid userId, CancellationToken cancellationToken) =>
+        TryGetUserFullNameFailure is not null ? throw TryGetUserFullNameFailure : throw new NotImplementedException();
 
     public Task<string> GetEntityDefinitionJsonAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken) =>
         Task.FromResult(EntityDefinitionJson ?? throw new InvalidOperationException($"{nameof(EntityDefinitionJson)} wasn't configured."));

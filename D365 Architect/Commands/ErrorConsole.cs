@@ -44,8 +44,14 @@ internal static class ErrorConsole
     public static void Print(FormattableString message) =>
         AnsiConsole.MarkupLine($"[red]{Format(message)}[/]");
 
-    /// <summary>As <see cref="Print(FormattableString)"/>, for an exception with no other context.</summary>
-    public static void Print(Exception ex) => Print($"{ex.Message}");
+    /// <summary>
+    /// As <see cref="Print(FormattableString)"/>, for an exception with no
+    /// other context. Prints <see cref="Exception.ToString()"/> rather than
+    /// just <see cref="Exception.Message"/> so an inner-exception chain
+    /// (e.g. a network error wrapped in an <c>HttpRequestException</c>)
+    /// keeps its cause, type and location instead of being dropped.
+    /// </summary>
+    public static void Print(Exception ex) => Print($"{ex.ToString()}");
 
     /// <summary>As <see cref="Print(FormattableString)"/>, but yellow — for a warning rather than an error. Same escaping, same reason it matters.</summary>
     public static void Warn(FormattableString message) =>

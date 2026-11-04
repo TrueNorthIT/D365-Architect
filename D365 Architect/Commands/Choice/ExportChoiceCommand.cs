@@ -46,22 +46,27 @@ public sealed class ExportChoiceCommand(IAuthenticationService authenticationSer
         }
         catch (AuthenticationRequiredException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message.EscapeMarkup()}[/]");
+            ErrorConsole.Print(ex);
             return 1;
         }
         catch (SolutionNotFoundException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message.EscapeMarkup()}[/]");
+            ErrorConsole.Print(ex);
             return 1;
         }
         catch (InvalidDataException ex)
         {
-            AnsiConsole.MarkupLine($"[red]Couldn't parse the global choice metadata:[/] {ex.Message.EscapeMarkup()}");
+            ErrorConsole.Print($"Couldn't parse the global choice metadata: {ex.Message}");
             return 1;
         }
         catch (HttpRequestException ex)
         {
-            AnsiConsole.MarkupLine($"[red]{ex.Message.EscapeMarkup()}[/]");
+            ErrorConsole.Print(ex);
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            ErrorConsole.Print(ex);
             return 1;
         }
     }
