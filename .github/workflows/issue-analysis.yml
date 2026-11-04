@@ -1,70 +1,22 @@
 name: Issue analysis
 
+# A quick analysis comment on new issues and on any issue labelled `analyse`, written by a
+# local model on bigmac. Only members of the TrueNorthIT `local-agent-access` team can trigger it;
+# admins manage who's in that team.
+#
+# Before it can run in this repo:
+#  - the truenorth-big-mac GitHub App is installed on it, and
+#  - it can use the bigmac runner and the org's BIGMAC_APP_ID / BIGMAC_APP_PRIVATE_KEY.
 on:
   issues:
     types: [opened, labeled]
 
+# A called workflow can't have more token rights than its caller, so grant them here.
 permissions:
-  issues: write
   contents: read
+  issues: write
 
 jobs:
   analyse:
-    # Runs when an issue is opened, or when the `analyse` label is added (e.g. old issues).
-    # Only BPMichon or JCottrell-TrueNorthIT may trigger bigmac (sender = opener / labeller).
-    if: >-
-      (github.event.action == 'opened' || github.event.label.name == 'analyse') &&
-      contains(fromJSON('["BPMichon", "JCottrell-TrueNorthIT"]'), github.event.sender.login)
-    # Job-level, so the skipped runs from other label changes never touch the queue.
-    concurrency: issue-analysis-${{ github.event.issue.number }}
-    runs-on: [self-hosted, bigmac]
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      GH_REPO: ${{ github.repository }}
-      N: ${{ github.event.issue.number }}
-      MODEL: flint:latest
-      OLLAMA: http://localhost:11434
-    steps:
-      - name: Claim
-        run: |
-          gh label create analyse --color 1d76db --description "Run the flint analysis on this issue" --force
-          gh issue edit "$N" --add-label analysis-in-progress --remove-label analyse
-
-      - name: Analyse (local model)
-        run: |
-          # Title + body, plus comments from TrueNorthIT org members only: this output is
-          # trusted by the agent, so outsiders' comments must not flow through it.
-          { gh issue view "$N"
-            gh api "repos/$GH_REPO/issues/$N/comments" --paginate \
-              --jq '.[] | select(.author_association == "MEMBER" or .author_association == "OWNER")
-                    | "\n--- \(.user.login) commented:\n\(.body)"'
-          } > issue.txt
-          jq -n --rawfile issue issue.txt --arg model "$MODEL" '{
-            model: $model, stream: false, think: false,
-            messages: [
-              {role: "system", content: "You analyse GitHub issues. Reply in Markdown with these sections: Summary (2-3 sentences), Type (bug/feature/question/other), Likely area, Probable cause or approach, Open questions, Suggested next step. Be concise."},
-              {role: "user", content: $issue}
-            ]}' > req.json
-          curl -sS --fail-with-body "$OLLAMA/api/chat" -d @req.json | jq -r '.message.content' > analysis.md
-          test -s analysis.md
-
-      # Posted as the app so the agent can trust it (truenorth-big-mac[bot]); only
-      # workflows holding the app key can comment under that identity.
-      - name: Mint app token
-        id: app
-        uses: actions/create-github-app-token@v3.3.0
-        with:
-          app-id: ${{ vars.BIGMAC_APP_ID }}
-          private-key: ${{ secrets.BIGMAC_APP_PRIVATE_KEY }}
-
-      - name: Post comment and mark complete
-        env:
-          GH_TOKEN: ${{ steps.app.outputs.token }}
-        run: |
-          { echo "## Automated analysis"; echo; cat analysis.md; echo; echo "_${MODEL} on bigmac_"; } > comment.md
-          gh issue comment "$N" --body-file comment.md
-          gh issue edit "$N" --remove-label analysis-in-progress --add-label analysis-complete
-
-      - name: Release claim on failure
-        if: failure()
-        run: gh issue edit "$N" --remove-label analysis-in-progress
+    uses: TrueNorthIT/.github/.github/workflows/tn-issue-analysis.yml@v1
+    secrets: inherit
