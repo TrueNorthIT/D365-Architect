@@ -46,6 +46,9 @@ jobs:
           app-id: ${{ vars.BIGMAC_APP_ID }}
           private-key: ${{ secrets.BIGMAC_APP_PRIVATE_KEY }}
           repositories: tn-local-agents
+          # Least privilege: clone the kit and check team membership, nothing else.
+          permission-contents: read
+          permission-members: read
 
       # Both people must be active team members (app token: Organization > Members: read,
       # so private memberships count). Fails closed; nothing private is fetched otherwise.
@@ -93,6 +96,9 @@ jobs:
           app-id: ${{ vars.BIGMAC_APP_ID }}
           private-key: ${{ secrets.BIGMAC_APP_PRIVATE_KEY }}
           repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
 
       - name: Publish
         if: steps.auth.outputs.ok == 'true'
