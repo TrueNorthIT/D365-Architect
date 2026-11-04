@@ -18,15 +18,13 @@ permissions:
 env:
   KIT_REF: v1.0.0            # bump by PR after testing with the kit's bench
   KIT_PROFILE: D365-Architect
+  AGENT_TEAM: local-agents   # admins manage who can trigger the agent via this team
 
 jobs:
   agent:
-    # Both the issue author and whoever added the label must be on the list.
-    # Checked before anything from the kit is fetched.
-    if: >-
-      github.event.label.name == 'agent' &&
-      contains(fromJSON('["BPMichon", "JCottrell-TrueNorthIT"]'), github.event.sender.login) &&
-      contains(fromJSON('["BPMichon", "JCottrell-TrueNorthIT"]'), github.event.issue.user.login)
+    # Who may trigger it is checked in "Authorise": the issue author and whoever added
+    # the label must both be active members of the org team below.
+    if: github.event.label.name == 'agent'
     runs-on: [self-hosted, bigmac]
     timeout-minutes: 180
     env:
@@ -49,7 +47,25 @@ jobs:
           private-key: ${{ secrets.BIGMAC_APP_PRIVATE_KEY }}
           repositories: tn-local-agents
 
+      # Both people must be active team members (app token: Organization > Members: read,
+      # so private memberships count). Fails closed; nothing private is fetched otherwise.
+      - name: Authorise
+        id: auth
+        env:
+          GH_TOKEN: ${{ steps.kit-token.outputs.token }}
+          ORG: ${{ github.repository_owner }}
+          SENDER: ${{ github.event.sender.login }}
+          AUTHOR: ${{ github.event.issue.user.login }}
+        run: |
+          ok=true
+          for who in "$SENDER" "$AUTHOR"; do
+            state=$(gh api "orgs/$ORG/teams/$AGENT_TEAM/memberships/$who" --jq .state 2>/dev/null || true)
+            [ "$state" = "active" ] || { echo "::notice::$who is not an active member of $ORG/$AGENT_TEAM; skipping."; ok=false; }
+          done
+          echo "ok=$ok" >> "$GITHUB_OUTPUT"
+
       - name: Fetch kit
+        if: steps.auth.outputs.ok == 'true'
         env:
           TOKEN: ${{ steps.kit-token.outputs.token }}
         run: |
@@ -60,15 +76,18 @@ jobs:
           echo "KIT_DIR=$RUNNER_TEMP/kit" >> "$GITHUB_ENV"
 
       - name: Claim
+        if: steps.auth.outputs.ok == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: '"$KIT_DIR/adapters/github/run-agent.sh" claim'
 
       - name: Run agent
+        if: steps.auth.outputs.ok == 'true'
         run: '"$KIT_DIR/adapters/github/run-agent.sh" run'
 
       # Write access to this repo, minted only after the agent has finished.
       - id: app
+        if: steps.auth.outputs.ok == 'true'
         uses: actions/create-github-app-token@v3.3.0
         with:
           app-id: ${{ vars.BIGMAC_APP_ID }}
@@ -76,13 +95,14 @@ jobs:
           repositories: ${{ github.event.repository.name }}
 
       - name: Publish
+        if: steps.auth.outputs.ok == 'true'
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           APP_SLUG: ${{ steps.app.outputs.app-slug }}
         run: '"$KIT_DIR/adapters/github/run-agent.sh" publish'
 
       - name: Report failure
-        if: failure() || cancelled()
+        if: (failure() || cancelled()) && steps.auth.outputs.ok == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
