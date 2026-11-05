@@ -69,11 +69,21 @@ public sealed class MsalAuthenticationService(AuthenticationOptions options, Non
             var result = await app.AcquireTokenSilent([ToDefaultScope(environmentUrl)], account).ExecuteAsync(cancellationToken);
             return new AuthenticatedContext(environmentUrl, result.Account.Username, result.AccessToken);
         }
-        catch (MsalUiRequiredException)
+        catch (MsalException ex)
         {
-            throw new AuthenticationRequiredException("Your sign-in has expired. Run 'auth login --url <environment-url>' again.");
+            throw WrapSilentFailure(ex);
         }
     }
+
+    /// <summary>
+    /// Wraps a failed silent token acquisition. Mirrors the interactive
+    /// path, which catches <see cref="MsalException"/> (not just
+    /// <see cref="MsalUiRequiredException"/>) — otherwise any other MSAL
+    /// failure (network, broker/CA, config) escapes unhandled.
+    /// </summary>
+    internal static Exception WrapSilentFailure(MsalException ex) => ex is MsalUiRequiredException
+        ? new AuthenticationRequiredException("Your sign-in has expired. Run 'auth login --url <environment-url>' again.")
+        : new AuthenticationRequiredException($"Couldn't refresh your sign-in: {ex.Message}", ex);
 
     internal static string ToDefaultScope(Uri environmentUrl) => $"{environmentUrl.GetLeftPart(UriPartial.Authority)}/.default";
 

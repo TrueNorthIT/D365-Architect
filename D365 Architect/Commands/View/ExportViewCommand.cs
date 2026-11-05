@@ -81,5 +81,10 @@ public sealed class ExportViewCommand(IAuthenticationService authenticationServi
             ErrorConsole.Print(ex);
             return 1;
         }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            ErrorConsole.Print(ex);
+            return 1;
+        }
     }
 }

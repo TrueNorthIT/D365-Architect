@@ -55,5 +55,12 @@ public sealed class WhoAmICommand(IAuthenticationService authenticationService, 
             ErrorConsole.Print(ex);
             return 1;
         }
+        // Final fallback (HttpRequestException from WhoAmIAsync/TryGetUserFullNameAsync,
+        // or anything else unanticipated): report it and exit non-zero instead of crashing.
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            ErrorConsole.Print(ex);
+            return 1;
+        }
     }
 }
