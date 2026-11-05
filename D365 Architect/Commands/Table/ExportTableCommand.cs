@@ -68,5 +68,10 @@ public sealed class ExportTableCommand(IAuthenticationService authenticationServ
             ErrorConsole.Print(ex);
             return 1;
         }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            ErrorConsole.Print(ex);
+            return 1;
+        }
     }
 }

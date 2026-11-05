@@ -64,8 +64,37 @@ public sealed class FakeDataverseClient : IDataverseClient
     /// </summary>
     public List<string> ColumnWriteOrder { get; } = [];
 
-    public Task<WhoAmIResult> WhoAmIAsync(Uri environmentUrl, string accessToken, CancellationToken cancellationToken) => throw new NotImplementedException();
-    public Task<string?> TryGetUserFullNameAsync(Uri environmentUrl, string accessToken, Guid userId, CancellationToken cancellationToken) => throw new NotImplementedException();
+    /// <summary>Answers <see cref="WhoAmIAsync"/>. Unset throws, like every other unconfigured read.</summary>
+    public WhoAmIResult? WhoAmIResult { get; set; }
+
+    /// <summary>When set, <see cref="WhoAmIAsync"/> throws this instead of answering.</summary>
+    public Exception? WhoAmIFailure { get; set; }
+
+    /// <summary>When set, <see cref="TryGetUserFullNameAsync"/> throws this instead of answering.</summary>
+    public Exception? TryGetUserFullNameFailure { get; set; }
+
+    /// <summary>The name <see cref="TryGetUserFullNameAsync"/> returns when configured.</summary>
+    public string? UserFullName { get; set; }
+
+    public Task<WhoAmIResult> WhoAmIAsync(Uri environmentUrl, string accessToken, CancellationToken cancellationToken)
+    {
+        if (WhoAmIFailure is { } failure)
+        {
+            throw failure;
+        }
+
+        return Task.FromResult(WhoAmIResult ?? throw new InvalidOperationException($"{nameof(WhoAmIResult)} wasn't configured."));
+    }
+
+    public Task<string?> TryGetUserFullNameAsync(Uri environmentUrl, string accessToken, Guid userId, CancellationToken cancellationToken)
+    {
+        if (TryGetUserFullNameFailure is { } failure)
+        {
+            throw failure;
+        }
+
+        return Task.FromResult(UserFullName);
+    }
 
     public Task<string> GetEntityDefinitionJsonAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken) =>
         Task.FromResult(EntityDefinitionJson ?? throw new InvalidOperationException($"{nameof(EntityDefinitionJson)} wasn't configured."));
