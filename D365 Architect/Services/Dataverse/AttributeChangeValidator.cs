@@ -143,31 +143,46 @@ public static class AttributeChangeValidator
         return null;
     }
 
-    /// <summary>A (non-Customer) Lookup's create needs its own relationship SchemaName and at least one target. Exactly one target is a plain Lookup; more than one is a multi-table (polymorphic) lookup — both are creatable, via different actions (see <see cref="AttributeMetadataJsonBuilder.BuildRelationshipCreateBody"/> and <see cref="AttributeMetadataJsonBuilder.BuildPolymorphicLookupCreateBody"/>). RelationshipBehavior, when given, must be one of <see cref="RelationshipBehaviors.Names"/>.</summary>
+    /// <summary>
+    /// A (non-Customer) Lookup's create needs at least one target, with no
+    /// target listed twice (case-insensitive). Exactly one target is a plain
+    /// Lookup, which also needs its own valid
+    /// <see cref="AttributeDefinition.RelationshipSchemaName"/>; more than one
+    /// is a multi-table (polymorphic) lookup, whose relationship names are
+    /// all derived as <c>{schemaName}_{target}</c> (see
+    /// <see cref="AttributeMetadataJsonBuilder.MultiTableRelationshipSchemaName"/>),
+    /// so — as for Customer — <c>RelationshipSchemaName</c> isn't required or
+    /// used. RelationshipBehavior, when given, must be one of
+    /// <see cref="RelationshipBehaviors.Names"/>.
+    /// </summary>
     private static string? ValidateLookupForCreate(AttributeDefinition local)
     {
-        var lookupError = ValidateLookupForCreateCommon(local);
-        if (lookupError is not null)
+        if (local.Targets is null or { Count: 0 })
         {
-            return lookupError;
+            return $"'{local.Name}' must have at least one Targets entry to create a Lookup column — this tool never invents a target table.";
         }
 
-        return local.Targets is null or { Count: 0 }
-            ? $"'{local.Name}' must have at least one Targets entry to create a Lookup column — this tool never invents a target table."
-            : null;
-    }
-
-    /// <summary>The checks a Lookup create shares regardless of target count: <see cref="AttributeDefinition.RelationshipSchemaName"/> present and valid, and <see cref="AttributeDefinition.RelationshipBehavior"/> (when given) one of <see cref="RelationshipBehaviors.Names"/>.</summary>
-    private static string? ValidateLookupForCreateCommon(AttributeDefinition local)
-    {
-        if (local.RelationshipSchemaName is null)
+        var duplicateTargets = local.Targets
+            .GroupBy(t => t, StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Count() > 1)
+            .Select(g => g.Key)
+            .ToList();
+        if (duplicateTargets.Count > 0)
         {
-            return $"'{local.Name}' has no RelationshipSchemaName in the local YAML — required to create a Lookup column, and this tool never invents one.";
+            return $"'{local.Name}' lists target table(s) {string.Join(", ", duplicateTargets)} more than once in Targets — each target table can appear only once.";
         }
 
-        if (!DataverseSchemaNaming.SchemaNamePattern.IsMatch(local.RelationshipSchemaName))
+        if (local.Targets.Count == 1)
         {
-            return $"RelationshipSchemaName '{local.RelationshipSchemaName}' isn't valid — expected a customization prefix and letters/digits/underscores only, e.g. 'new_contact_new_bankaccount'.";
+            if (local.RelationshipSchemaName is null)
+            {
+                return $"'{local.Name}' has no RelationshipSchemaName in the local YAML — required to create a single-target Lookup column, and this tool never invents one.";
+            }
+
+            if (!DataverseSchemaNaming.SchemaNamePattern.IsMatch(local.RelationshipSchemaName))
+            {
+                return $"RelationshipSchemaName '{local.RelationshipSchemaName}' isn't valid — expected a customization prefix and letters/digits/underscores only, e.g. 'new_contact_new_bankaccount'.";
+            }
         }
 
         if (local.RelationshipBehavior is not null && !RelationshipBehaviors.Names.Contains(local.RelationshipBehavior, StringComparer.OrdinalIgnoreCase))

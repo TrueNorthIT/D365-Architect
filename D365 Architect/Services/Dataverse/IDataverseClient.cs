@@ -370,15 +370,15 @@ public interface IDataverseClient
     /// than one target table — via the dedicated
     /// <c>CreatePolymorphicLookupAttribute</c> action (one
     /// <c>OneToManyRelationships</c> entry per target, sharing a single
-    /// <c>Lookup</c>), and, once the lookup already exists, adds a further
-    /// target table to it the same way (the body then carries just the new
-    /// relationship). This is what <c>CreateOneToManyRelationshipAsync</c>
+    /// <c>Lookup</c>). This is what <c>CreateOneToManyRelationshipAsync</c>
     /// (a single, standalone relationship) and
     /// <c>CreateCustomerRelationshipsAsync</c> (Customer's own fixed
-    /// account/contact pair) each deliberately don't cover. See
-    /// <see cref="AttributeMetadataJsonBuilder.BuildPolymorphicLookupCreateBody"/>
-    /// and <see cref="AttributeMetadataJsonBuilder.BuildLookupTargetAddBody"/>
-    /// for the two <paramref name="body"/> shapes this one action carries.
+    /// account/contact pair) each deliberately don't cover. Adding a target
+    /// to a multi-table Lookup that already exists is an ordinary
+    /// <see cref="CreateOneToManyRelationshipAsync"/> instead (see
+    /// <see cref="AttributeMetadataJsonBuilder.BuildLookupTargetAddBody"/>).
+    /// See <see cref="AttributeMetadataJsonBuilder.BuildPolymorphicLookupCreateBody"/>
+    /// for the <paramref name="body"/> shape.
     /// <paramref name="solutionUniqueName"/>: see <see cref="CreateAttributeAsync"/>'s own doc comment — same gap, same fix.
     /// </summary>
     Task CreatePolymorphicLookupAttributeAsync(Uri environmentUrl, string accessToken, JsonObject body, string? solutionUniqueName, CancellationToken cancellationToken);

@@ -426,41 +426,29 @@ public sealed class AttributeMetadataJsonBuilderTests
         // A single target is a plain Lookup, not a polymorphic one — routed
         // through BuildRelationshipCreateBody instead, so this must reject
         // it rather than build a one-relationship polymorphic body.
-        var attribute = Attr("Lookup", schemaName: "tn_Multi", configure: b =>
-        {
-            b.RelationshipSchemaName = "tn_test_contact";
-            b.Targets = ["contact"];
-        });
+        var attribute = Attr("Lookup", schemaName: "tn_Multi", configure: b => b.Targets = ["contact"]);
         Assert.Throws<InvalidOperationException>(() => AttributeMetadataJsonBuilder.BuildPolymorphicLookupCreateBody("tn_test", attribute));
     }
 
     [Fact]
     public void BuildPolymorphicLookupCreateBody_HappyPath_OneRelationshipPerTarget()
     {
-        var attribute = Attr("Lookup", schemaName: "tn_Multi", configure: b =>
-        {
-            b.RelationshipSchemaName = "tn_test_contact";
-            b.Targets = ["contact", "account"];
-        });
+        var attribute = Attr("Lookup", schemaName: "tn_Multi", configure: b => b.Targets = ["contact", "account"]);
 
         var body = AttributeMetadataJsonBuilder.BuildPolymorphicLookupCreateBody("tn_test", attribute);
 
         // The single shared lookup, with the column's own SchemaName.
         Assert.Equal("tn_Multi", (string)body["Lookup"]!["SchemaName"]!);
-        Assert.Equal("Microsoft.Dynamics.CRM.LookupAttributeMetadata", (string)body["Lookup"]!["@odata.type"]!);
 
         var relationships = (JsonArray)body["OneToManyRelationships"]!;
         Assert.Equal(2, relationships.Count);
 
-        // The first relationship carries the YAML's own relationshipSchemaName.
         var first = (JsonObject)relationships[0]!;
-        Assert.Equal("tn_test_contact", (string)first["SchemaName"]!);
+        Assert.Equal("tn_Multi_contact", (string)first["SchemaName"]!);
         Assert.Equal("contactid", (string)first["ReferencedAttribute"]!);
         Assert.Equal("contact", (string)first["ReferencedEntity"]!);
         Assert.Equal("tn_test", (string)first["ReferencingEntity"]!);
 
-        // Every additional target derives its relationship schema name the
-        // Customer-column way: {schemaName}_{target}.
         var second = (JsonObject)relationships[1]!;
         Assert.Equal("tn_Multi_account", (string)second["SchemaName"]!);
         Assert.Equal("accountid", (string)second["ReferencedAttribute"]!);
@@ -468,11 +456,38 @@ public sealed class AttributeMetadataJsonBuilderTests
     }
 
     [Fact]
+    public void BuildPolymorphicLookupCreateBody_LookupIsComplexLookupAttributeMetadata()
+    {
+        // Microsoft's documented CreatePolymorphicLookupAttribute example.
+        var attribute = Attr("Lookup", schemaName: "tn_Multi", configure: b => b.Targets = ["contact", "account"]);
+
+        var body = AttributeMetadataJsonBuilder.BuildPolymorphicLookupCreateBody("tn_test", attribute);
+
+        Assert.Equal("Microsoft.Dynamics.CRM.ComplexLookupAttributeMetadata", (string)body["Lookup"]!["@odata.type"]!);
+    }
+
+    [Fact]
+    public void BuildPolymorphicLookupCreateBody_EveryRelationshipNamedSchemaNameUnderscoreTarget_RelationshipSchemaNameIgnored()
+    {
+        // One rule for every target, as for Customer: a relationshipSchemaName
+        // in the YAML isn't used, not even for the first target.
+        var attribute = Attr("Lookup", schemaName: "tn_Multi", configure: b =>
+        {
+            b.RelationshipSchemaName = "tn_test_contact";
+            b.Targets = ["contact", "account", "systemuser"];
+        });
+
+        var body = AttributeMetadataJsonBuilder.BuildPolymorphicLookupCreateBody("tn_test", attribute);
+
+        var names = ((JsonArray)body["OneToManyRelationships"]!).Select(r => (string)r!["SchemaName"]!).ToList();
+        Assert.Equal(["tn_Multi_contact", "tn_Multi_account", "tn_Multi_systemuser"], names);
+    }
+
+    [Fact]
     public void BuildPolymorphicLookupCreateBody_RelationshipBehaviorAppliesToEveryRelationship()
     {
         var attribute = Attr("Lookup", schemaName: "tn_Multi", configure: b =>
         {
-            b.RelationshipSchemaName = "tn_test_contact";
             b.Targets = ["contact", "account"];
             b.RelationshipBehavior = "ReferentialRestrictDelete";
         });
@@ -494,11 +509,7 @@ public sealed class AttributeMetadataJsonBuilderTests
         // CreatePolymorphicLookupAttribute action's array never carries its
         // own Lookup/@odata.type/AssociatedMenuConfiguration — the action's
         // single Lookup covers them all.
-        var attribute = Attr("Lookup", schemaName: "tn_Multi", configure: b =>
-        {
-            b.RelationshipSchemaName = "tn_test_contact";
-            b.Targets = ["contact", "account"];
-        });
+        var attribute = Attr("Lookup", schemaName: "tn_Multi", configure: b => b.Targets = ["contact", "account"]);
 
         var body = AttributeMetadataJsonBuilder.BuildPolymorphicLookupCreateBody("tn_test", attribute);
 
@@ -514,30 +525,49 @@ public sealed class AttributeMetadataJsonBuilderTests
     // ---- BuildLookupTargetAddBody (extending an existing multi-table Lookup) ----
 
     [Fact]
-    public void BuildLookupTargetAddBody_BindsTheExistingAttributeAndDerivesTheNewRelationshipName()
+    public void BuildLookupTargetAddBody_IsAStandaloneRelationshipWhoseLookupNamesTheExistingColumn()
     {
-        var body = AttributeMetadataJsonBuilder.BuildLookupTargetAddBody("tn_test", "account", "tn_Multi", "ReferentialRestrictDelete");
+        var existing = Attr("Lookup", schemaName: "tn_Multi", configure: b =>
+        {
+            b.DisplayName = "Multi";
+            b.Targets = ["contact", "systemuser"];
+        });
 
-        Assert.Equal("tn_Multi", (string)body["Lookup"]!["SchemaName"]!);
+        var body = AttributeMetadataJsonBuilder.BuildLookupTargetAddBody("tn_test", existing, "account", "ReferentialRestrictDelete");
 
-        var relationships = (JsonArray)body["OneToManyRelationships"]!;
-        var relationship = (JsonObject)relationships[0]!;
+        // An ordinary RelationshipDefinitions POST body.
+        Assert.Equal("Microsoft.Dynamics.CRM.OneToManyRelationshipMetadata", (string)body["@odata.type"]!);
+        Assert.Equal("tn_Multi_account", (string)body["SchemaName"]!);
+        Assert.Equal("accountid", (string)body["ReferencedAttribute"]!);
+        Assert.Equal("account", (string)body["ReferencedEntity"]!);
+        Assert.Equal("tn_test", (string)body["ReferencingEntity"]!);
+        Assert.Equal("Restrict", (string)((JsonObject)body["CascadeConfiguration"]!)["Delete"]!);
 
-        // The one new relationship, referencing the existing attribute.
-        Assert.Equal("tn_Multi_account", (string)relationship["SchemaName"]!);
-        Assert.Equal("accountid", (string)relationship["ReferencedAttribute"]!);
-        Assert.Equal("account", (string)relationship["ReferencedEntity"]!);
-        Assert.Equal("tn_test", (string)relationship["ReferencingEntity"]!);
-        Assert.Equal("Restrict", (string)((JsonObject)relationship["CascadeConfiguration"]!)["Delete"]!);
-        // A bare polymorphic-action entry: no nested Lookup of its own.
-        Assert.False(relationship.ContainsKey("Lookup"));
+        // Its Lookup matches the existing column, so Dataverse attaches the
+        // relationship to it instead of creating a new column.
+        var lookup = (JsonObject)body["Lookup"]!;
+        Assert.Equal("tn_Multi", (string)lookup["SchemaName"]!);
+        Assert.Equal("Lookup", (string)lookup["AttributeType"]!);
+        Assert.Equal("LookupType", (string)lookup["AttributeTypeName"]!["Value"]!);
+        Assert.Equal("Multi", (string)lookup["DisplayName"]!["LocalizedLabels"]![0]!["Label"]!);
+        Assert.False(lookup.ContainsKey("RequiredLevel"));
     }
 
     [Fact]
-    public void BuildLookupTargetAddBody_EmptyTargetOrAttribute_Throws()
+    public void BuildLookupTargetAddBody_EmptyTargetOrNoExistingSchemaName_Throws()
     {
-        Assert.Throws<InvalidOperationException>(() => AttributeMetadataJsonBuilder.BuildLookupTargetAddBody("tn_test", "", "tn_Multi", null));
-        Assert.Throws<InvalidOperationException>(() => AttributeMetadataJsonBuilder.BuildLookupTargetAddBody("tn_test", "account", "", null));
+        var existing = Attr("Lookup", schemaName: "tn_Multi");
+        var noSchemaName = Attr("Lookup", schemaName: null);
+
+        Assert.Throws<InvalidOperationException>(() => AttributeMetadataJsonBuilder.BuildLookupTargetAddBody("tn_test", existing, "", null));
+        Assert.Throws<InvalidOperationException>(() => AttributeMetadataJsonBuilder.BuildLookupTargetAddBody("tn_test", noSchemaName, "account", null));
+    }
+
+    [Fact]
+    public void BuildLookupTargetAddBody_InvalidRelationshipBehavior_Throws()
+    {
+        var existing = Attr("Lookup", schemaName: "tn_Multi");
+        Assert.Throws<InvalidOperationException>(() => AttributeMetadataJsonBuilder.BuildLookupTargetAddBody("tn_test", existing, "account", "Cascade"));
     }
 
     // ---- BuildCustomerRelationshipCreateBody (Customer) ----

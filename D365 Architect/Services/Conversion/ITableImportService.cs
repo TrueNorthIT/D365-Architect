@@ -124,17 +124,19 @@ public enum AttributeImportAction
     /// <see cref="AttributeMetadataJsonBuilder.BuildPolymorphicLookupCreateBody"/>/
     /// <see cref="Dataverse.IDataverseClient.CreatePolymorphicLookupAttributeAsync"/>),
     /// never a plain attribute POST or a single
-    /// <see cref="CreateOneToManyRelationshipAsync"/> call.
+    /// <see cref="Dataverse.IDataverseClient.CreateOneToManyRelationshipAsync"/> call.
     /// </summary>
     CreatePolymorphicLookup,
 
     /// <summary>
-    /// An existing multi-table Lookup column gaining a further target table —
-    /// the added relationship is created via the same
-    /// <c>CreatePolymorphicLookupAttribute</c> action, referencing the
-    /// column's live lookup attribute (see
-    /// <see cref="AttributeMetadataJsonBuilder.BuildLookupTargetAddBody"/>).
-    /// Removing a target, or converting a lookup between single- and
+    /// An existing multi-table Lookup column gaining one or more target
+    /// tables. Each added target is its own one-to-many relationship create
+    /// (<c>RelationshipDefinitions</c> POST, see
+    /// <see cref="AttributeMetadataJsonBuilder.BuildLookupTargetAddBody"/>)
+    /// whose <c>Lookup.SchemaName</c> names the existing column, carried in
+    /// <see cref="AttributeImportPlan.AddedLookupTargets"/>, so every added
+    /// target applies in the same import. Removing a target (even alongside
+    /// an addition), or converting a lookup between single- and
     /// multi-target, is <see cref="Invalid"/> instead.
     /// </summary>
     AddLookupTargets,
@@ -168,7 +170,7 @@ public enum AttributeImportAction
 /// <param name="LogicalName">The column's logical name.</param>
 /// <param name="Action">What will happen — see <see cref="AttributeImportAction"/>'s own members.</param>
 /// <param name="Reason">Set for <see cref="AttributeImportAction.SkippedUnsupportedType"/>/<see cref="AttributeImportAction.WouldRemove"/>/<see cref="AttributeImportAction.Invalid"/>, explaining why nothing will happen.</param>
-/// <param name="RequestBody">The full JSON body to POST (create/relationship-create) or PUT (update); null for every other action.</param>
+/// <param name="RequestBody">The full JSON body to POST (create/relationship-create) or PUT (update); null for every other action, including <see cref="AttributeImportAction.AddLookupTargets"/>, whose bodies are in <see cref="AttributeImportPlan.AddedLookupTargets"/>.</param>
 /// <param name="Warnings">
 /// Non-blocking cautions for an <see cref="AttributeImportAction.Update"/>
 /// that Dataverse allows but warns against (e.g. lowering MaxLength below
@@ -196,6 +198,15 @@ public enum AttributeImportAction
 /// </param>
 public sealed record AttributeImportPlan(string LogicalName, AttributeImportAction Action, string? Reason, JsonObject? RequestBody, IReadOnlyList<string>? Warnings = null, IReadOnlyList<OptionChangePlan>? OptionChanges = null, int? AutoNumberSeed = null)
 {
+    /// <summary>
+    /// Set only on an <see cref="AttributeImportAction.AddLookupTargets"/>
+    /// plan: one relationship create per target table being added to the
+    /// existing multi-table Lookup, in the local YAML's order. Each is its
+    /// own write, so every added target applies in the same import. Null for
+    /// every other plan.
+    /// </summary>
+    public IReadOnlyList<LookupTargetAddPlan>? AddedLookupTargets { get; init; }
+
     /// <summary>
     /// Set on a <see cref="AttributeImportAction.Create"/> whose global choice
     /// doesn't exist live yet but will be created earlier in the same
@@ -229,6 +240,11 @@ public enum OptionChangeAction
 /// <param name="RequestBody">The full JSON body to POST to that action.</param>
 /// <param name="Description">A short, human-readable summary for the column plan printout, e.g. "insert option 'Red' (727000000)".</param>
 public sealed record OptionChangePlan(OptionChangeAction Action, JsonObject RequestBody, string Description);
+
+/// <param name="Target">The table being added as a target of the existing multi-table Lookup.</param>
+/// <param name="RelationshipSchemaName">The new relationship's schema name, <c>{schemaName}_{target}</c> — see <see cref="AttributeMetadataJsonBuilder.MultiTableRelationshipSchemaName"/>.</param>
+/// <param name="RequestBody">The full <c>RelationshipDefinitions</c> POST body — see <see cref="AttributeMetadataJsonBuilder.BuildLookupTargetAddBody"/>.</param>
+public sealed record LookupTargetAddPlan(string Target, string RelationshipSchemaName, JsonObject RequestBody);
 
 /// <param name="EntityLogicalName">The table this preview is for.</param>
 /// <param name="ExistingYaml">What re-exporting the table right now would produce.</param>
