@@ -271,6 +271,8 @@ public sealed class ImportTableCommand(ITableImportService tableImportService, I
             AttributeImportAction.Update => $"[yellow]  ~ {plan.LogicalName.EscapeMarkup()} (update)[/]",
             AttributeImportAction.CreateLookupRelationship => $"[green]  + {plan.LogicalName.EscapeMarkup()} (create lookup relationship)[/]",
             AttributeImportAction.CreateCustomerRelationship => $"[green]  + {plan.LogicalName.EscapeMarkup()} (create customer relationship)[/]",
+            AttributeImportAction.CreatePolymorphicLookup => $"[green]  + {plan.LogicalName.EscapeMarkup()} (create multi-table lookup)[/]",
+            AttributeImportAction.AddLookupTargets => $"[green]  + {plan.LogicalName.EscapeMarkup()} (add lookup target)[/]",
             AttributeImportAction.SkippedUnsupportedType => $"[grey]  ? {plan.LogicalName.EscapeMarkup()} (not applied: {plan.Reason?.EscapeMarkup()})[/]",
             AttributeImportAction.WouldRemove => $"[red]  - {plan.LogicalName.EscapeMarkup()} (not applied: {plan.Reason?.EscapeMarkup()})[/]",
             AttributeImportAction.Invalid => $"[red]  ! {plan.LogicalName.EscapeMarkup()} (not applied: {plan.Reason?.EscapeMarkup()})[/]",

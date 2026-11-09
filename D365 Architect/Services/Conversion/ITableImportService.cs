@@ -118,6 +118,28 @@ public enum AttributeImportAction
     CreateCustomerRelationship,
 
     /// <summary>
+    /// A brand-new multi-table (polymorphic) Lookup column — one with more
+    /// than one <c>Targets</c> entry — created via the dedicated
+    /// <c>CreatePolymorphicLookupAttribute</c> action (see
+    /// <see cref="AttributeMetadataJsonBuilder.BuildPolymorphicLookupCreateBody"/>/
+    /// <see cref="Dataverse.IDataverseClient.CreatePolymorphicLookupAttributeAsync"/>),
+    /// never a plain attribute POST or a single
+    /// <see cref="CreateOneToManyRelationshipAsync"/> call.
+    /// </summary>
+    CreatePolymorphicLookup,
+
+    /// <summary>
+    /// An existing multi-table Lookup column gaining a further target table —
+    /// the added relationship is created via the same
+    /// <c>CreatePolymorphicLookupAttribute</c> action, referencing the
+    /// column's live lookup attribute (see
+    /// <see cref="AttributeMetadataJsonBuilder.BuildLookupTargetAddBody"/>).
+    /// Removing a target, or converting a lookup between single- and
+    /// multi-target, is <see cref="Invalid"/> instead.
+    /// </summary>
+    AddLookupTargets,
+
+    /// <summary>
     /// Live but absent from the local YAML. Never applied — this tool never
     /// deletes a column automatically, no matter what the YAML says or
     /// doesn't say.
@@ -231,9 +253,9 @@ public sealed record TableImportPreview(string EntityLogicalName, string Existin
     /// <summary>True when there's at least one actual write to make — see <see cref="ChangeCount"/>.</summary>
     public bool HasChanges => ChangeCount > 0;
 
-    /// <summary>How many writes there are to make: one for a table-level change, plus one per column plan that writes something (Create/Update/CreateLookupRelationship/CreateCustomerRelationship).</summary>
+    /// <summary>How many writes there are to make: one for a table-level change, plus one per column plan that writes something (Create/Update/CreateLookupRelationship/CreateCustomerRelationship/CreatePolymorphicLookup/AddLookupTargets).</summary>
     public int ChangeCount => (TableUpdateBody is null ? 0 : 1) + AttributePlans.Count(p =>
-        p.Action is AttributeImportAction.Create or AttributeImportAction.Update or AttributeImportAction.CreateLookupRelationship or AttributeImportAction.CreateCustomerRelationship);
+        p.Action is AttributeImportAction.Create or AttributeImportAction.Update or AttributeImportAction.CreateLookupRelationship or AttributeImportAction.CreateCustomerRelationship or AttributeImportAction.CreatePolymorphicLookup or AttributeImportAction.AddLookupTargets);
 }
 
 /// <summary>

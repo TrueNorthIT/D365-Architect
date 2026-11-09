@@ -134,6 +134,17 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
                     await dataverseClient.CreateCustomerRelationshipsAsync(environmentUrl, accessToken, plan.RequestBody!, solutionUniqueName, cancellationToken);
                     break;
 
+                case AttributeImportAction.CreatePolymorphicLookup:
+                    await dataverseClient.CreatePolymorphicLookupAttributeAsync(environmentUrl, accessToken, plan.RequestBody!, solutionUniqueName, cancellationToken);
+                    break;
+
+                // AddLookupTargets edits a column that already exists (adds a
+                // relationship to its live lookup attribute), so — like every
+                // Update — it's never scoped to a solution.
+                case AttributeImportAction.AddLookupTargets:
+                    await dataverseClient.CreatePolymorphicLookupAttributeAsync(environmentUrl, accessToken, plan.RequestBody!, solutionUniqueName: null, cancellationToken);
+                    break;
+
                 // Unchanged/SkippedUnsupportedType/WouldRemove/Invalid: nothing to do, by design.
             }
 
@@ -194,6 +205,16 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
 
                 case AttributeImportAction.CreateCustomerRelationship:
                     writes.Add(new DataverseWrite.CreateCustomerRelationships(plan.RequestBody!, solutionUniqueName));
+                    break;
+
+                case AttributeImportAction.CreatePolymorphicLookup:
+                    writes.Add(new DataverseWrite.CreatePolymorphicLookupAttribute(plan.RequestBody!, solutionUniqueName));
+                    break;
+
+                // AddLookupTargets edits a column that already exists, so —
+                // like every Update — it's never scoped to a solution.
+                case AttributeImportAction.AddLookupTargets:
+                    writes.Add(new DataverseWrite.CreatePolymorphicLookupAttribute(plan.RequestBody!, null));
                     break;
 
                 // Unchanged/SkippedUnsupportedType/WouldRemove/Invalid: nothing to do, by design.
@@ -362,13 +383,12 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
         // isn't in AttributesMatch's field list either (this tool never
         // writes it back for an existing Lookup/Customer/Owner column),
         // so a changed Targets would otherwise be silently ignored
-        // rather than caught as the invalid, would-fail change it is.
+        // rather than caught here and planned for.
         if (localAttribute.Type is "Lookup" or "Customer" or "Owner"
             && localAttribute.Targets is not null
             && !TargetsMatch(localAttribute.Targets, existingAttribute.Targets))
         {
-            return new AttributeImportPlan(localAttribute.Name, AttributeImportAction.Invalid,
-                $"Can't change Targets on an existing {localAttribute.Type} column — immutable after creation.", null);
+            return PlanTargetsChange(entityLogicalName, localAttribute, existingAttribute);
         }
 
         if (AttributesMatch(localAttribute, existingAttribute))
@@ -377,6 +397,81 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
         }
 
         return await BuildUpdatePlanAsync(environmentUrl, accessToken, entityLogicalName, localAttribute, existingAttribute, cancellationToken);
+    }
+
+    /// <summary>
+    /// What a changed <c>Targets</c> list on an existing lookup column plans
+    /// as. Only one shape is a supported change: a multi-table Lookup (more
+    /// than one target live) gaining further targets — adding a target table
+    /// to an existing lookup is what Dataverse's own
+    /// <c>CreatePolymorphicLookupAttribute</c> action does, and
+    /// <see cref="AttributeMetadataJsonBuilder.BuildLookupTargetAddBody"/>
+    /// builds just the new relationship referencing the live attribute.
+    /// Everything else — removing a target (destructive: existing values
+    /// pointing at the dropped table would lose their lookup, and this tool
+    /// never deletes, same policy as a whole column), turning a single-
+    /// target Lookup into a multi-table one or the reverse (Dataverse can't
+    /// convert an existing lookup between the two shapes — create a new
+    /// column instead), or any change to Customer's fixed
+    /// account/contact pair or an Owner column — stays
+    /// <see cref="AttributeImportAction.Invalid"/> with the reason, exactly
+    /// as it did before multi-table lookup support existed.
+    /// </summary>
+    private static AttributeImportPlan PlanTargetsChange(string entityLogicalName, AttributeDefinition localAttribute, AttributeDefinition existingAttribute)
+    {
+        var existingTargets = existingAttribute.Targets is null
+            ? []
+            : existingAttribute.Targets.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var localTargets = localAttribute.Targets!;
+        var addedTargets = localTargets
+            .Where(t => !existingTargets.Contains(t))
+            .ToList();
+
+        // A single-target ↔ multi-table conversion (in either direction) is
+        // rejected before anything else: Dataverse can't convert an existing
+        // lookup between the two shapes.
+        if (localAttribute.Type == "Lookup" && (existingTargets.Count > 1) != (localTargets.Count > 1))
+        {
+            return new AttributeImportPlan(localAttribute.Name, AttributeImportAction.Invalid,
+                "Can't change an existing Lookup between single-target and multi-table (polymorphic) — Dataverse can't convert an existing lookup between the two shapes. Create a new column instead.", null);
+        }
+
+        if (localAttribute.Type == "Lookup" && existingTargets.Count > 1 && addedTargets.Count > 0)
+        {
+            try
+            {
+                var body = AttributeMetadataJsonBuilder.BuildLookupTargetAddBody(
+                    entityLogicalName, addedTargets[0], existingAttribute.SchemaName!, localAttribute.RelationshipBehavior);
+                return new AttributeImportPlan(
+                    localAttribute.Name,
+                    AttributeImportAction.AddLookupTargets,
+                    null,
+                    body,
+                    addedTargets.Count > 1
+                        ? [$"Only the first of the {addedTargets.Count} new target tables ({addedTargets[0]}) can be added — a multi-table lookup's remaining new targets ({string.Join(", ", addedTargets.Skip(1))}) must be added in a further import after the first takes effect."]
+                        : null);
+            }
+            catch (InvalidOperationException ex)
+            {
+                // Defensive fallback only — ValidateCreate already checked
+                // RelationshipBehavior before this ever runs.
+                return new AttributeImportPlan(localAttribute.Name, AttributeImportAction.Invalid, ex.Message, null);
+            }
+        }
+
+        if (localAttribute.Type == "Lookup" && existingTargets.Count > 1 && localTargets.Count < existingTargets.Count)
+        {
+            var removed = existingAttribute.Targets!
+                .Where(t => !localTargets.ToHashSet(StringComparer.OrdinalIgnoreCase).Contains(t))
+                .ToList();
+            return new AttributeImportPlan(localAttribute.Name, AttributeImportAction.Invalid,
+                $"Can't remove target table(s) {string.Join(", ", removed)} from an existing multi-table Lookup — removing a target is destructive (values pointing at the dropped table lose their lookup) and, like every other destructive change, this tool refuses it. Delete the column and create it again with the remaining targets instead.", null);
+        }
+
+        return new AttributeImportPlan(localAttribute.Name, AttributeImportAction.Invalid,
+            localAttribute.Type == "Lookup" && (existingTargets.Count > 1) != (localTargets.Count > 1)
+                ? "Can't change an existing Lookup between single-target and multi-table (polymorphic) — Dataverse can't convert an existing lookup between the two shapes. Create a new column instead."
+                : $"Can't change Targets on an existing {localAttribute.Type} column — immutable after creation.", null);
     }
 
     private static bool TargetsMatch(IReadOnlyList<string> local, IReadOnlyList<string>? existing) =>
@@ -444,9 +539,18 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
 
             try
             {
-                return local.Type == "Lookup"
-                    ? new AttributeImportPlan(local.Name, AttributeImportAction.CreateLookupRelationship, null, AttributeMetadataJsonBuilder.BuildRelationshipCreateBody(entityLogicalName, local))
-                    : new AttributeImportPlan(local.Name, AttributeImportAction.CreateCustomerRelationship, null, AttributeMetadataJsonBuilder.BuildCustomerRelationshipCreateBody(entityLogicalName, local));
+                if (local.Type == "Lookup")
+                {
+                    // A single-target Lookup is a plain one-to-many
+                    // relationship; more than one is a multi-table
+                    // (polymorphic) lookup, created by the dedicated
+                    // CreatePolymorphicLookupAttribute action instead.
+                    return local.Targets is { Count: 1 }
+                        ? new AttributeImportPlan(local.Name, AttributeImportAction.CreateLookupRelationship, null, AttributeMetadataJsonBuilder.BuildRelationshipCreateBody(entityLogicalName, local))
+                        : new AttributeImportPlan(local.Name, AttributeImportAction.CreatePolymorphicLookup, null, AttributeMetadataJsonBuilder.BuildPolymorphicLookupCreateBody(entityLogicalName, local));
+                }
+
+                return new AttributeImportPlan(local.Name, AttributeImportAction.CreateCustomerRelationship, null, AttributeMetadataJsonBuilder.BuildCustomerRelationshipCreateBody(entityLogicalName, local));
             }
             catch (InvalidOperationException ex)
             {

@@ -105,16 +105,30 @@ public sealed class AttributeChangeValidatorTests
     }
 
     [Fact]
-    public void ValidateCreate_LookupWithMultipleTargets_Fails()
+    public void ValidateCreate_LookupWithMultipleTargets_Succeeds()
     {
+        // More than one Targets entry is a multi-table (polymorphic) lookup —
+        // creatable via the CreatePolymorphicLookupAttribute action, not a
+        // validation failure anymore (see TableImportServiceTests'
+        // PreviewAsync_NewMultiTargetLookup_PlansCreatePolymorphicLookup).
         var attribute = Attr("Lookup", schemaName: "tn_Contact", name: "tn_contact", configure: b =>
         {
             b.RelationshipSchemaName = "tn_test_contact";
             b.Targets = ["contact", "account"];
         });
+        Assert.Null(AttributeChangeValidator.ValidateCreate(attribute));
+    }
+
+    [Fact]
+    public void ValidateCreate_LookupWithNoTargets_Fails()
+    {
+        var attribute = Attr("Lookup", schemaName: "tn_Contact", name: "tn_contact", configure: b =>
+        {
+            b.RelationshipSchemaName = "tn_test_contact";
+        });
         var error = AttributeChangeValidator.ValidateCreate(attribute);
         Assert.NotNull(error);
-        Assert.Contains("exactly one", error);
+        Assert.Contains("Targets", error);
     }
 
     [Fact]

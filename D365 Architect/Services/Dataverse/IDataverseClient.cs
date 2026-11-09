@@ -366,6 +366,24 @@ public interface IDataverseClient
     Task CreateCustomerRelationshipsAsync(Uri environmentUrl, string accessToken, JsonObject body, string? solutionUniqueName, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Creates a brand-new multi-table (polymorphic) Lookup — one with more
+    /// than one target table — via the dedicated
+    /// <c>CreatePolymorphicLookupAttribute</c> action (one
+    /// <c>OneToManyRelationships</c> entry per target, sharing a single
+    /// <c>Lookup</c>), and, once the lookup already exists, adds a further
+    /// target table to it the same way (the body then carries just the new
+    /// relationship). This is what <c>CreateOneToManyRelationshipAsync</c>
+    /// (a single, standalone relationship) and
+    /// <c>CreateCustomerRelationshipsAsync</c> (Customer's own fixed
+    /// account/contact pair) each deliberately don't cover. See
+    /// <see cref="AttributeMetadataJsonBuilder.BuildPolymorphicLookupCreateBody"/>
+    /// and <see cref="AttributeMetadataJsonBuilder.BuildLookupTargetAddBody"/>
+    /// for the two <paramref name="body"/> shapes this one action carries.
+    /// <paramref name="solutionUniqueName"/>: see <see cref="CreateAttributeAsync"/>'s own doc comment — same gap, same fix.
+    /// </summary>
+    Task CreatePolymorphicLookupAttributeAsync(Uri environmentUrl, string accessToken, JsonObject body, string? solutionUniqueName, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Adds one option to an existing local (never global — see
     /// `docs/yaml-conventions.md`) choice column, or Status column's
     /// status-reason set, via the <c>InsertOptionValue</c> action. Never

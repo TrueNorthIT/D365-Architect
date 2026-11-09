@@ -503,10 +503,53 @@ public static class AttributeMetadataJsonBuilder
             throw new InvalidOperationException($"'{attribute.Name}' must have exactly one Targets entry to create a plain Lookup column.");
         }
 
-        var cascadeConfiguration = RelationshipBehaviors.CascadeConfigurationOrNull(attribute.RelationshipBehavior ?? RelationshipBehaviors.Referential)
-            ?? throw new InvalidOperationException($"'{attribute.RelationshipBehavior}' isn't a valid RelationshipBehavior for '{attribute.Name}' — expected one of: {string.Join(", ", RelationshipBehaviors.Names)}.");
+        return BuildOneLookupRelationship(entityLogicalName, attribute, attribute.Targets[0], attribute.RelationshipSchemaName);
+    }
 
-        var target = attribute.Targets[0];
+    /// <summary>
+    /// Builds the <c>CreatePolymorphicLookupAttribute</c> action body that
+    /// creates a brand-new multi-table (polymorphic) Lookup — one with more
+    /// than one <see cref="AttributeDefinition.Targets"/> entry — as a single
+    /// lookup attribute shared by a set of one-to-many relationships, one
+    /// per target table. Unlike a plain Lookup (a lone
+    /// <see cref="BuildRelationshipCreateBody"/>) or Customer's own fixed
+    /// <c>CreateCustomerRelationships</c> action, a multi-table lookup's
+    /// shape varies with the maker's own targets, so it needs its own
+    /// documented action.
+    ///
+    /// Each target's relationship schema name is derived from the column's
+    /// own <see cref="AttributeDefinition.SchemaName"/> plus the target —
+    /// <c>{schemaName}_{target}</c> — the exact same convention Customer
+    /// columns already use for their fixed
+    /// <c>{schemaName}_account</c>/<c>{schemaName}_contact</c> pair (see
+    /// <see cref="BuildCustomerRelationshipCreateBody"/> and
+    /// `docs/yaml-conventions.md`): relationship schema names are
+    /// Dataverse-unique but carry no meaning a maker needs to author, and
+    /// deriving them keeps the YAML to its existing single
+    /// <c>relationshipSchemaName</c> (the primary/target-1 relationship)
+    /// plus the plain <c>targets</c> list. <see cref="AttributeDefinition.RelationshipBehavior"/>
+    /// (defaulting to <see cref="RelationshipBehaviors.Referential"/>, same
+    /// as <see cref="BuildRelationshipCreateBody"/>) is applied to every
+    /// generated relationship — per-target behavior is deliberately not
+    /// supported.
+    /// </summary>
+    /// <exception cref="InvalidOperationException"><paramref name="attribute"/> is missing <see cref="AttributeDefinition.SchemaName"/>, <see cref="AttributeDefinition.RelationshipSchemaName"/>, or has fewer than two <see cref="AttributeDefinition.Targets"/> entries, or has a <see cref="AttributeDefinition.RelationshipBehavior"/> that isn't one of <see cref="RelationshipBehaviors.Names"/> — <see cref="AttributeChangeValidator.ValidateCreate"/> should already have caught this first.</exception>
+    public static JsonObject BuildPolymorphicLookupCreateBody(string entityLogicalName, AttributeDefinition attribute)
+    {
+        if (attribute.SchemaName is null)
+        {
+            throw new InvalidOperationException($"'{attribute.Name}' has no SchemaName in the local YAML — required to create a column, and this tool never guesses one.");
+        }
+
+        if (attribute.RelationshipSchemaName is null)
+        {
+            throw new InvalidOperationException($"'{attribute.Name}' has no RelationshipSchemaName in the local YAML — required to create a Lookup column.");
+        }
+
+        if (attribute.Targets is not { Count: > 1 })
+        {
+            throw new InvalidOperationException($"'{attribute.Name}' must have more than one Targets entry to create a multi-table Lookup column.");
+        }
 
         var lookup = new JsonObject
         {
@@ -527,17 +570,109 @@ public static class AttributeMetadataJsonBuilder
             lookup["Description"] = DataverseLabelJson.Build(attribute.Description);
         }
 
+        var relationships = new JsonArray();
+        for (var i = 0; i < attribute.Targets.Count; i++)
+        {
+            var target = attribute.Targets[i];
+            // The first relationship carries the YAML's own
+            // relationshipSchemaName (the same name a single-target Lookup
+            // would have used); every additional target derives its own the
+            // Customer-column way, {schemaName}_{target}.
+            var relationshipSchemaName = i == 0
+                ? attribute.RelationshipSchemaName
+                : $"{attribute.SchemaName}_{target}";
+            relationships.Add(BuildOneLookupRelationship(entityLogicalName, attribute, target, relationshipSchemaName, includeLookup: false));
+        }
+
         return new JsonObject
         {
-            ["SchemaName"] = attribute.RelationshipSchemaName,
-            ["@odata.type"] = "Microsoft.Dynamics.CRM.OneToManyRelationshipMetadata",
-            ["AssociatedMenuConfiguration"] = new JsonObject
-            {
-                ["Behavior"] = "UseCollectionName",
-                ["Group"] = "Details",
-                ["Label"] = DataverseLabelJson.Build(attribute.DisplayName ?? attribute.Name),
-                ["Order"] = 10000,
-            },
+            ["Lookup"] = lookup,
+            ["OneToManyRelationships"] = relationships,
+        };
+    }
+
+    /// <summary>
+    /// Builds the <c>CreatePolymorphicLookupAttribute</c> action body that
+    /// adds <paramref name="target"/> to an already-live multi-table
+    /// Lookup's existing lookup attribute (referenced by its
+    /// <paramref name="attributeSchemaName"/>) — the only
+    /// <c>OneToManyRelationships</c> entry is the new target's. The
+    /// relationship schema name follows the same derivation as
+    /// <see cref="BuildPolymorphicLookupCreateBody"/>'s additional targets:
+    /// <c>{attributeSchemaName}_{target}</c>. <paramref name="behavior"/>
+    /// (null = <see cref="RelationshipBehaviors.Referential"/>) drives the
+    /// one generated relationship.
+    /// </summary>
+    /// <exception cref="InvalidOperationException"><paramref name="target"/> or <paramref name="attributeSchemaName"/> is null/empty, or <paramref name="behavior"/> isn't one of <see cref="RelationshipBehaviors.Names"/>.</exception>
+    public static JsonObject BuildLookupTargetAddBody(string entityLogicalName, string target, string attributeSchemaName, string? behavior)
+    {
+        if (string.IsNullOrWhiteSpace(target))
+        {
+            throw new InvalidOperationException("No target table was given for the new lookup relationship.");
+        }
+
+        if (string.IsNullOrWhiteSpace(attributeSchemaName))
+        {
+            throw new InvalidOperationException("No existing lookup attribute SchemaName to reference for the new lookup relationship.");
+        }
+
+        var attribute = new AttributeDefinition
+        {
+            Name = attributeSchemaName.ToLowerInvariant(),
+            Type = "Lookup",
+            SchemaName = attributeSchemaName,
+            RequiredLevel = "None",
+            RelationshipBehavior = behavior,
+        };
+
+        var body = BuildOneLookupRelationship(entityLogicalName, attribute, target, $"{attributeSchemaName}_{target}", includeLookup: false);
+        return new JsonObject
+        {
+            ["Lookup"] = new JsonObject { ["@odata.type"] = "Microsoft.Dynamics.CRM.LookupAttributeMetadata", ["SchemaName"] = attributeSchemaName },
+            ["OneToManyRelationships"] = new JsonArray(body),
+        };
+    }
+
+    /// <summary>
+    /// One one-to-many relationship's request object for a Lookup column —
+    /// shared by <see cref="BuildRelationshipCreateBody"/> (standalone
+    /// <c>OneToManyRelationshipMetadata</c>, with its own <c>Lookup</c>
+    /// nested), <see cref="BuildPolymorphicLookupCreateBody"/> (an entry of
+    /// the <c>CreatePolymorphicLookupAttribute</c> action's
+    /// <c>OneToManyRelationships</c> array), and
+    /// <see cref="BuildLookupTargetAddBody"/>. Only the shape difference —
+    /// a polymorphic-action entry never carries its own <c>Lookup</c> (the
+    /// action's single <c>Lookup</c> covers them all) or
+    /// <c>@odata.type</c> (the array items' type is implied by the action)
+    /// — is conditional; every field value is identical for both shapes.
+    /// </summary>
+    private static JsonObject BuildOneLookupRelationship(string entityLogicalName, AttributeDefinition attribute, string target, string relationshipSchemaName, bool includeLookup = true)
+    {
+        var cascadeConfiguration = RelationshipBehaviors.CascadeConfigurationOrNull(attribute.RelationshipBehavior ?? RelationshipBehaviors.Referential)
+            ?? throw new InvalidOperationException($"'{attribute.RelationshipBehavior}' isn't a valid RelationshipBehavior for '{attribute.Name}' — expected one of: {string.Join(", ", RelationshipBehaviors.Names)}.");
+
+        var lookup = new JsonObject
+        {
+            ["@odata.type"] = "Microsoft.Dynamics.CRM.LookupAttributeMetadata",
+            ["AttributeType"] = "Lookup",
+            ["AttributeTypeName"] = new JsonObject { ["Value"] = "LookupType" },
+            ["SchemaName"] = attribute.SchemaName,
+            ["RequiredLevel"] = new JsonObject { ["Value"] = attribute.RequiredLevel ?? "None", ["CanBeChanged"] = true },
+        };
+
+        if (attribute.DisplayName is not null)
+        {
+            lookup["DisplayName"] = DataverseLabelJson.Build(attribute.DisplayName);
+        }
+
+        if (attribute.Description is not null)
+        {
+            lookup["Description"] = DataverseLabelJson.Build(attribute.Description);
+        }
+
+        var relationship = new JsonObject
+        {
+            ["SchemaName"] = relationshipSchemaName,
             ["CascadeConfiguration"] = cascadeConfiguration,
             // A target's primary key is always its own logical name + "id"
             // — Dataverse's own fixed, universal naming convention (e.g.
@@ -545,8 +680,25 @@ public static class AttributeMetadataJsonBuilder
             ["ReferencedAttribute"] = $"{target}id",
             ["ReferencedEntity"] = target,
             ["ReferencingEntity"] = entityLogicalName,
-            ["Lookup"] = lookup,
         };
+
+        // Only the standalone single-target shape carries its own
+        // @odata.type and AssociatedMenuConfiguration — a polymorphic
+        // action's array entry is a bare relationship object.
+        if (includeLookup)
+        {
+            relationship["@odata.type"] = "Microsoft.Dynamics.CRM.OneToManyRelationshipMetadata";
+            relationship["AssociatedMenuConfiguration"] = new JsonObject
+            {
+                ["Behavior"] = "UseCollectionName",
+                ["Group"] = "Details",
+                ["Label"] = DataverseLabelJson.Build(attribute.DisplayName ?? attribute.Name),
+                ["Order"] = 10000,
+            };
+            relationship["Lookup"] = lookup;
+        }
+
+        return relationship;
     }
 
     /// <summary>

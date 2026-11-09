@@ -45,6 +45,7 @@ public sealed class FakeDataverseClient : IDataverseClient
     public List<(string EntityLogicalName, string AttributeLogicalName, JsonObject Body)> UpdateAttributeCalls { get; } = [];
     public List<(JsonObject Metadata, string? SolutionUniqueName)> CreateOneToManyRelationshipCalls { get; } = [];
     public List<(JsonObject Body, string? SolutionUniqueName)> CreateCustomerRelationshipsCalls { get; } = [];
+    public List<(JsonObject Body, string? SolutionUniqueName)> CreatePolymorphicLookupAttributeCalls { get; } = [];
     public List<(string EntityLogicalName, JsonObject Body)> UpdateEntityCalls { get; } = [];
     public List<JsonObject> InsertOptionValueCalls { get; } = [];
     public List<JsonObject> UpdateOptionValueCalls { get; } = [];
@@ -284,6 +285,12 @@ public sealed class FakeDataverseClient : IDataverseClient
         return Task.CompletedTask;
     }
 
+    public Task CreatePolymorphicLookupAttributeAsync(Uri environmentUrl, string accessToken, JsonObject body, string? solutionUniqueName, CancellationToken cancellationToken)
+    {
+        CreatePolymorphicLookupAttributeCalls.Add((body, solutionUniqueName));
+        return Task.CompletedTask;
+    }
+
     public Task InsertOptionValueAsync(Uri environmentUrl, string accessToken, JsonObject body, CancellationToken cancellationToken)
     {
         InsertOptionValueCalls.Add(body);
@@ -398,6 +405,10 @@ public sealed class FakeDataverseClient : IDataverseClient
 
                 case DataverseWrite.CreateCustomerRelationships w:
                     CreateCustomerRelationshipsCalls.Add((w.Body, w.SolutionUniqueName));
+                    break;
+
+                case DataverseWrite.CreatePolymorphicLookupAttribute w:
+                    CreatePolymorphicLookupAttributeCalls.Add((w.Body, w.SolutionUniqueName));
                     break;
 
                 case DataverseWrite.InsertOptionValue w:
