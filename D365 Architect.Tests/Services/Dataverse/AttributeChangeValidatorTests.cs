@@ -105,18 +105,41 @@ public sealed class AttributeChangeValidatorTests
     }
 
     [Fact]
-    public void ValidateCreate_LookupWithMultipleTargets_Succeeds()
+    public void ValidateCreate_LookupWithMultipleTargets_NoRelationshipSchemaName_Succeeds()
     {
-        // More than one Targets entry is a multi-table (polymorphic) lookup —
-        // creatable via the CreatePolymorphicLookupAttribute action, not a
-        // validation failure anymore (see TableImportServiceTests'
-        // PreviewAsync_NewMultiTargetLookup_PlansCreatePolymorphicLookup).
+        // More than one Targets entry is a multi-table (polymorphic) lookup,
+        // whose relationship names are all derived as {schemaName}_{target},
+        // so — as for Customer — no RelationshipSchemaName is needed.
+        var attribute = Attr("Lookup", schemaName: "tn_Contact", name: "tn_contact", configure: b => b.Targets = ["contact", "account"]);
+        Assert.Null(AttributeChangeValidator.ValidateCreate(attribute));
+    }
+
+    [Fact]
+    public void ValidateCreate_LookupWithMultipleTargets_RelationshipSchemaNameIgnored()
+    {
+        // Present but unused, as for Customer: not checked, not rejected.
         var attribute = Attr("Lookup", schemaName: "tn_Contact", name: "tn_contact", configure: b =>
         {
-            b.RelationshipSchemaName = "tn_test_contact";
+            b.RelationshipSchemaName = "not valid!";
             b.Targets = ["contact", "account"];
         });
         Assert.Null(AttributeChangeValidator.ValidateCreate(attribute));
+    }
+
+    [Theory]
+    [InlineData("contact", "contact")]
+    [InlineData("contact", "Contact")]
+    public void ValidateCreate_LookupWithDuplicateTargets_Fails(string first, string second)
+    {
+        var attribute = Attr("Lookup", schemaName: "tn_Contact", name: "tn_contact", configure: b =>
+        {
+            b.RelationshipSchemaName = "tn_test_contact";
+            b.Targets = [first, "account", second];
+        });
+        var error = AttributeChangeValidator.ValidateCreate(attribute);
+        Assert.NotNull(error);
+        Assert.Contains("more than once", error);
+        Assert.Contains(first, error);
     }
 
     [Fact]
