@@ -136,6 +136,21 @@ public sealed class AttributeMetadataJsonBuilderTests
     }
 
     [Fact]
+    public void BuildCreateBody_Picklist_LocalOptions_MatchMakerPortalShape_WithEmptyDescriptionAndExternalValue()
+    {
+        var attribute = Attr("Picklist", configure: b => b.Options = [new AttributeOptionDefinition { Value = 1, Label = "Red" }]);
+
+        var body = AttributeMetadataJsonBuilder.BuildCreateBody(attribute);
+
+        var option = body["OptionSet"]!["Options"]!.AsArray()[0]!;
+        Assert.Equal("Red", (string)option["Label"]!["LocalizedLabels"]![0]!["Label"]!);
+        Assert.Equal("Microsoft.Dynamics.CRM.Label", (string)option["Description"]!["@odata.type"]!);
+        Assert.Equal("", (string)option["Description"]!["LocalizedLabels"]![0]!["Label"]!);
+        Assert.Equal(1033, (int)option["Description"]!["LocalizedLabels"]![0]!["LanguageCode"]!);
+        Assert.Equal("", (string)option["ExternalValue"]!);
+    }
+
+    [Fact]
     public void BuildCreateBody_MultiSelectPicklist_ForcesVirtualAttributeType_ButNotODataTypeOrTypeName()
     {
         var attribute = Attr("MultiSelectPicklist", configure: b => b.Options = [new AttributeOptionDefinition { Value = 1, Label = "A" }]);
@@ -621,6 +636,11 @@ public sealed class AttributeMetadataJsonBuilderTests
 
         var plan = Assert.Single(plans);
         Assert.Equal(OptionChangeAction.InsertOption, plan.Action);
+        Assert.Equal("tn_test", (string)plan.RequestBody["EntityLogicalName"]!);
+        Assert.Equal("Blue", (string)plan.RequestBody["Label"]!["LocalizedLabels"]![0]!["Label"]!);
+        Assert.Equal("", (string)plan.RequestBody["Description"]!["LocalizedLabels"]![0]!["Label"]!);
+        Assert.Equal(1033, (int)plan.RequestBody["Description"]!["LocalizedLabels"]![0]!["LanguageCode"]!);
+        Assert.Equal("", (string)plan.RequestBody["ExternalValue"]!);
     }
 
     [Fact]

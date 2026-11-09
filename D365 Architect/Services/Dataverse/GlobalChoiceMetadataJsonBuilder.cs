@@ -37,11 +37,7 @@ internal static class GlobalChoiceMetadataJsonBuilder
             ["@odata.type"] = "Microsoft.Dynamics.CRM.OptionSetMetadata",
             ["Name"] = choice.Name,
             ["OptionSetType"] = "Picklist",
-            ["Options"] = new JsonArray(choice.Options!.Select(o => (JsonNode)new JsonObject
-            {
-                ["Value"] = o.Value,
-                ["Label"] = DataverseLabelJson.Build(o.Label),
-            }).ToArray()),
+            ["Options"] = new JsonArray(choice.Options!.Select(o => (JsonNode)DataverseOptionJson.BuildNewOption(o.Value, o.Label)).ToArray()),
         };
 
         if (choice.DisplayName is not null)
@@ -124,13 +120,12 @@ internal static class GlobalChoiceMetadataJsonBuilder
             values => BuildOrderOptionsPlan(local.Name, values));
     }
 
-    private static OptionChangePlan BuildInsertOptionPlan(string optionSetName, AttributeOptionDefinition option) =>
-        new(OptionChangeAction.InsertOption, new JsonObject
-        {
-            ["OptionSetName"] = optionSetName,
-            ["Value"] = option.Value,
-            ["Label"] = DataverseLabelJson.Build(option.Label),
-        }, $"insert option '{option.Label}' ({option.Value})");
+    private static OptionChangePlan BuildInsertOptionPlan(string optionSetName, AttributeOptionDefinition option)
+    {
+        var body = DataverseOptionJson.BuildNewOption(option.Value, option.Label);
+        body["OptionSetName"] = optionSetName;
+        return new(OptionChangeAction.InsertOption, body, $"insert option '{option.Label}' ({option.Value})");
+    }
 
     private static OptionChangePlan BuildUpdateOptionPlan(string optionSetName, int value, string label) =>
         new(OptionChangeAction.UpdateOption, new JsonObject

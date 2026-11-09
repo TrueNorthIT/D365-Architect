@@ -929,14 +929,13 @@ public static class AttributeMetadataJsonBuilder
             (value, label) => BuildUpdateOptionPlan(entityLogicalName, local.Name, value, label),
             values => BuildOrderOptionsPlan(entityLogicalName, local.Name, values));
 
-    private static OptionChangePlan BuildInsertOptionPlan(string entityLogicalName, string attributeLogicalName, AttributeOptionDefinition option) =>
-        new(OptionChangeAction.InsertOption, new JsonObject
-        {
-            ["AttributeLogicalName"] = attributeLogicalName,
-            ["EntityLogicalName"] = entityLogicalName,
-            ["Value"] = option.Value,
-            ["Label"] = DataverseLabelJson.Build(option.Label),
-        }, $"insert option '{option.Label}' ({option.Value})");
+    private static OptionChangePlan BuildInsertOptionPlan(string entityLogicalName, string attributeLogicalName, AttributeOptionDefinition option)
+    {
+        var body = DataverseOptionJson.BuildNewOption(option.Value, option.Label);
+        body["AttributeLogicalName"] = attributeLogicalName;
+        body["EntityLogicalName"] = entityLogicalName;
+        return new(OptionChangeAction.InsertOption, body, $"insert option '{option.Label}' ({option.Value})");
+    }
 
     private static OptionChangePlan BuildUpdateOptionPlan(string entityLogicalName, string attributeLogicalName, int value, string label) =>
         new(OptionChangeAction.UpdateOption, new JsonObject
@@ -957,5 +956,5 @@ public static class AttributeMetadataJsonBuilder
         }, "reorder options");
 
     private static JsonArray BuildOptionsArray(IReadOnlyList<AttributeOptionDefinition> options) =>
-        new(options.Select(o => (JsonNode)new JsonObject { ["Value"] = o.Value, ["Label"] = DataverseLabelJson.Build(o.Label) }).ToArray());
+        new(options.Select(o => (JsonNode)DataverseOptionJson.BuildNewOption(o.Value, o.Label)).ToArray());
 }

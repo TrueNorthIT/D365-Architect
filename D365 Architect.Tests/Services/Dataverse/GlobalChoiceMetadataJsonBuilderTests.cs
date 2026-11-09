@@ -39,6 +39,22 @@ public sealed class GlobalChoiceMetadataJsonBuilderTests
     }
 
     [Fact]
+    public void BuildCreateBody_Options_MatchMakerPortalShape_WithEmptyDescriptionAndExternalValue()
+    {
+        var choice = Choice(options: [new AttributeOptionDefinition { Value = 416110007, Label = "Clarification" }]);
+
+        var body = GlobalChoiceMetadataJsonBuilder.BuildCreateBody(choice);
+
+        var option = body["Options"]!.AsArray()[0]!;
+        Assert.Equal(416110007, (int)option["Value"]!);
+        Assert.Equal("Clarification", (string)option["Label"]!["LocalizedLabels"]![0]!["Label"]!);
+        Assert.Equal("Microsoft.Dynamics.CRM.Label", (string)option["Description"]!["@odata.type"]!);
+        Assert.Equal("", (string)option["Description"]!["LocalizedLabels"]![0]!["Label"]!);
+        Assert.Equal(1033, (int)option["Description"]!["LocalizedLabels"]![0]!["LanguageCode"]!);
+        Assert.Equal("", (string)option["ExternalValue"]!);
+    }
+
+    [Fact]
     public void BuildCreateBody_OmitsDisplayNameAndDescription_WhenNotSpecified()
     {
         var choice = Choice(options: [new AttributeOptionDefinition { Value = 1, Label = "Red" }]);
@@ -141,6 +157,22 @@ public sealed class GlobalChoiceMetadataJsonBuilderTests
     }
 
     [Fact]
+    public void BuildOptionChangePlans_InsertOptionBody_MatchesMakerPortalShape_WithEmptyDescriptionAndExternalValue()
+    {
+        var local = Choice(name: "tn_colors", options: [new AttributeOptionDefinition { Value = 416110007, Label = "Clarification" }]);
+        var existing = Choice(name: "tn_colors", options: [new AttributeOptionDefinition { Value = 1, Label = "Red" }]);
+
+        var plan = Assert.Single(GlobalChoiceMetadataJsonBuilder.BuildOptionChangePlans(local, existing));
+
+        Assert.Equal(OptionChangeAction.InsertOption, plan.Action);
+        Assert.Equal(416110007, (int)plan.RequestBody["Value"]!);
+        Assert.Equal("Clarification", (string)plan.RequestBody["Label"]!["LocalizedLabels"]![0]!["Label"]!);
+        Assert.Equal("", (string)plan.RequestBody["Description"]!["LocalizedLabels"]![0]!["Label"]!);
+        Assert.Equal(1033, (int)plan.RequestBody["Description"]!["LocalizedLabels"]![0]!["LanguageCode"]!);
+        Assert.Equal("", (string)plan.RequestBody["ExternalValue"]!);
+    }
+
+    [Fact]
     public void BuildOptionChangePlans_RenamedOption_ProducesUpdateWithMergeLabels()
     {
         var local = Choice(options: [new AttributeOptionDefinition { Value = 1, Label = "Crimson" }]);
@@ -150,5 +182,8 @@ public sealed class GlobalChoiceMetadataJsonBuilderTests
 
         Assert.Equal(OptionChangeAction.UpdateOption, plan.Action);
         Assert.True((bool)plan.RequestBody["MergeLabels"]!);
+        // Updates keep their historical label-only shape - no Description/ExternalValue.
+        Assert.False(plan.RequestBody.ContainsKey("Description"));
+        Assert.False(plan.RequestBody.ContainsKey("ExternalValue"));
     }
 }
