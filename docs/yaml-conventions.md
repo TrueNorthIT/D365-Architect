@@ -1000,10 +1000,22 @@ needs the even more specific `CreateCustomerRelationships` action instead
 YAML shape for creating a brand-new plain `Lookup`: `relationshipSchemaName`
 (the relationship's own schema name — distinct from, and validated the same
 way as, the column's own `schemaName`; never inferred) plus exactly one
-`targets` entry. **A `targets` list with more than one entry is a
-"multi-table lookup"** — a materially more complex relationship shape
-Microsoft's own docs split into a separate article — and isn't supported for
-creation here; it's reported as `Invalid` with that reason. `Customer`
+`targets` entry.
+
+**A `targets` list with more than one entry is a "multi-table lookup"** — a
+materially more complex relationship shape Microsoft's own docs split into a
+separate article — and is creatable via the dedicated
+`CreatePolymorphicLookupAttribute` action instead of a plain
+`RelationshipDefinitions` POST (one `OneToManyRelationship` per target,
+sharing a single `Lookup`). Its YAML shape is the same as a plain Lookup's:
+`relationshipSchemaName` plus the full `targets` list. The *first* target
+gets the YAML's own `relationshipSchemaName` (the relationship a single-
+target Lookup would have used); every additional target's relationship
+schema name is derived as `{schemaName}_{target}` — the same convention
+Customer columns use for their fixed pair — and never appears in the YAML.
+`relationshipBehavior`, when given, applies to *every* generated
+relationship (there's no per-target override).
+`Customer`
 needs no `relationshipSchemaName` of its own: both of its relationship
 schema names are derived from the column's `schemaName` plus the fixed
 `account`/`contact` targets, and its `targets` must be exactly
@@ -1046,7 +1058,17 @@ Dataverse error rather than being caught locally first.
 **`targets` is immutable after creation** for all three types, checked
 before `AttributesMatch` alongside the existing `Type`/`SchemaName` checks —
 an attempted change comes back `Invalid` rather than being silently ignored
-or left for Dataverse's own API error to explain.
+or left for Dataverse's own API error to explain. The one supported
+exception is *adding* a target table to an existing **multi-table** Lookup:
+Dataverse allows new targets after creation, so that change plans as an
+addition (the extra relationship is created via the same
+`CreatePolymorphicLookupAttribute` action, referencing the column's live
+attribute). **Removing** a target from an existing multi-table Lookup is
+still `Invalid` — it's destructive (existing values pointing at the dropped
+table lose their lookup), the same policy as every other destructive
+change this tool refuses. And a lookup can never be converted between
+single-target and multi-table (Dataverse can't do that conversion) —
+`Invalid`, with that reason.
 
 ### State and Status
 
@@ -1173,15 +1195,18 @@ real table, not just reasoned about:
   `globalOptionSetName`, both at once, or duplicate option `value`s** — see
   "Boolean and Choice" above.
 - **Creating a `Lookup` with no `relationshipSchemaName`, an invalid one,
-  more than one `targets` entry, or a `relationshipBehavior` that isn't
+  no `targets` entry, or a `relationshipBehavior` that isn't
   `Referential`/`ReferentialRestrictDelete`/`Parental`** — see "Lookup,
-  Customer, and Owner" above.
+  Customer, and Owner" above. (More than one `targets` entry is *valid* —
+  it's a multi-table lookup.)
 - **Creating a `Customer` whose `targets` aren't exactly `["account",
   "contact"]`** — fixed by Dataverse for the type, not a maker choice.
 - **Attempting to create an `Owner`/`State`/`Status` column** — all three
   already exist automatically on every table.
 - **Changing `targets` on an existing `Lookup`/`Customer`/`Owner` column** —
-  immutable after creation, checked the same way as `Type`/`SchemaName`.
+  immutable after creation, checked the same way as `Type`/`SchemaName`;
+  the one exception is *adding* targets to an existing multi-table Lookup
+  (see "Lookup, Customer, and Owner" above).
 
 The MaxLength-ceiling and Precision-range checks above only fire when that
 specific value is actually being *changed* to something new — never when

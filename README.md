@@ -306,6 +306,19 @@ changes in Dataverse, and if there's genuinely nothing to apply, nothing is
 written at all. Pass `--whatif` to see the diff/plan and stop there — no
 prompt, no write, regardless of `--yes`.
 
+A new `Lookup` column takes a `relationshipSchemaName` and a `targets` list
+in the YAML. With exactly one target it's a plain lookup; with more than
+one it's a multi-table (polymorphic) lookup, created through the
+`CreatePolymorphicLookupAttribute` action — one relationship per target,
+each target table's relationship schema name derived as
+`{schemaName}_{target}`. For an existing multi-table lookup you can *add*
+further targets (planned as an addition); removing a target, or converting
+a lookup between single-target and multi-table, is blocked as
+destructive/immutable. `Customer` columns always take exactly `account`
+and `contact`. See
+[`docs/yaml-conventions.md`](docs/yaml-conventions.md#importing-tables-table-import)
+for the full shape.
+
 Live-only system columns (`createdby`, `ownerid`, `statecode` and similar,
 which Dataverse reports as non-custom) are hidden from the diff, since this
 import never creates or deletes them. Table-level properties the file sets

@@ -38,6 +38,9 @@ public abstract record DataverseWrite
     /// <summary>See <see cref="IDataverseClient.CreateCustomerRelationshipsAsync"/>. <paramref name="SolutionUniqueName"/> null means "wherever Dataverse's own default context puts it".</summary>
     public sealed record CreateCustomerRelationships(JsonObject Body, string? SolutionUniqueName = null) : DataverseWrite;
 
+    /// <summary>See <see cref="IDataverseClient.CreatePolymorphicLookupAttributeAsync"/>. <paramref name="SolutionUniqueName"/> null means "wherever Dataverse's own default context puts it".</summary>
+    public sealed record CreatePolymorphicLookupAttribute(JsonObject Body, string? SolutionUniqueName = null) : DataverseWrite;
+
     /// <summary>See <see cref="IDataverseClient.InsertOptionValueAsync"/>.</summary>
     public sealed record InsertOptionValue(JsonObject Body) : DataverseWrite;
 
@@ -64,6 +67,7 @@ public abstract record DataverseWrite
         UpdateAttribute w => $"update column '{w.AttributeLogicalName}' on '{w.EntityLogicalName}'",
         CreateOneToManyRelationship => "create lookup relationship",
         CreateCustomerRelationships => "create customer relationship",
+        CreatePolymorphicLookupAttribute => "create polymorphic lookup attribute",
         InsertOptionValue => "insert option",
         UpdateOptionValue => "update option",
         OrderOptions => "reorder options",

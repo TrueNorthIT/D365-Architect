@@ -639,6 +639,9 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
     public async Task CreateCustomerRelationshipsAsync(Uri environmentUrl, string accessToken, JsonObject body, string? solutionUniqueName, CancellationToken cancellationToken) =>
         await SendWriteAsync(environmentUrl, accessToken, new DataverseWrite.CreateCustomerRelationships(body, solutionUniqueName), cancellationToken);
 
+    public async Task CreatePolymorphicLookupAttributeAsync(Uri environmentUrl, string accessToken, JsonObject body, string? solutionUniqueName, CancellationToken cancellationToken) =>
+        await SendWriteAsync(environmentUrl, accessToken, new DataverseWrite.CreatePolymorphicLookupAttribute(body, solutionUniqueName), cancellationToken);
+
     public async Task InsertOptionValueAsync(Uri environmentUrl, string accessToken, JsonObject body, CancellationToken cancellationToken) =>
         await SendWriteAsync(environmentUrl, accessToken, new DataverseWrite.InsertOptionValue(body), cancellationToken);
 
@@ -777,6 +780,7 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         DataverseWrite.UpdateAttribute w => (HttpMethod.Put, $"EntityDefinitions(LogicalName='{Uri.EscapeDataString(w.EntityLogicalName)}')/Attributes(LogicalName='{Uri.EscapeDataString(w.AttributeLogicalName)}')", w.Metadata, MergeLabelsHeader),
         DataverseWrite.CreateOneToManyRelationship w => (HttpMethod.Post, "RelationshipDefinitions", w.Metadata, SolutionHeader(w.SolutionUniqueName)),
         DataverseWrite.CreateCustomerRelationships w => (HttpMethod.Post, "CreateCustomerRelationships", w.Body, SolutionHeader(w.SolutionUniqueName)),
+        DataverseWrite.CreatePolymorphicLookupAttribute w => (HttpMethod.Post, "CreatePolymorphicLookupAttribute", w.Body, SolutionHeader(w.SolutionUniqueName)),
         DataverseWrite.InsertOptionValue w => (HttpMethod.Post, "InsertOptionValue", w.Body, []),
         DataverseWrite.UpdateOptionValue w => (HttpMethod.Post, "UpdateOptionValue", w.Body, []),
         DataverseWrite.OrderOptions w => (HttpMethod.Post, "OrderOption", w.Body, []),
