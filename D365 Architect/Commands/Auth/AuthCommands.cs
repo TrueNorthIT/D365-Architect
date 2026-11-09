@@ -15,7 +15,7 @@ internal static class AuthCommands
     {
         config.AddBranch<CommandSettings>("auth", branch =>
         {
-            branch.SetDescription("Sign in to a D365 environment.");
+            branch.SetDescription("Sign in to a D365 environment. For a pipeline or other unattended run, skip 'auth login' and sign in from environment variables instead: set d365architect_AUTH_MODE (clientsecret, certificate, azurecli, managedidentity or workloadidentity) and d365architect_URL to the environment's URL; while d365architect_AUTH_MODE is set, any saved 'auth login' sign-in is ignored.");
 
             branch.AddCommand<LoginCommand>("login")
                 .WithDescription("Interactively signs in to a D365 environment.")

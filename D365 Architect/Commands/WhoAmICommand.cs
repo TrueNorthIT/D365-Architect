@@ -21,7 +21,7 @@ public sealed class WhoAmICommand(IAuthenticationService authenticationService, 
     public static void Configure(IConfigurator config)
     {
         config.AddCommand<WhoAmICommand>("whoami")
-            .WithDescription("Shows who you're currently signed in as, and to which D365 environment.");
+            .WithDescription("Shows who you're currently signed in as, and to which D365 environment. When signed in from the d365architect_AUTH_MODE / d365architect_URL environment variables, it reports that non-interactive sign-in and the d365architect_AUTH_MODE used.");
     }
 
     public sealed class Settings : CommandSettings;
