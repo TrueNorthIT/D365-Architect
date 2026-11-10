@@ -74,6 +74,7 @@ injection, and defines a nested `Settings : CommandSettings` with
 | `view` | `export`, `import` | `Commands/View/ExportViewCommand.cs`, `ImportViewCommand.cs` |
 | `form` | `export`, `build-xml`, `import` | `Commands/Form/ExportFormCommand.cs`, `BuildFormXmlCommand.cs`, `ImportFormCommand.cs` |
 | `choice` | `export`, `import` | `Commands/Choice/ExportChoiceCommand.cs`, `ImportChoiceCommand.cs` |
+| `security` | `export`, `import` | `Commands/Security/ExportSecurityCommand.cs`, `ImportSecurityCommand.cs` (shared preview: `SecurityFilePreviewer.cs`) |
 | `solution` | `export`, `import` | `Commands/Solution/ExportSolutionCommand.cs`, `ImportSolutionCommand.cs` |
 | `schema` | `export`, `configure-vscode` | `Commands/Schema/ExportSchemaCommand.cs`, `ConfigureVsCodeCommand.cs` |
 
@@ -96,7 +97,8 @@ BlockReason) without prompting or writing, returning a `PreparedImport`
 unless `--no-publish`, or `Failed`); `RunAsync` is preview + prompt + apply.
 
 `SolutionImportOrchestrator` owns the stage ordering (creates first, then
-choices, then each table's columns, views and forms) and hands each step to an
+choices, then each table's columns, views, forms and security file, then the
+role files in `roles/`) and hands each step to an
 `ISolutionImportStepRunner`. The production runner
 (`ImportSolutionCommand.StepRunner`) previews each step through the matching
 command's `PreviewAsync` and hands it to `SolutionImportFlow`, which prints
@@ -128,7 +130,20 @@ unchanged: one table, its own prompt, published afterwards.
 `--table` (repeatable, on `solution export` and `solution import`) is resolved
 by `SolutionTableFilter` (case-insensitive; an unmatched name throws
 `UnknownTableException`); the orchestrator then only walks those folders and
-skips global choices.
+skips global choices and role files (`roles/` is never a table folder).
+
+Security files are the one step that doesn't go through `ImportRunner`:
+`ISecurityImportService` previews a table file and a role file differently
+(a role file also needs the solution's tables), and a privilege kept for want
+of `--allow-removals` is always reported even when nothing else changed.
+`Commands/Security/SecurityFilePreviewer.cs` returns the same `PreparedImport`
+so `solution import` (stages `ImportSecurity`/`ImportRole`) and `security
+import` (which feeds `SolutionImportFlow` directly) share it. The real
+`DataverseClient` reads a role's privileges with `RetrieveRolePrivilegesRole`,
+tells table privileges from the rest with each table's
+`EntityDefinitions` `Privileges` metadata, and writes with
+`AddPrivilegesRole`/`RemovePrivilegeRole` only - never `ReplacePrivilegesRole`,
+which would drop every privilege not listed.
 
 ### The diff-before-confirm pattern
 
@@ -408,10 +423,14 @@ Schema, rather than hand-maintaining a second copy that could drift:
   property to a fixed value set (e.g. `FormControl.Control` →
   `StandardFormControls.FriendlyNames`), read via reflection so the schema's
   enum can never drift from what validation actually accepts.
+- A C# `enum` property (or dictionary value) becomes a string constrained to
+  the enum's member names, which is how YAML writes it (e.g.
+  `SecurityAccessLevel` in `*.security.yml`/`*.role.yml`).
 
 **`schema/*.schema.json` regenerates itself automatically** — the `.csproj`'s
-own `RegenerateSchemas` target runs `schema export --for table/view/form`
-after every ordinary `dotnet build`/`dotnet publish`, so these three
+own `RegenerateSchemas` target runs `schema export --for` each of `table`,
+`view`, `form`, `choice`, `security` and `role`
+after every ordinary `dotnet build`/`dotnet publish`, so these
 committed files can no longer silently drift from a model's actual shape the
 way they previously could when regenerating them meant a developer had to
 remember to run `schema export` by hand (confirmed missed at least once:
