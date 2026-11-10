@@ -1652,3 +1652,38 @@ What counts as "left out" differs by file:
   `--solution`, which is why importing a role file needs it; a privilege on
   one of them is never reported or removed by a role file, even with
   `--allow-removals`, and a solution table listed under `tables:` is ignored.
+
+### Shared privileges and conflicts
+
+A privilege is identified by its id, and some tables share one: the activity
+tables (email, appointment, phonecall, …) all use `prvCreateActivity` for
+Create. Changing `create:` for one of them changes it for all of them, so a
+shared privilege is one unit:
+
+- The import plan names every other table a change reaches, e.g.
+  `~ Create: Organisation → User (also changes: appointment, email, phonecall)`.
+- Every entry a run states for the same role and privilege id must ask for
+  the same level. A run is one `security import` (a file or a folder) or one
+  `solution import` (every security and role file in it); the check runs
+  across all of its files after every preview and before the prompt. Entries
+  that agree are written once. Entries that disagree (different levels, or
+  one sets it while another leaves it out or sets `None`) are a conflict:
+  the error names the role, the privilege and each file and entry, every file
+  involved fails as a whole so nothing is half-applied, and nothing is written
+  for that privilege. One file disagreeing with itself (the same role listed
+  twice, or two outside tables sharing a privilege at different levels in a
+  role file) fails the same way.
+- A shared privilege that also covers a table of the solution is owned by
+  that table's security file, like any other privilege on it: `security
+  export` doesn't repeat it in the role file, a role-file entry that would
+  change it is refused, and a role file leaving it out never makes it a
+  removal candidate.
+
+Every privilege is looked up during the preview, so nothing is written for a
+file that names one that doesn't exist (e.g. `assign: User` on an
+organisation-owned table, which has no Assign; `None` there is fine). A role
+file's `privileges:` is for non-table privileges only: a table privilege
+there (e.g. `prvWritetn_complaint`) is refused. In a folder import a table's
+security file must sit in that table's folder (`table:` matches the folder
+name), and a role name that matches more than one role in the root business
+unit is an error rather than a guess.

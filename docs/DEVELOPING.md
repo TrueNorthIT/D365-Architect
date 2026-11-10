@@ -138,7 +138,13 @@ Security files are the one step that doesn't go through `ImportRunner`:
 of `--allow-removals` is always reported even when nothing else changed.
 `Commands/Security/SecurityFilePreviewer.cs` returns the same `PreparedImport`
 so `solution import` (stages `ImportSecurity`/`ImportRole`) and `security
-import` (which feeds `SolutionImportFlow` directly) share it. The real
+import` (which feeds `SolutionImportFlow` directly) share it. Both register
+every preview in a `SecurityImportBatch`; before the prompt
+`SecurityConflictCheck` fails (`SolutionImportFlow.MarkFailed`) every file
+whose entries disagree about one role and privilege id, and the batch makes
+sure a privilege several files agree on is written once. Privileges are
+resolved during preview (`IDataverseClient.ResolvePrivilegesAsync`), shared
+ones to one id with every table they stand for. The real
 `DataverseClient` reads a role's privileges with `RetrieveRolePrivilegesRole`,
 tells table privileges from the rest with each table's
 `EntityDefinitions` `Privileges` metadata, and writes with

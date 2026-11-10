@@ -934,7 +934,9 @@ previewed.
 
 Security and role files go through the same preview as `security import`:
 roles are found by name and never created, and `--solution` names the
-solution whose tables a role file leaves alone.
+solution whose tables a role file leaves alone. The check that no two files
+disagree about one privilege (see [shared privileges](#security-import)) runs
+across every security and role file of the run before you are asked.
 
 ### `security`
 
@@ -1060,6 +1062,32 @@ Changes for role 'HIS User':
   created. The other files are still imported, and the exit code is non-zero.
 - `--table` and `--role` limit a folder import only; with a single file,
   leave them out.
+- In a folder, a table's security file must be in that table's folder: a
+  `tn_task/tn_task.security.yml` that says `table: tn_complaint` fails.
+- Every privilege a file names is looked up before anything is written. One
+  that doesn't exist (e.g. `assign: User` on an organisation-owned table,
+  which has no Assign) fails the whole file; `None` for it is fine.
+- A role file's `privileges:` holds non-table privileges only: a table
+  privilege there (e.g. `prvWritetn_complaint`) is refused.
+
+**Shared privileges.** Some tables share one privilege: the activity tables
+(email, appointment, phonecall, …) all use `prvCreateActivity` for Create,
+and so on. Changing it on one changes it on all of them, so it is treated as
+one unit:
+
+- The plan names every other table a change reaches:
+  `~ Create: Organisation → User (also changes: appointment, email, phonecall)`.
+- Within one run (one file, a folder, or every security and role file of a
+  `solution import`), every entry covering the same role and privilege must
+  ask for the same level. If they disagree (different levels, or one sets it
+  and another leaves it out or sets `None`) that is a conflict: it is
+  reported naming the role, the privilege and each file and table, every
+  file involved fails as a whole (so nothing is half-applied) and nothing is
+  written for it. Entries that agree are written once.
+- A shared privilege that also covers a table of the solution belongs to that
+  table's security file: `security export` leaves it out of the role file, a
+  role file that would change it is refused, and leaving it out of a role
+  file never makes it a removal candidate.
 
 ### `schema`
 
