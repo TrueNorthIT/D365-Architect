@@ -435,4 +435,56 @@ public sealed class FakeDataverseClient : IDataverseClient
 
         return Task.CompletedTask;
     }
+
+    // ---- Security roles ----
+
+    /// <summary>Answers <see cref="TryGetSolutionRolesAsync"/>: solution unique name -> the solution's roles, null = no such solution. Unset throws, like every other unconfigured read.</summary>
+    public Func<string, IReadOnlyList<SecurityRole>?>? SolutionRoles { get; set; }
+
+    /// <summary>Every role that exists in this environment, found by name by <see cref="TryGetRoleByNameAsync"/> (case-insensitive). A name not listed is "no such role" (null).</summary>
+    public List<SecurityRole> LiveRoles { get; } = [];
+
+    /// <summary>What each role holds live, by role id. <see cref="GetRolePrivilegesAsync"/> for an id not listed here throws, so a test fails if the code reads a role it should not.</summary>
+    public Dictionary<Guid, IReadOnlyList<RolePrivilege>> RolePrivileges { get; } = [];
+
+    /// <summary>Every role id <see cref="GetRolePrivilegesAsync"/> was asked about, in order.</summary>
+    public List<Guid> RolePrivilegeReads { get; } = [];
+
+    /// <summary>Every name <see cref="TryGetRoleByNameAsync"/> was asked for, in order.</summary>
+    public List<string> RoleNameLookups { get; } = [];
+
+    /// <summary>Every <see cref="AddRolePrivilegesAsync"/> call, in order.</summary>
+    public List<(Guid RoleId, IReadOnlyList<RolePrivilege> Privileges)> AddRolePrivilegesCalls { get; } = [];
+
+    /// <summary>Every <see cref="RemoveRolePrivilegesAsync"/> call, in order.</summary>
+    public List<(Guid RoleId, IReadOnlyList<PrivilegeIdentity> Privileges)> RemoveRolePrivilegesCalls { get; } = [];
+
+    public Task<IReadOnlyList<SecurityRole>?> TryGetSolutionRolesAsync(Uri environmentUrl, string accessToken, string solutionUniqueName, CancellationToken cancellationToken) =>
+        Task.FromResult(SolutionRoles is not null ? SolutionRoles(solutionUniqueName) : throw new NotImplementedException());
+
+    public Task<SecurityRole?> TryGetRoleByNameAsync(Uri environmentUrl, string accessToken, string roleName, CancellationToken cancellationToken)
+    {
+        RoleNameLookups.Add(roleName);
+        return Task.FromResult(LiveRoles.FirstOrDefault(r => string.Equals(r.Name, roleName, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    public Task<IReadOnlyList<RolePrivilege>> GetRolePrivilegesAsync(Uri environmentUrl, string accessToken, Guid roleId, CancellationToken cancellationToken)
+    {
+        RolePrivilegeReads.Add(roleId);
+        return Task.FromResult(RolePrivileges.TryGetValue(roleId, out var privileges)
+            ? privileges
+            : throw new InvalidOperationException($"The test did not expect the privileges of role {roleId} to be read."));
+    }
+
+    public Task AddRolePrivilegesAsync(Uri environmentUrl, string accessToken, Guid roleId, IReadOnlyList<RolePrivilege> privileges, CancellationToken cancellationToken)
+    {
+        AddRolePrivilegesCalls.Add((roleId, privileges));
+        return Task.CompletedTask;
+    }
+
+    public Task RemoveRolePrivilegesAsync(Uri environmentUrl, string accessToken, Guid roleId, IReadOnlyList<PrivilegeIdentity> privileges, CancellationToken cancellationToken)
+    {
+        RemoveRolePrivilegesCalls.Add((roleId, privileges));
+        return Task.CompletedTask;
+    }
 }
