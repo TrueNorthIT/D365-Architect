@@ -20,7 +20,7 @@ internal static class SolutionCommands
                 .WithExample("solution", "export", "--solution", "examplesolution");
 
             branch.AddCommand<ImportSolutionCommand>("import")
-                .WithDescription("Walks a folder previously written by 'solution export' and imports every table/view/form/choice file found, each with its own diff and confirmation.")
+                .WithDescription("Walks a folder previously written by 'solution export' and imports every table/view/form/choice file found: previews every file, prints only the diffs of the files that changed, and asks once ('Import N changes?'). If the folder contains tables that don't exist yet, it asks a second time, to create them first.")
                 .WithExample("solution", "import", "--input", "./examplesolution", "--solution", "examplesolution");
         });
     }

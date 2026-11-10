@@ -91,7 +91,7 @@ public sealed class ImportSolutionCommand(
         public string[] Tables { get; init; } = [];
 
         [CommandOption("-y|--yes")]
-        [Description("Skip the confirmation prompts and create/import every changed asset immediately.")]
+        [Description("Skip the confirmation prompt(s) — the 'Import N changes?' question, and the table-creation question when the folder contains tables that don't exist yet — and create/import every changed asset immediately.")]
         public bool Yes { get; init; }
 
         [CommandOption("--whatif")]
