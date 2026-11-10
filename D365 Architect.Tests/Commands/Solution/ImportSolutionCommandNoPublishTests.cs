@@ -46,6 +46,7 @@ public sealed class ImportSolutionCommandNoPublishTests : IDisposable
                 new ViewImportService(client),
                 new FormImportService(client, new FormJsonDefinitionReader()),
                 new GlobalChoiceImportService(client),
+                new SecurityImportService(client),
                 new ImportRunner(new FakeAuthenticationService())),
             new ImportSolutionCommand.Settings { Input = "unused", Solution = "TNCore", Yes = true, NoPublish = noPublish });
 

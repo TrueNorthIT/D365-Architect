@@ -28,6 +28,8 @@ public sealed class ConfigureVsCodeCommand : Command<ConfigureVsCodeCommand.Sett
         ("*.view.yml", "view.schema.json"),
         ("*.form.yml", "form.schema.json"),
         ("*.choice.yml", "choice.schema.json"),
+        ("*.security.yml", "security.schema.json"),
+        ("*.role.yml", "role.schema.json"),
     ];
 
     private static readonly JsonDocumentOptions ParseOptions = new()
@@ -111,7 +113,7 @@ public sealed class ConfigureVsCodeCommand : Command<ConfigureVsCodeCommand.Sett
 
         // Clear out any existing mapping — under some other URL, or a local
         // "./schema/..." path from a repo checkout — that already owns one
-        // of our three glob patterns, so switching --release/--pre-release
+        // of our glob patterns, so switching --release/--pre-release
         // (or re-running this after copying settings.json out of the repo
         // itself) doesn't leave a stale, conflicting duplicate behind. Only
         // handles the plain-string form of a yaml.schemas value; the
@@ -134,7 +136,7 @@ public sealed class ConfigureVsCodeCommand : Command<ConfigureVsCodeCommand.Sett
 
         File.WriteAllText(settingsPath, root.ToJsonString(WriteOptions));
 
-        AnsiConsole.MarkupLine($"[green]Wrote[/] {settingsPath} — *.table.yml/*.view.yml/*.form.yml/*.choice.yml now validate against the [bold]{branch}[/] branch's schemas.");
+        AnsiConsole.MarkupLine($"[green]Wrote[/] {settingsPath} — *.table.yml/*.view.yml/*.form.yml/*.choice.yml/*.security.yml/*.role.yml now validate against the [bold]{branch}[/] branch's schemas.");
         if (fileExisted)
         {
             AnsiConsole.MarkupLine("[grey]Note: any comments in the existing settings.json were not preserved.[/]");

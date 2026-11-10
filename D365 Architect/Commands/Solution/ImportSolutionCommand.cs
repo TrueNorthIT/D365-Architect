@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using D365Architect.Commands.Choice;
 using D365Architect.Commands.Form;
+using D365Architect.Commands.Security;
 using D365Architect.Commands.Table;
 using D365Architect.Commands.View;
 using D365Architect.Services.Authentication;
@@ -24,7 +25,8 @@ namespace D365Architect.Commands.Solution;
 /// transaction — see <see cref="StepRunner.CreateTablesAsync"/>. Then
 /// everything is previewed in the same order `solution export` would have
 /// written it (choices first, then each table folder's own table, then its
-/// views, then its forms). Each of those previews reads live state afresh,
+/// views, then its forms, then its security file; then the role files in
+/// <c>roles/</c>). Each of those previews reads live state afresh,
 /// so it sees the tables just created.
 ///
 /// The diffs of the files that changed are printed, then it asks once
@@ -53,7 +55,7 @@ namespace D365Architect.Commands.Solution;
 ///
 /// <c>--table</c> (repeatable) limits the run to those tables' files
 /// (folder names matched case-insensitively; a name with no folder is an
-/// error) and skips <c>choices.yml</c>.
+/// error) and skips <c>choices.yml</c> and the role files.
 ///
 /// A table that can't be created stops the whole run: the transaction is
 /// rolled back so none is created, no later stage runs, and the table
@@ -74,6 +76,7 @@ public sealed class ImportSolutionCommand(
     IViewImportService viewImportService,
     IFormImportService formImportService,
     IGlobalChoiceImportService globalChoiceImportService,
+    ISecurityImportService securityImportService,
     ImportRunner importRunner) : AsyncCommand<ImportSolutionCommand.Settings>
 {
     public sealed class Settings : CommandSettings
@@ -87,7 +90,7 @@ public sealed class ImportSolutionCommand(
         public required string Solution { get; init; }
 
         [CommandOption("-t|--table <LOGICAL_NAME>")]
-        [Description("Limit the import to this table's table/view/form files (folder name, case-insensitive). Repeat for several. Global choices are skipped. Errors if a name matches no table folder.")]
+        [Description("Limit the import to this table's table/view/form/security files (folder name, case-insensitive). Repeat for several. Global choices and role files are skipped. Errors if a name matches no table folder.")]
         public string[] Tables { get; init; } = [];
 
         [CommandOption("-y|--yes")]
@@ -111,7 +114,7 @@ public sealed class ImportSolutionCommand(
         public bool AllowSchemaViolations { get; init; }
 
         [CommandOption("--allow-removals")]
-        [Description("For every form import: remove what's on the live form but missing from the YAML (and not just moved), instead of keeping it.")]
+        [Description("For every form import: remove what's on the live form but missing from the YAML (and not just moved), instead of keeping it. For every security and role file: remove a privilege the role holds live but the file leaves out or sets to None, instead of keeping it.")]
         public bool AllowRemovals { get; init; }
 
         [CommandOption("--allow-unexpected")]
@@ -141,7 +144,7 @@ public sealed class ImportSolutionCommand(
         {
             try
             {
-                onlyTables = SolutionTableFilter.Select(Directory.GetDirectories(settings.Input).Select(Path.GetFileName)!, settings.Tables, $"under '{settings.Input}'");
+                onlyTables = SolutionTableFilter.Select(SolutionImportOrchestrator.TableDirectories(settings.Input).Select(Path.GetFileName)!, settings.Tables, $"under '{settings.Input}'");
             }
             catch (UnknownTableException ex)
             {
@@ -161,7 +164,7 @@ public sealed class ImportSolutionCommand(
 
         if (result.StoppedAtAssetPath is { } stoppedAt)
         {
-            ErrorConsole.Print($"Stopped: creating the tables failed at '{stoppedAt}', so none was created and no choices, columns, views or forms were imported.");
+            ErrorConsole.Print($"Stopped: creating the tables failed at '{stoppedAt}', so none was created and no choices, columns, views, forms or security were imported.");
             return 1;
         }
 
@@ -169,11 +172,11 @@ public sealed class ImportSolutionCommand(
         {
             if (limitedToTables)
             {
-                ErrorConsole.Warn($"The selected table folder(s) under '{settings.Input}' contain no *.table.yml, *.view.yml or *.form.yml files — nothing to import.");
+                ErrorConsole.Warn($"The selected table folder(s) under '{settings.Input}' contain no *.table.yml, *.view.yml, *.form.yml or *.security.yml files — nothing to import.");
             }
             else
             {
-                ErrorConsole.Warn($"No choices.yml, or table sub-folders containing *.table.yml/*.view.yml/*.form.yml files, found under '{settings.Input}' — nothing to import.");
+                ErrorConsole.Warn($"No choices.yml, roles/*.role.yml, or table sub-folders containing *.table.yml/*.view.yml/*.form.yml/*.security.yml files, found under '{settings.Input}' — nothing to import.");
             }
 
             return 0;
@@ -198,6 +201,10 @@ public sealed class ImportSolutionCommand(
             new ImportViewCommand.Settings { Input = assetPath, Yes = settings.Yes, WhatIf = settings.WhatIf, NoPublish = settings.NoPublish, Solution = settings.Solution }, printUnchanged, cancellationToken),
         SolutionImportStage.ImportForm => new ImportFormCommand(formImportService, importRunner).PreviewAsync(
             new ImportFormCommand.Settings { Input = assetPath, Yes = settings.Yes, WhatIf = settings.WhatIf, NoPublish = settings.NoPublish, Solution = settings.Solution, AllowSchemaViolations = settings.AllowSchemaViolations, AllowRemovals = settings.AllowRemovals, AllowUnexpected = settings.AllowUnexpected }, printUnchanged, cancellationToken),
+        SolutionImportStage.ImportSecurity => new SecurityFilePreviewer(securityImportService, importRunner.GetContextAsync).PreviewAsync(
+            assetPath, SecurityFileKind.TableSecurity, settings.Solution, settings.AllowRemovals, printUnchanged, cancellationToken),
+        SolutionImportStage.ImportRole => new SecurityFilePreviewer(securityImportService, importRunner.GetContextAsync).PreviewAsync(
+            assetPath, SecurityFileKind.Role, settings.Solution, settings.AllowRemovals, printUnchanged, cancellationToken),
         _ => throw new ArgumentOutOfRangeException(nameof(stage), stage, null),
     };
 

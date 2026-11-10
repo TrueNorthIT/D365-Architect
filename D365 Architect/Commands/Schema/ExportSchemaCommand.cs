@@ -9,7 +9,7 @@ using Spectre.Console.Cli;
 namespace D365Architect.Commands.Schema;
 
 /// <summary>
-/// `d365architect schema export [--for table|view] [--output schema/table.schema.json]`
+/// `d365architect schema export [--for table|view|form|choice|security|role] [--output schema/table.schema.json]`
 /// Writes the JSON Schema for one of this tool's curated YAML shapes to
 /// disk, generated straight from <see cref="YamlSchemaGenerator"/> — no live
 /// environment or sign-in needed, purely reflection over this tool's own model.
@@ -46,6 +46,10 @@ public sealed class ExportSchemaCommand : Command<ExportSchemaCommand.Settings>
             $"Declarative YAML shape for a Dynamics view, produced by `d365architect view export`. {RoundTripContract}", "view.schema.json"),
         ["form"] = new AssetType(typeof(FormDefinition), "D365 Architect form definition",
             $"Declarative YAML shape for a Dynamics form, produced by `d365architect form export`. {RoundTripContract}", "form.schema.json"),
+        ["security"] = new AssetType(typeof(TableSecurityDefinition), "D365 Architect table security definition",
+            "Declarative YAML shape for who can do what to one Dynamics table: each role of the solution that holds any privilege on it, by name, with all eight privileges at their access level (None = not held). Produced by `d365architect security export` and `solution export`.", "security.schema.json"),
+        ["role"] = new AssetType(typeof(RoleDefinition), "D365 Architect security role definition",
+            "Declarative YAML shape for one security role's privileges that no table security file covers: its non-table privileges by platform name, and its privileges on tables outside the solution. Only privileges the role holds are listed; a privilege left out is not held. Produced by `d365architect security export` and `solution export`.", "role.schema.json"),
         ["choice"] = new AssetType(typeof(IReadOnlyList<GlobalChoiceDefinition>), "D365 Architect global choice list",
             $"Declarative YAML shape for a list of Dynamics global choices, produced by `d365architect choice export`. {RoundTripContract}", "choice.schema.json"),
     };
@@ -53,7 +57,7 @@ public sealed class ExportSchemaCommand : Command<ExportSchemaCommand.Settings>
     public sealed class Settings : CommandSettings
     {
         [CommandOption("-f|--for <ASSET_TYPE>")]
-        [Description("Which asset type's YAML shape to generate a schema for: 'table', 'view', 'form', or 'choice'.")]
+        [Description("Which asset type's YAML shape to generate a schema for: 'table', 'view', 'form', 'choice', 'security' or 'role'.")]
         public string For { get; init; } = "table";
 
         [CommandOption("-o|--output <PATH>")]
@@ -65,7 +69,7 @@ public sealed class ExportSchemaCommand : Command<ExportSchemaCommand.Settings>
     {
         if (!AssetTypes.TryGetValue(settings.For, out var assetType))
         {
-            ErrorConsole.Print($"Unknown asset type '{settings.For}'. Expected 'table', 'view', 'form', or 'choice'.");
+            ErrorConsole.Print($"Unknown asset type '{settings.For}'. Expected 'table', 'view', 'form', 'choice', 'security' or 'role'.");
             return 1;
         }
 

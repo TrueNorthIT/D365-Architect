@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using D365Architect.Commands.Security;
 using D365Architect.Services.Authentication;
 using D365Architect.Services.Conversion;
 using D365Architect.Services.Dataverse;
@@ -19,7 +20,10 @@ namespace D365Architect.Commands.Solution;
 /// root for every global choice the solution customizes (omitted entirely
 /// when it customizes none) — since a global choice isn't scoped to any one
 /// table, the same reason <see cref="IGlobalChoiceExportService"/> is
-/// already one file, not one per choice.
+/// already one file, not one per choice. Each table folder also gets the
+/// table's <c>*.security.yml</c> when a role of the solution holds a privilege
+/// on it, and <c>roles/</c> at the root holds one <c>*.role.yml</c> per role
+/// of the solution (see <see cref="ISecurityExportService"/>).
 ///
 /// Which tables to export is discovered from the solution itself (its
 /// Entity solution components), not passed in — unlike `table export`/`view
@@ -42,7 +46,7 @@ public sealed class ExportSolutionCommand(IAuthenticationService authenticationS
         public string? Output { get; init; }
 
         [CommandOption("-t|--table <LOGICAL_NAME>")]
-        [Description("Limit the export to this table (logical name, case-insensitive). Repeat for several. Only those tables' table/view/form files are written; global choices are skipped. Errors if a name matches no table in the solution.")]
+        [Description("Limit the export to this table (logical name, case-insensitive). Repeat for several. Only those tables' table/view/form/security files are written; global choices and role files are skipped. Errors if a name matches no table in the solution.")]
         public string[] Tables { get; init; } = [];
     }
 
@@ -67,6 +71,7 @@ public sealed class ExportSolutionCommand(IAuthenticationService authenticationS
 
             var viewCount = 0;
             var formCount = 0;
+            var securityCount = 0;
 
             foreach (var entity in result.Entities)
             {
@@ -92,9 +97,19 @@ public sealed class ExportSolutionCommand(IAuthenticationService authenticationS
                     AnsiConsole.MarkupLine($"[green]Exported.[/] Wrote {formPath}");
                     formCount++;
                 }
+
+                if (entity.SecurityYaml is not null)
+                {
+                    var securityPath = Path.Combine(entityDirectory, $"{entity.EntityLogicalName}.security.yml");
+                    await File.WriteAllTextAsync(securityPath, entity.SecurityYaml, cancellationToken);
+                    AnsiConsole.MarkupLine($"[green]Exported.[/] Wrote {securityPath}");
+                    securityCount++;
+                }
             }
 
-            AnsiConsole.MarkupLine($"[green]Done.[/] Exported {result.Entities.Count} table(s), {viewCount} view(s), {formCount} form(s) to {solutionDirectory}");
+            await ExportSecurityCommand.WriteRoleFilesAsync(solutionDirectory, result.Roles, cancellationToken);
+
+            AnsiConsole.MarkupLine($"[green]Done.[/] Exported {result.Entities.Count} table(s), {viewCount} view(s), {formCount} form(s), {securityCount} table security file(s), {result.Roles?.Count ?? 0} role file(s) to {solutionDirectory}");
             return 0;
         }
         catch (AuthenticationRequiredException ex)

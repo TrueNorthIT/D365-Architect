@@ -61,6 +61,7 @@ public sealed class ImportSolutionCommandStepRunnerTests : IDisposable
             new ViewImportService(client),
             new FormImportService(client, new FormJsonDefinitionReader()),
             new GlobalChoiceImportService(client),
+            new SecurityImportService(client),
             new ImportRunner(new FakeAuthenticationService()));
 
     private static ImportSolutionCommand.Settings Settings(string input, bool yes, bool whatIf) =>
