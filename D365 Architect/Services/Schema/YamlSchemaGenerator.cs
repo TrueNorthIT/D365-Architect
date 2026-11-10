@@ -176,6 +176,14 @@ public static class YamlSchemaGenerator
             ["additionalProperties"] = BuildValueSchema(dictionaryValueType, xmlDocs, ancestors),
         },
         _ when type != typeof(string) && typeof(IEnumerable).IsAssignableFrom(type) => BuildArraySchema(type, xmlDocs, ancestors),
+        // A C# enum (e.g. SecurityAccessLevel) is written to YAML by its
+        // member name, so the schema allows exactly those names - which is
+        // what lets an editor flag a value that isn't one of them.
+        _ when type.IsEnum => new JsonObject
+        {
+            ["type"] = "string",
+            ["enum"] = new JsonArray(Enum.GetNames(type).Select(n => (JsonNode?)JsonValue.Create(n)).ToArray()),
+        },
         // A curated model type (e.g. FormDisplayCondition) used as a
         // single property rather than always inside a list — recurse
         // the same way BuildArraySchema does for its element type.

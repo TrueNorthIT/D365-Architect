@@ -85,6 +85,9 @@
     <Exec Command="dotnet &quot;$(TargetPath)&quot; schema export --for table" WorkingDirectory="$(MSBuildProjectDirectory)/.." />
     <Exec Command="dotnet &quot;$(TargetPath)&quot; schema export --for view" WorkingDirectory="$(MSBuildProjectDirectory)/.." />
     <Exec Command="dotnet &quot;$(TargetPath)&quot; schema export --for form" WorkingDirectory="$(MSBuildProjectDirectory)/.." />
+    <Exec Command="dotnet &quot;$(TargetPath)&quot; schema export --for choice" WorkingDirectory="$(MSBuildProjectDirectory)/.." />
+    <Exec Command="dotnet &quot;$(TargetPath)&quot; schema export --for security" WorkingDirectory="$(MSBuildProjectDirectory)/.." />
+    <Exec Command="dotnet &quot;$(TargetPath)&quot; schema export --for role" WorkingDirectory="$(MSBuildProjectDirectory)/.." />
   </Target>
 
 </Project>
