@@ -487,4 +487,68 @@ public sealed class FakeDataverseClient : IDataverseClient
         RemoveRolePrivilegesCalls.Add((roleId, privileges));
         return Task.CompletedTask;
     }
+
+    // ---- Privilege resolution ----
+
+    /// <summary>
+    /// Privileges several tables share, as the activity tables share <c>prvCreateActivity</c>: each (table, right) listed resolves to the same id.
+    /// Every other table privilege has its own id, derived from (table, right).
+    /// </summary>
+    public List<(Guid PrivilegeId, string Name, TablePrivilegeRef[] Tables)> SharedPrivileges { get; } = [];
+
+    /// <summary>Table privileges that don't exist in this environment (e.g. Assign or Share on an organisation-owned table): they resolve to null.</summary>
+    public HashSet<(string Table, TablePrivilege Right)> MissingTablePrivileges { get; } = [];
+
+    /// <summary>Non-table privilege names that don't exist in this environment: they resolve to null.</summary>
+    public HashSet<string> UnknownPrivilegeNames { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Answers <see cref="ResolvePrivilegesAsync"/>. A table privilege resolves to its shared group (see <see cref="SharedPrivileges"/>) or to an
+    /// id of its own. A name resolves to a shared group with that name, to the table privilege any live role privilege carries that name for
+    /// (as <see cref="SecurityFixtures.OnTable"/> names them, e.g. <c>prvWritetn_complaint</c>), or else to a non-table privilege.
+    /// </summary>
+    public Task<IReadOnlyList<ResolvedPrivilege?>> ResolvePrivilegesAsync(Uri environmentUrl, string accessToken, IReadOnlyList<PrivilegeIdentity> privileges, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ResolvedPrivilege?>>(privileges.Select(Resolve).ToList());
+
+    private ResolvedPrivilege? Resolve(PrivilegeIdentity privilege)
+    {
+        if (privilege is { TableLogicalName: { } table, TableRight: { } right })
+        {
+            return ResolveTable(table, right);
+        }
+
+        var name = privilege.PrivilegeName!;
+        var shared = SharedPrivileges.FirstOrDefault(s => string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase));
+        if (shared.Tables is not null)
+        {
+            return new ResolvedPrivilege(shared.PrivilegeId, shared.Name, shared.Tables);
+        }
+
+        var held = RolePrivileges.Values.SelectMany(p => p)
+            .FirstOrDefault(p => p.Privilege.IsTablePrivilege && string.Equals(p.Privilege.PrivilegeName, name, StringComparison.OrdinalIgnoreCase));
+        if (held is not null)
+        {
+            return ResolveTable(held.Privilege.TableLogicalName!, held.Privilege.TableRight!.Value);
+        }
+
+        return UnknownPrivilegeNames.Contains(name) ? null : new ResolvedPrivilege(StableId($"name|{name.ToLowerInvariant()}"), name, []);
+    }
+
+    private ResolvedPrivilege? ResolveTable(string table, TablePrivilege right)
+    {
+        var shared = SharedPrivileges.FirstOrDefault(s => s.Tables.Any(t => t.Right == right && string.Equals(t.Table, table, StringComparison.OrdinalIgnoreCase)));
+        if (shared.Tables is not null)
+        {
+            return new ResolvedPrivilege(shared.PrivilegeId, shared.Name, shared.Tables);
+        }
+
+        if (MissingTablePrivileges.Any(m => m.Right == right && string.Equals(m.Table, table, StringComparison.OrdinalIgnoreCase)))
+        {
+            return null;
+        }
+
+        return new ResolvedPrivilege(StableId($"table|{table.ToLowerInvariant()}|{right}"), $"prv{right}{table}", [new TablePrivilegeRef(table, right)]);
+    }
+
+    private static Guid StableId(string key) => new(System.Security.Cryptography.MD5.HashData(System.Text.Encoding.UTF8.GetBytes(key)));
 }
