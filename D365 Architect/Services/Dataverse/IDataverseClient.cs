@@ -379,7 +379,11 @@ public interface IDataverseClient
     /// <see cref="AttributeMetadataJsonBuilder.BuildLookupTargetAddBody"/>).
     /// See <see cref="AttributeMetadataJsonBuilder.BuildPolymorphicLookupCreateBody"/>
     /// for the <paramref name="body"/> shape.
-    /// <paramref name="solutionUniqueName"/>: see <see cref="CreateAttributeAsync"/>'s own doc comment — same gap, same fix.
+    /// <paramref name="solutionUniqueName"/>: the same gap as
+    /// <see cref="CreateAttributeAsync"/>'s, but this action ignores the
+    /// <c>MSCRM.SolutionUniqueName</c> header, so the name is sent as the
+    /// action's own <c>SolutionUniqueName</c> body parameter instead (on a
+    /// copy of <paramref name="body"/>; the caller's object isn't changed).
     /// </summary>
     Task CreatePolymorphicLookupAttributeAsync(Uri environmentUrl, string accessToken, JsonObject body, string? solutionUniqueName, CancellationToken cancellationToken);
 

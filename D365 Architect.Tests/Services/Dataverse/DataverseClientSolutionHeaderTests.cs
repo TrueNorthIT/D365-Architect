@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.Json.Nodes;
 using D365Architect.Services.Dataverse;
 using Xunit;
 
@@ -26,10 +27,13 @@ public sealed class DataverseClientSolutionHeaderTests
     {
         public HttpRequestMessage? Request { get; private set; }
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        public string? RequestBody { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Request = request;
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+            RequestBody = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
+            return new HttpResponseMessage(HttpStatusCode.OK);
         }
     }
 
@@ -82,6 +86,36 @@ public sealed class DataverseClientSolutionHeaderTests
         Assert.Equal("JCTest", Assert.Single(values!));
     }
 
+    // ---- CreatePolymorphicLookupAttribute ignores the header (confirmed
+    // live), so the solution goes in the body as the action's own
+    // SolutionUniqueName parameter instead. ----
+
+    [Fact]
+    public async Task CreatePolymorphicLookupAttributeAsync_WithSolutionUniqueName_SendsItInTheBodyNotAsAHeader()
+    {
+        var (client, handler) = CreateClient();
+        var body = new JsonObject { ["Lookup"] = new JsonObject() };
+
+        await client.CreatePolymorphicLookupAttributeAsync(new Uri("https://example.crm.dynamics.com"), "token", body, "JCTest", CancellationToken.None);
+
+        var sent = JsonNode.Parse(handler.RequestBody!)!.AsObject();
+        Assert.Equal("JCTest", (string?)sent["SolutionUniqueName"]);
+        Assert.False(handler.Request!.Headers.Contains("MSCRM.SolutionUniqueName"));
+        Assert.False(body.ContainsKey("SolutionUniqueName"));
+    }
+
+    [Fact]
+    public async Task CreatePolymorphicLookupAttributeAsync_WithoutSolutionUniqueName_SendsNoSolutionParameter()
+    {
+        var (client, handler) = CreateClient();
+
+        await client.CreatePolymorphicLookupAttributeAsync(new Uri("https://example.crm.dynamics.com"), "token", new(), solutionUniqueName: null, CancellationToken.None);
+
+        var sent = JsonNode.Parse(handler.RequestBody!)!.AsObject();
+        Assert.False(sent.ContainsKey("SolutionUniqueName"));
+        Assert.False(handler.Request!.Headers.Contains("MSCRM.SolutionUniqueName"));
+    }
+
     // ---- The batched-changeset path: the header is hand-written into the
     // raw multipart request text, not set via HttpRequestMessage.Headers. ----
 
@@ -126,6 +160,19 @@ public sealed class DataverseClientSolutionHeaderTests
             [new DataverseWrite.CreateAttribute("tn_test", new(), "JCTest")], CancellationToken.None);
 
         Assert.Contains("MSCRM.SolutionUniqueName: JCTest", handler.RequestBody);
+    }
+
+    [Fact]
+    public async Task ExecuteTransactionAsync_CreatePolymorphicLookupAttributeWriteWithSolutionUniqueName_PutsItInTheBodyNotTheHeader()
+    {
+        var handler = new BatchCapturingHandler();
+        var client = new DataverseClient(new HttpClient(handler));
+
+        await client.ExecuteTransactionAsync(new Uri("https://example.crm.dynamics.com"), "token",
+            [new DataverseWrite.CreatePolymorphicLookupAttribute(new(), "JCTest")], CancellationToken.None);
+
+        Assert.Contains("\"SolutionUniqueName\":\"JCTest\"", handler.RequestBody);
+        Assert.DoesNotContain("MSCRM.SolutionUniqueName", handler.RequestBody);
     }
 
     [Fact]

@@ -312,7 +312,8 @@ listed twice. With exactly one target it's a plain lookup and also needs a
 (polymorphic) lookup, created through the `CreatePolymorphicLookupAttribute`
 action with one relationship per target; every relationship is named
 `{schemaName}_{target}`, as for `Customer`, so `relationshipSchemaName`
-isn't needed. You can *add* targets to an existing multi-table lookup: each
+isn't needed; with `--solution`, the column and all its relationships go
+into that solution. You can *add* targets to an existing multi-table lookup: each
 added target is its own `RelationshipDefinitions` POST naming the existing
 column, all of them apply in one import, and each new relationship goes
 into the solution when the import is scoped to one. Removing a target (even
