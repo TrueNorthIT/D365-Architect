@@ -38,13 +38,21 @@ internal sealed class SecurityFilePreviewer(ISecurityImportService securityImpor
     /// <param name="allowRemovals">Whether a privilege held live but missing from the file is removed (otherwise kept and reported).</param>
     /// <param name="printUnchanged">Whether to print a "No changes" line for a file that already matches live.</param>
     /// <param name="cancellationToken"></param>
-    public async Task<PreparedImport> PreviewAsync(string path, SecurityFileKind kind, string? solutionUniqueName, bool allowRemovals, bool printUnchanged, CancellationToken cancellationToken)
+    /// <param name="expectedTable">In a folder import, the table folder the file is in: its <c>table:</c> must match. Null for a single file.</param>
+    /// <param name="batch">Every security preview of this run, for the cross-file conflict check and so a shared privilege several files agree on is written once. Null for none.</param>
+    public async Task<PreparedImport> PreviewAsync(string path, SecurityFileKind kind, string? solutionUniqueName, bool allowRemovals, bool printUnchanged, CancellationToken cancellationToken, string? expectedTable = null, SecurityImportBatch? batch = null)
     {
         object? input = kind == SecurityFileKind.TableSecurity
             ? await YamlFileReader.TryReadAsync(path, "table security file", TableSecurityYamlDeserializer.FromYaml, cancellationToken)
             : await YamlFileReader.TryReadAsync(path, "role file", RoleYamlDeserializer.FromYaml, cancellationToken);
         if (input is null)
         {
+            return PreparedImport.Failed;
+        }
+
+        if (input is TableSecurityDefinition tableInput && expectedTable is not null && !string.Equals(tableInput.Table, expectedTable, StringComparison.OrdinalIgnoreCase))
+        {
+            ErrorConsole.Print($"'{path}' says table '{tableInput.Table}' but is in the '{expectedTable}' folder: a table's security file must be in that table's folder.");
             return PreparedImport.Failed;
         }
 
@@ -72,6 +80,9 @@ internal sealed class SecurityFilePreviewer(ISecurityImportService securityImpor
         {
             return PreparedImport.Failed;
         }
+
+        // Recorded changed or not: an unchanged file still states levels another file of the run may disagree with.
+        batch?.Add(path, preview);
 
         var subject = kind == SecurityFileKind.TableSecurity ? $"'{preview.SubjectName}' (table security)" : $"role '{preview.SubjectName}'";
         if (preview.Roles.All(r => r.Changes.Count == 0))
@@ -104,14 +115,17 @@ internal sealed class SecurityFilePreviewer(ISecurityImportService securityImpor
             return PreparedImport.Unchanged with { PrintedOutput = true };
         }
 
-        return new PreparedImport(ImportOutcome.Changed, ct => ApplyAsync(auth, preview, subject, path, ct));
+        return new PreparedImport(ImportOutcome.Changed, ct => ApplyAsync(auth, preview, subject, path, batch, ct));
     }
 
-    private async Task<bool> ApplyAsync(AuthenticatedContext auth, SecurityImportPreview preview, string subject, string path, CancellationToken cancellationToken)
+    private async Task<bool> ApplyAsync(AuthenticatedContext auth, SecurityImportPreview planned, string subject, string path, SecurityImportBatch? batch, CancellationToken cancellationToken)
     {
+        // A privilege an earlier file of this run already wrote (at the same level: a different one was a conflict) isn't written twice.
+        var preview = batch?.Unwritten(planned) ?? planned;
         try
         {
             await AnsiConsole.Status().StartAsync("Importing...", async _ => await securityImportService.ApplyAsync(auth.EnvironmentUrl, auth.AccessToken, preview, cancellationToken));
+            batch?.MarkWritten(preview);
             var changes = preview.Roles.SelectMany(r => r.Changes).ToList();
             var set = changes.Count(c => c.Action == PrivilegeChangeAction.Set);
             var removed = changes.Count(c => c.Action == PrivilegeChangeAction.Remove);
@@ -133,12 +147,14 @@ internal sealed class SecurityFilePreviewer(ISecurityImportService securityImpor
                 ? $"{change.Privilege.TableLogicalName}.{CamelCase(change.Privilege.TableRight?.ToString() ?? "")}"
                 : change.Privilege.PrivilegeName ?? "").EscapeMarkup();
 
+        // A shared privilege changes every table it stands for: say which.
+        var also = change.AlsoChanges.Count > 0 ? $" (also changes: {string.Join(", ", change.AlsoChanges)})".EscapeMarkup() : "";
         return change.Action switch
         {
-            PrivilegeChangeAction.Set when kind == SecurityFileKind.Role && change.From == SecurityAccessLevel.None => $"[green]    + {name}: {change.To}[/]",
-            PrivilegeChangeAction.Set => $"[yellow]    ~ {name}: {change.From} → {change.To}[/]",
-            PrivilegeChangeAction.Remove => $"[red]    - {name}: {change.From} (remove)[/]",
-            _ => $"[grey]    ~ would remove {name}: {change.From} (kept)[/]",
+            PrivilegeChangeAction.Set when kind == SecurityFileKind.Role && change.From == SecurityAccessLevel.None => $"[green]    + {name}: {change.To}{also}[/]",
+            PrivilegeChangeAction.Set => $"[yellow]    ~ {name}: {change.From} → {change.To}{also}[/]",
+            PrivilegeChangeAction.Remove => $"[red]    - {name}: {change.From} (remove){also}[/]",
+            _ => $"[grey]    ~ would remove {name}: {change.From} (kept){also}[/]",
         };
     }
 
@@ -151,7 +167,8 @@ internal sealed class SecurityFilePreviewer(ISecurityImportService securityImpor
             case AuthenticationRequiredException auth:
                 ErrorConsole.Print(auth);
                 return true;
-            case RoleNotFoundException or SolutionNotFoundException or HttpRequestException or InvalidDataException:
+            case RoleNotFoundException or DuplicateRoleNameException or SolutionNotFoundException or HttpRequestException or InvalidDataException
+                or SecurityConflictException or SecurityImportRefusedException or PrivilegeNotFoundException:
                 ErrorConsole.Print($"'{path}' failed: {ex.Message}");
                 return true;
             default:

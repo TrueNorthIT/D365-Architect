@@ -7,6 +7,8 @@ namespace D365Architect.Services.Conversion;
 ///
 /// Only the solution's own roles are read (never another role, however much access it has), and each table privilege is reported in exactly
 /// one place: a table in the solution in that table's file, any other table in the role's file.
+/// A privilege one id shares between a table in the solution and tables outside it (the activity tables share <c>prvCreateActivity</c>) is
+/// stated only in the solution table's file.
 ///
 /// Filters (<c>tables</c>, <c>roles</c>; null or empty means "not given"):
 /// neither given = every table file and every role file; only <c>tables</c> = just those tables' files and NO role files;

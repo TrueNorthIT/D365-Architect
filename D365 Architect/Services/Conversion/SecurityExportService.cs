@@ -57,13 +57,32 @@ public sealed class SecurityExportService(IDataverseClient dataverseClient) : IS
             var usedStems = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var role in selectedRoles)
             {
-                var definition = ToRoleDefinition(role.Name, held[role.RoleId], inSolution);
+                var outside = await WithoutPrivilegesSharedWithSolutionTablesAsync(environmentUrl, accessToken, held[role.RoleId], inSolution, cancellationToken);
+                var definition = ToRoleDefinition(role.Name, outside, inSolution);
                 var stem = AssetFileNaming.MakeUnique(AssetFileNaming.Slugify(role.Name), usedStems);
                 roleFiles.Add(new ExportedRole(stem, role.Name, RoleYamlSerializer.ToYaml(definition)));
             }
         }
 
         return new SecurityExportResult(tableFiles, roleFiles);
+    }
+
+    /// <summary>
+    /// The role's privileges without those on outside tables that one id shares with a table of the solution (the activity tables share
+    /// <c>prvCreateActivity</c>): that privilege is stated once, in the solution table's security file, never again in the role file.
+    /// </summary>
+    private async Task<IReadOnlyList<RolePrivilege>> WithoutPrivilegesSharedWithSolutionTablesAsync(Uri environmentUrl, string accessToken, IReadOnlyList<RolePrivilege> privileges, HashSet<string> inSolution, CancellationToken cancellationToken)
+    {
+        var outsideTable = privileges.Where(p => p.Privilege.IsTablePrivilege && !inSolution.Contains(p.Privilege.TableLogicalName!)).ToList();
+        if (outsideTable.Count == 0)
+        {
+            return privileges;
+        }
+
+        var resolved = await dataverseClient.ResolvePrivilegesAsync(environmentUrl, accessToken,
+            outsideTable.Select(p => PrivilegeIdentity.ForTable(p.Privilege.TableLogicalName!, p.Privilege.TableRight!.Value)).ToList(), cancellationToken);
+        var shared = outsideTable.Where((_, i) => resolved[i]?.Tables.Any(t => inSolution.Contains(t.Table)) == true).ToHashSet();
+        return privileges.Where(p => !shared.Contains(p)).ToList();
     }
 
     /// <summary>The solution's roles named in <paramref name="requested"/> (case-insensitive). Throws <see cref="UnknownRoleException"/> naming every requested role that is not one of them.</summary>

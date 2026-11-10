@@ -17,7 +17,15 @@ namespace D365Architect.Services.Conversion;
 /// role's privileges outside the solution: it compares its non-table privileges (every one the role holds live that the file doesn't list is a
 /// removal candidate) and the privileges on EVERY table that is not one of the solution's tables (a table held live but absent from <c>tables:</c>,
 /// or a privilege absent within a listed table, is a removal candidate). A privilege on one of the solution's own tables belongs to that table's
-/// file: a role file never reports or removes it, even with <c>allowRemovals</c>.
+/// file: a role file never reports or removes it, even with <c>allowRemovals</c>, and that includes a privilege one id shares between a
+/// solution table and an outside one (the activity tables share <c>prvCreateActivity</c>): a role-file entry that would change it is refused
+/// (<see cref="SecurityImportRefusedException"/>), and leaving it out never makes it a removal candidate.
+///
+/// Every privilege is resolved during the preview (<see cref="IDataverseClient.ResolvePrivilegesAsync"/>), so one that doesn't exist
+/// (<see cref="PrivilegeNotFoundException"/>) fails the file before anything is written. A shared privilege is one unit: a change names every
+/// other table it changes (<see cref="PrivilegeChange.AlsoChanges"/>), entries covering it are compared by id, and entries of one file that
+/// ask for different levels for the same role and privilege fail it (<see cref="SecurityConflictException"/>). The same check across every
+/// file of a run is <see cref="SecurityImportBatch"/>; agreeing entries are one write.
 /// </summary>
 public interface ISecurityImportService
 {
@@ -55,7 +63,14 @@ public enum PrivilegeChangeAction
 /// <param name="From">The access level the role holds live (<see cref="SecurityAccessLevel.None"/> when it doesn't hold it).</param>
 /// <param name="To">The access level the file asks for (<see cref="SecurityAccessLevel.None"/> when the file leaves it out or says None).</param>
 /// <param name="Action">What the import does about the difference.</param>
-public sealed record PrivilegeChange(PrivilegeIdentity Privilege, SecurityAccessLevel From, SecurityAccessLevel To, PrivilegeChangeAction Action);
+public sealed record PrivilegeChange(PrivilegeIdentity Privilege, SecurityAccessLevel From, SecurityAccessLevel To, PrivilegeChangeAction Action)
+{
+    /// <summary>The privilege's id in this environment (resolved during the preview).</summary>
+    public Guid PrivilegeId { get; init; }
+
+    /// <summary>For a shared privilege: every other table it stands for, which the change changes too (sorted). Empty otherwise.</summary>
+    public IReadOnlyList<string> AlsoChanges { get; init; } = [];
+}
 
 /// <param name="RoleName">The role's name, as in the file.</param>
 /// <param name="RoleId">The role's id in THIS environment, found by name.</param>
@@ -64,6 +79,12 @@ public sealed record RoleSecurityPlan(string RoleName, Guid RoleId, IReadOnlyLis
 {
     /// <summary>True when there is at least one write to make (a Set or a Remove). A kept privilege is not a write.</summary>
     public bool HasWrites => Changes.Any(c => c.Action is PrivilegeChangeAction.Set or PrivilegeChangeAction.Remove);
+
+    /// <summary>
+    /// Every privilege the file states a level for on this role, changed or not, by id: what the cross-file check
+    /// (<see cref="SecurityImportConflicts"/>) compares, since two files can disagree about a privilege even when only one of them changes it.
+    /// </summary>
+    public IReadOnlyList<CoveredPrivilege> Covered { get; init; } = [];
 }
 
 /// <param name="SubjectName">What was previewed: the table's logical name for a table file, the role's name for a role file.</param>
@@ -73,3 +94,9 @@ public sealed record SecurityImportPreview(string SubjectName, IReadOnlyList<Rol
     /// <summary>True when there is at least one write to make, so the file is "changed". A preview with only kept privileges is not.</summary>
     public bool HasChanges => Roles.Any(r => r.HasWrites);
 }
+
+/// <param name="PrivilegeId">The privilege's id in this environment.</param>
+/// <param name="PrivilegeName">Its platform name, e.g. "prvCreateActivity".</param>
+/// <param name="Entry">Where the file states it, e.g. "Create on tn_complaint" or "prvExportToExcel".</param>
+/// <param name="Desired">The level the file asks for (<see cref="SecurityAccessLevel.None"/> for not held).</param>
+public sealed record CoveredPrivilege(Guid PrivilegeId, string PrivilegeName, string Entry, SecurityAccessLevel Desired);

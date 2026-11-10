@@ -191,7 +191,7 @@ public sealed class ImportSolutionCommand(
     /// the single place a stage maps to a command so the orchestrator (the
     /// ordering) and the per-asset commands (the safety) stay separate.
     /// </summary>
-    private Task<PreparedImport> PreviewStepAsync(Settings settings, SolutionImportStage stage, string assetPath, bool printUnchanged, IReadOnlySet<string> pendingChoiceNames, CancellationToken cancellationToken) => stage switch
+    private Task<PreparedImport> PreviewStepAsync(Settings settings, SolutionImportStage stage, string assetPath, bool printUnchanged, IReadOnlySet<string> pendingChoiceNames, SecurityImportBatch securityBatch, CancellationToken cancellationToken) => stage switch
     {
         SolutionImportStage.ImportChoices => new ImportChoiceCommand(globalChoiceImportService, importRunner).PreviewAsync(
             new ImportChoiceCommand.Settings { Input = assetPath, Yes = settings.Yes, WhatIf = settings.WhatIf, NoPublish = settings.NoPublish, Solution = settings.Solution }, printUnchanged, cancellationToken),
@@ -202,9 +202,9 @@ public sealed class ImportSolutionCommand(
         SolutionImportStage.ImportForm => new ImportFormCommand(formImportService, importRunner).PreviewAsync(
             new ImportFormCommand.Settings { Input = assetPath, Yes = settings.Yes, WhatIf = settings.WhatIf, NoPublish = settings.NoPublish, Solution = settings.Solution, AllowSchemaViolations = settings.AllowSchemaViolations, AllowRemovals = settings.AllowRemovals, AllowUnexpected = settings.AllowUnexpected }, printUnchanged, cancellationToken),
         SolutionImportStage.ImportSecurity => new SecurityFilePreviewer(securityImportService, importRunner.GetContextAsync).PreviewAsync(
-            assetPath, SecurityFileKind.TableSecurity, settings.Solution, settings.AllowRemovals, printUnchanged, cancellationToken),
+            assetPath, SecurityFileKind.TableSecurity, settings.Solution, settings.AllowRemovals, printUnchanged, cancellationToken, expectedTable: Path.GetFileName(Path.GetDirectoryName(assetPath)), batch: securityBatch),
         SolutionImportStage.ImportRole => new SecurityFilePreviewer(securityImportService, importRunner.GetContextAsync).PreviewAsync(
-            assetPath, SecurityFileKind.Role, settings.Solution, settings.AllowRemovals, printUnchanged, cancellationToken),
+            assetPath, SecurityFileKind.Role, settings.Solution, settings.AllowRemovals, printUnchanged, cancellationToken, batch: securityBatch),
         _ => throw new ArgumentOutOfRangeException(nameof(stage), stage, null),
     };
 
@@ -320,6 +320,7 @@ public sealed class ImportSolutionCommand(
         private readonly ImportSolutionCommand _command;
         private readonly Settings _settings;
         private readonly SolutionImportFlow _flow;
+        private readonly SecurityImportBatch _securityBatch = new();
         private readonly IReadOnlySet<string> _pendingChoiceNames;
 
         public StepRunner(ImportSolutionCommand command, Settings settings)
@@ -333,15 +334,19 @@ public sealed class ImportSolutionCommand(
         public async Task<SolutionImportStepOutcome> RunAsync(SolutionImportStage stage, string assetPath, CancellationToken cancellationToken)
         {
             var item = new SolutionImportItem(assetPath, (printUnchanged, ct) =>
-                _command.PreviewStepAsync(_settings, stage, assetPath, printUnchanged, _pendingChoiceNames, ct));
+                _command.PreviewStepAsync(_settings, stage, assetPath, printUnchanged, _pendingChoiceNames, _securityBatch, ct));
             return await _flow.PreviewAsync(item, cancellationToken) == ImportOutcome.Failed
                 ? SolutionImportStepOutcome.Failed
                 : SolutionImportStepOutcome.Succeeded;
         }
 
         /// <summary>Asks once (unless <c>--yes</c>; never under <c>--whatif</c>) and applies every change <see cref="RunAsync"/> previewed. Returns the exit code.</summary>
-        public Task<int> ConfirmAndApplyAsync(CancellationToken cancellationToken) =>
-            _flow.ConfirmAndApplyAsync(_settings.Yes, _settings.WhatIf, confirm: null, cancellationToken);
+        public Task<int> ConfirmAndApplyAsync(CancellationToken cancellationToken)
+        {
+            // The cross-file step: security and role files disagreeing about one privilege fail before anything is confirmed.
+            SecurityConflictCheck.Apply(_securityBatch, _flow);
+            return _flow.ConfirmAndApplyAsync(_settings.Yes, _settings.WhatIf, confirm: null, cancellationToken);
+        }
 
         public Task<SolutionTableCreateResult> CreateTablesAsync(IReadOnlyList<string> tableAssetPaths, CancellationToken cancellationToken) =>
             _command.CreateTablesAsync(_settings, tableAssetPaths, cancellationToken);

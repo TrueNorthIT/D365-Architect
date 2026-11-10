@@ -125,11 +125,18 @@ public sealed class ImportSecurityCommand(IAuthenticationService authenticationS
 
         var previewer = new SecurityFilePreviewer(securityImportService, authenticationService.GetCurrentContextAsync);
         var printUnchanged = isFile || settings.Verbose;
-        var items = files
-            .Select(f => new SolutionImportItem(f.Path, (_, ct) => previewer.PreviewAsync(f.Path, f.Kind, settings.Solution, settings.AllowRemovals, printUnchanged, ct)))
-            .ToList();
+        var batch = new SecurityImportBatch();
+        var flow = new SolutionImportFlow(printUnchanged);
+        foreach (var (path, kind) in files)
+        {
+            // In a folder, a table's security file must be in that table's folder.
+            var expectedTable = !isFile && kind == SecurityFileKind.TableSecurity ? Path.GetFileName(Path.GetDirectoryName(path)) : null;
+            await flow.PreviewAsync(new SolutionImportItem(path, (_, ct) => previewer.PreviewAsync(path, kind, settings.Solution, settings.AllowRemovals, printUnchanged, ct, expectedTable, batch)), cancellationToken);
+        }
 
-        return await SolutionImportFlow.RunAsync(items, settings.Yes, settings.WhatIf, verbose: printUnchanged, confirm: null, cancellationToken);
+        // The cross-file step: files disagreeing about one privilege (a shared one included) fail before anything is confirmed.
+        SecurityConflictCheck.Apply(batch, flow);
+        return await flow.ConfirmAndApplyAsync(settings.Yes, settings.WhatIf, confirm: null, cancellationToken);
     }
 
     /// <summary>
