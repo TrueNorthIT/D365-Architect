@@ -366,6 +366,28 @@ public interface IDataverseClient
     Task CreateCustomerRelationshipsAsync(Uri environmentUrl, string accessToken, JsonObject body, string? solutionUniqueName, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Creates a brand-new multi-table (polymorphic) Lookup — one with more
+    /// than one target table — via the dedicated
+    /// <c>CreatePolymorphicLookupAttribute</c> action (one
+    /// <c>OneToManyRelationships</c> entry per target, sharing a single
+    /// <c>Lookup</c>). This is what <c>CreateOneToManyRelationshipAsync</c>
+    /// (a single, standalone relationship) and
+    /// <c>CreateCustomerRelationshipsAsync</c> (Customer's own fixed
+    /// account/contact pair) each deliberately don't cover. Adding a target
+    /// to a multi-table Lookup that already exists is an ordinary
+    /// <see cref="CreateOneToManyRelationshipAsync"/> instead (see
+    /// <see cref="AttributeMetadataJsonBuilder.BuildLookupTargetAddBody"/>).
+    /// See <see cref="AttributeMetadataJsonBuilder.BuildPolymorphicLookupCreateBody"/>
+    /// for the <paramref name="body"/> shape.
+    /// <paramref name="solutionUniqueName"/>: the same gap as
+    /// <see cref="CreateAttributeAsync"/>'s, but this action ignores the
+    /// <c>MSCRM.SolutionUniqueName</c> header, so the name is sent as the
+    /// action's own <c>SolutionUniqueName</c> body parameter instead (on a
+    /// copy of <paramref name="body"/>; the caller's object isn't changed).
+    /// </summary>
+    Task CreatePolymorphicLookupAttributeAsync(Uri environmentUrl, string accessToken, JsonObject body, string? solutionUniqueName, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Adds one option to an existing local (never global — see
     /// `docs/yaml-conventions.md`) choice column, or Status column's
     /// status-reason set, via the <c>InsertOptionValue</c> action. Never

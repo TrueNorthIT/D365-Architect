@@ -1000,10 +1000,30 @@ needs the even more specific `CreateCustomerRelationships` action instead
 YAML shape for creating a brand-new plain `Lookup`: `relationshipSchemaName`
 (the relationship's own schema name — distinct from, and validated the same
 way as, the column's own `schemaName`; never inferred) plus exactly one
-`targets` entry. **A `targets` list with more than one entry is a
-"multi-table lookup"** — a materially more complex relationship shape
-Microsoft's own docs split into a separate article — and isn't supported for
-creation here; it's reported as `Invalid` with that reason. `Customer`
+`targets` entry.
+
+**A `targets` list with more than one entry is a "multi-table lookup"** — a
+materially more complex relationship shape Microsoft's own docs split into a
+separate article — and is created via the dedicated
+`CreatePolymorphicLookupAttribute` action instead of a plain
+`RelationshipDefinitions` POST (one `OneToManyRelationship` per target,
+sharing a single `ComplexLookupAttributeMetadata` `Lookup`, as in
+Microsoft's documented example). Its YAML shape is the column's
+`schemaName` plus the full `targets` list. Every target's relationship
+schema name is derived as `{schemaName}_{target}` — one rule for every
+target, the same convention Customer columns use for their fixed pair — so,
+as for Customer, `relationshipSchemaName` isn't needed and is ignored if
+present. `relationshipBehavior`, when given, applies to *every* generated
+relationship (there's no per-target override). A `targets` list naming the
+same table twice (compared case-insensitively) is rejected as `Invalid`,
+for a single-target or multi-table Lookup alike.
+`CreatePolymorphicLookupAttribute` ignores the `MSCRM.SolutionUniqueName`
+header (confirmed live: the column and its relationships were created
+outside the named solution, batched or not), so `--solution` is sent as the
+action's own `SolutionUniqueName` body parameter instead, as in Microsoft's
+example. That puts the column and every relationship into the solution
+(also confirmed live).
+`Customer`
 needs no `relationshipSchemaName` of its own: both of its relationship
 schema names are derived from the column's `schemaName` plus the fixed
 `account`/`contact` targets, and its `targets` must be exactly
@@ -1046,7 +1066,25 @@ Dataverse error rather than being caught locally first.
 **`targets` is immutable after creation** for all three types, checked
 before `AttributesMatch` alongside the existing `Type`/`SchemaName` checks —
 an attempted change comes back `Invalid` rather than being silently ignored
-or left for Dataverse's own API error to explain.
+or left for Dataverse's own API error to explain. The one supported
+exception is *adding* target tables to an existing **multi-table** Lookup,
+which Dataverse allows after creation. Each added target is an ordinary
+one-to-many relationship create (`POST RelationshipDefinitions`) whose
+`Lookup.SchemaName` matches the existing column, so Dataverse attaches the
+new relationship to that column (Microsoft's "Add a relationship to an
+existing multi-table lookup column"). Its relationship schema name is
+`{schemaName}_{target}`, the same rule as the targets the column was
+created with. Every added target is its own write, so all of them apply in
+one import; the import diff lists each one under the column with its
+relationship name. Like every other create, each new relationship is added
+to the solution when the import is scoped to one. **Removing** a target
+from an existing multi-table Lookup is `Invalid` — it's destructive
+(existing values pointing at the dropped table lose their lookup), the same
+policy as every other destructive change this tool refuses — and is
+reported even when other targets are being added in the same change (the
+whole change is then `Invalid`, and nothing is added). And a lookup can
+never be converted between single-target and multi-table (Dataverse can't
+do that conversion) — `Invalid`, with that reason.
 
 ### State and Status
 
@@ -1172,16 +1210,21 @@ real table, not just reasoned about:
 - **Creating a Picklist/MultiSelectPicklist with no `options` and no
   `globalOptionSetName`, both at once, or duplicate option `value`s** — see
   "Boolean and Choice" above.
-- **Creating a `Lookup` with no `relationshipSchemaName`, an invalid one,
-  more than one `targets` entry, or a `relationshipBehavior` that isn't
-  `Referential`/`ReferentialRestrictDelete`/`Parental`** — see "Lookup,
-  Customer, and Owner" above.
+- **Creating a `Lookup` with no `targets` entry, the same target listed
+  twice (case-insensitive), a `relationshipBehavior` that isn't
+  `Referential`/`ReferentialRestrictDelete`/`Parental`, or — for a
+  single-target Lookup — no `relationshipSchemaName` or an invalid one** —
+  see "Lookup, Customer, and Owner" above. (More than one `targets` entry
+  is *valid* — it's a multi-table lookup, which needs no
+  `relationshipSchemaName`.)
 - **Creating a `Customer` whose `targets` aren't exactly `["account",
   "contact"]`** — fixed by Dataverse for the type, not a maker choice.
 - **Attempting to create an `Owner`/`State`/`Status` column** — all three
   already exist automatically on every table.
 - **Changing `targets` on an existing `Lookup`/`Customer`/`Owner` column** —
-  immutable after creation, checked the same way as `Type`/`SchemaName`.
+  immutable after creation, checked the same way as `Type`/`SchemaName`;
+  the one exception is *adding* targets to an existing multi-table Lookup
+  without removing any (see "Lookup, Customer, and Owner" above).
 
 The MaxLength-ceiling and Precision-range checks above only fire when that
 specific value is actually being *changed* to something new — never when

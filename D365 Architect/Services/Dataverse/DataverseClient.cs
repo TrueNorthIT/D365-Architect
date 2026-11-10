@@ -639,6 +639,9 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
     public async Task CreateCustomerRelationshipsAsync(Uri environmentUrl, string accessToken, JsonObject body, string? solutionUniqueName, CancellationToken cancellationToken) =>
         await SendWriteAsync(environmentUrl, accessToken, new DataverseWrite.CreateCustomerRelationships(body, solutionUniqueName), cancellationToken);
 
+    public async Task CreatePolymorphicLookupAttributeAsync(Uri environmentUrl, string accessToken, JsonObject body, string? solutionUniqueName, CancellationToken cancellationToken) =>
+        await SendWriteAsync(environmentUrl, accessToken, new DataverseWrite.CreatePolymorphicLookupAttribute(body, solutionUniqueName), cancellationToken);
+
     public async Task InsertOptionValueAsync(Uri environmentUrl, string accessToken, JsonObject body, CancellationToken cancellationToken) =>
         await SendWriteAsync(environmentUrl, accessToken, new DataverseWrite.InsertOptionValue(body), cancellationToken);
 
@@ -777,6 +780,11 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         DataverseWrite.UpdateAttribute w => (HttpMethod.Put, $"EntityDefinitions(LogicalName='{Uri.EscapeDataString(w.EntityLogicalName)}')/Attributes(LogicalName='{Uri.EscapeDataString(w.AttributeLogicalName)}')", w.Metadata, MergeLabelsHeader),
         DataverseWrite.CreateOneToManyRelationship w => (HttpMethod.Post, "RelationshipDefinitions", w.Metadata, SolutionHeader(w.SolutionUniqueName)),
         DataverseWrite.CreateCustomerRelationships w => (HttpMethod.Post, "CreateCustomerRelationships", w.Body, SolutionHeader(w.SolutionUniqueName)),
+        // This action ignores the MSCRM.SolutionUniqueName header (confirmed live: the column and its
+        // relationships were created outside the named solution, batched or not), so the solution goes
+        // in the body as the action's SolutionUniqueName parameter, as in Microsoft Learn's example:
+        // https://learn.microsoft.com/power-apps/developer/data-platform/webapi/multitable-lookup
+        DataverseWrite.CreatePolymorphicLookupAttribute w => (HttpMethod.Post, "CreatePolymorphicLookupAttribute", WithSolutionUniqueNameParameter(w.Body, w.SolutionUniqueName), []),
         DataverseWrite.InsertOptionValue w => (HttpMethod.Post, "InsertOptionValue", w.Body, []),
         DataverseWrite.UpdateOptionValue w => (HttpMethod.Post, "UpdateOptionValue", w.Body, []),
         DataverseWrite.OrderOptions w => (HttpMethod.Post, "OrderOption", w.Body, []),
@@ -792,6 +800,26 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
 
     private static IReadOnlyList<(string Name, string Value)> SolutionHeader(string? solutionUniqueName) =>
         solutionUniqueName is null ? [] : [("MSCRM.SolutionUniqueName", solutionUniqueName)];
+
+    /// <summary>
+    /// A copy of an action's <paramref name="body"/> with its
+    /// <c>SolutionUniqueName</c> parameter set, for an action that takes the
+    /// solution as a parameter instead of honouring the
+    /// <c>MSCRM.SolutionUniqueName</c> header. It's a copy so the plan's own
+    /// body, which the import diff shows, is never changed. Null returns the
+    /// body unchanged.
+    /// </summary>
+    private static JsonObject WithSolutionUniqueNameParameter(JsonObject body, string? solutionUniqueName)
+    {
+        if (solutionUniqueName is null)
+        {
+            return body;
+        }
+
+        var copy = body.DeepClone().AsObject();
+        copy["SolutionUniqueName"] = solutionUniqueName;
+        return copy;
+    }
 
     /// <summary>
     /// Builds the raw <c>multipart/mixed</c> request text for
