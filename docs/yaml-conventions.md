@@ -1017,6 +1017,12 @@ present. `relationshipBehavior`, when given, applies to *every* generated
 relationship (there's no per-target override). A `targets` list naming the
 same table twice (compared case-insensitively) is rejected as `Invalid`,
 for a single-target or multi-table Lookup alike.
+`CreatePolymorphicLookupAttribute` ignores the `MSCRM.SolutionUniqueName`
+header (confirmed live: the column and its relationships were created
+outside the named solution, batched or not), so `--solution` is sent as the
+action's own `SolutionUniqueName` body parameter instead, as in Microsoft's
+example. That puts the column and every relationship into the solution
+(also confirmed live).
 `Customer`
 needs no `relationshipSchemaName` of its own: both of its relationship
 schema names are derived from the column's `schemaName` plus the fixed
