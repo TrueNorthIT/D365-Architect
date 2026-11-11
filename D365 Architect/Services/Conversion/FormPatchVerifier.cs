@@ -233,7 +233,7 @@ public static class FormPatchVerifier
 
         private void CompareArea(string name, IReadOnlyList<FormControl>? live, IReadOnlyList<FormControl>? yaml)
         {
-            if (!(live ?? []).Select(c => c.Id).SequenceEqual((yaml ?? []).Select(c => c.Id)))
+            if (!(live ?? []).Select(Layout).SequenceEqual((yaml ?? []).Select(Layout)))
             {
                 Areas.Add(name);
             }
@@ -266,9 +266,15 @@ public static class FormPatchVerifier
                 XNode.DeepEquals(FormXmlWriter.RenderColumnShell("", pair.First), FormXmlWriter.RenderColumnShell("", pair.Second))
                 && pair.First.Sections.Select(FormXmlWriter.SectionKey).SequenceEqual(pair.Second.Sections.Select(FormXmlWriter.SectionKey)));
 
+        // A changed span changes the section's layout, not just the control:
+        // the patcher may add empty rows below it so nothing sits under the
+        // span, and those shift every later row.
         private static bool SameSection(string key, FormSection live, FormSection yaml) =>
             XNode.DeepEquals(FormXmlWriter.RenderSectionShell(key, live), FormXmlWriter.RenderSectionShell(key, yaml))
-            && live.Controls.Select(c => c.Id).SequenceEqual(yaml.Controls.Select(c => c.Id));
+            && live.Controls.Select(Layout).SequenceEqual(yaml.Controls.Select(Layout));
+
+        private static (string Id, int RowSpan, int ColumnSpan) Layout(FormControl control) =>
+            (control.Id, control.RowSpan ?? 1, control.ColumnSpan ?? 1);
 
         private static bool SameControl(FormControl live, FormControl yaml)
         {
