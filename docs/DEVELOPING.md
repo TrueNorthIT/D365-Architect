@@ -635,7 +635,9 @@ is called out by name in its test's own doc comment or `[Fact]` name:
 A few tests run against a real Dataverse environment, to prove what the fakes
 can't (`TableCreateServiceLiveTests`: that `solution import`'s one-transaction
 table create really rolls back as one, names the failing table, and adds each
-table to the solution). They're marked `[LiveFact]` and
+table to the solution; `GlobalChoiceOptionShapeLiveTests`: that an option the
+tool creates exports with the same empty `Description`/`ExternalValue` as a
+maker-portal one). They're marked `[LiveFact]` and
 `[Trait("Category", "Live")]`, and are **off by default**: unless both
 environment variables below are set, a plain `dotnet test` reports them as
 skipped, so CI and everyone else stay green.
@@ -651,8 +653,8 @@ d365architect auth login --url https://yourorg.crm11.dynamics.com
 dotnet test "D365 Architect.Tests" --filter Category=Live --logger "trx;LogFileName=live.trx"
 ```
 
-Each test creates uniquely named `<prefix>_lt*` tables (and a temporary
-solution) and deletes them afterwards, pass or fail. Use **your own throwaway
+Each test creates uniquely named `<prefix>_lt*` tables or global choices (and
+a temporary solution) and deletes them afterwards, pass or fail. Use **your own throwaway
 environment only**, never a shared one. A table create takes 14-40 s, so
 expect a few minutes. When a change touches what they cover, attach the result
 summary (or the `live.trx` from `D365 Architect.Tests/TestResults/`) to the PR.
