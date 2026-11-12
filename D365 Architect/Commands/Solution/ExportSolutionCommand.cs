@@ -137,5 +137,10 @@ public sealed class ExportSolutionCommand(IAuthenticationService authenticationS
             ErrorConsole.Print(ex);
             return 1;
         }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            ErrorConsole.Print(ex);
+            return 1;
+        }
     }
 }

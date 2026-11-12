@@ -64,5 +64,10 @@ public sealed class ExportChoiceCommand(IAuthenticationService authenticationSer
             AnsiConsole.MarkupLine($"[red]{ex.Message.EscapeMarkup()}[/]");
             return 1;
         }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            ErrorConsole.Print(ex);
+            return 1;
+        }
     }
 }

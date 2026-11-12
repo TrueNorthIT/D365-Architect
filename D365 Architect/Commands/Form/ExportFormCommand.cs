@@ -114,6 +114,11 @@ public sealed class ExportFormCommand(IAuthenticationService authenticationServi
             ErrorConsole.Print(ex);
             return 1;
         }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            ErrorConsole.Print(ex);
+            return 1;
+        }
     }
 
     /// <summary>`--from-xml`: the whole export from a local file, never signing in.</summary>
@@ -134,6 +139,11 @@ public sealed class ExportFormCommand(IAuthenticationService authenticationServi
         catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException or InvalidDataException or System.Xml.XmlException)
         {
             ErrorConsole.Print($"Couldn't export the form from '{settings.FromXml}': {ex.Message}");
+            return 1;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            ErrorConsole.Print(ex);
             return 1;
         }
     }
