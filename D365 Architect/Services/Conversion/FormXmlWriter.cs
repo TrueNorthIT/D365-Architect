@@ -259,6 +259,19 @@ public static partial class FormXmlWriter
     /// alignment — schema-valid XML, so nothing caught it, just a form whose
     /// real field placement was corrupted on every rebuild.
     ///
+    /// A control with a <see cref="FormControl.RowSpan"/> of N also covers
+    /// its own grid column(s) in the N - 1 rows below it, and those rows are
+    /// written out as well: an empty list here, so an empty <c>&lt;row /&gt;</c>,
+    /// when nothing can go beside the span. That's what the form designer
+    /// writes, and it matters: a cell written into a covered position is
+    /// never rendered by the Unified Interface, with no error anywhere. A
+    /// covered row only takes controls in the free columns to the left of
+    /// its first covered column (see <see cref="RowCoverage.FreePrefix"/>),
+    /// so a cell is never in a covered position whether the cells of a row
+    /// are read as filling its free columns left to right or as sitting in
+    /// the column of their index. A span that runs past the last control
+    /// still gets its covered rows, as the designer writes them.
+    ///
     /// Still an approximation, not a full reconstruction: a row shorter than
     /// <paramref name="columns"/> purely because it originally had a blank
     /// layout-spacer cell (no <c>&lt;control&gt;</c> at all) is
@@ -273,43 +286,110 @@ public static partial class FormXmlWriter
     private static List<List<FormControl>> RegroupIntoRows(IReadOnlyList<FormControl> controls, int columns)
     {
         var rows = new List<List<FormControl>>();
+        var coverage = new RowCoverage(columns);
         var currentRow = new List<FormControl>();
         var currentWidth = 0;
+        var limit = coverage.FreePrefix;
+
+        void CloseRow()
+        {
+            rows.Add(currentRow);
+            currentRow = [];
+            currentWidth = 0;
+            coverage.NextRow();
+            limit = coverage.FreePrefix;
+        }
 
         foreach (var control in controls)
         {
-            var span = Math.Min(control.ColumnSpan ?? 1, columns);
+            var span = Math.Clamp(control.ColumnSpan ?? 1, 1, columns);
 
-            if (currentRow.Count > 0 && currentWidth + span > columns)
+            // A full-width row with nothing in it always fits the control, so
+            // this stops; until then it closes a full row, or writes a covered
+            // row the control can't go in.
+            while (currentWidth + span > limit && (currentRow.Count > 0 || limit < columns))
             {
-                rows.Add(currentRow);
-                currentRow = [];
-                currentWidth = 0;
+                CloseRow();
             }
 
+            coverage.Cover(currentWidth, span, control.RowSpan ?? 1);
             currentRow.Add(control);
             currentWidth += span;
 
-            if (currentWidth >= columns)
+            if (currentWidth >= limit)
             {
-                rows.Add(currentRow);
-                currentRow = [];
-                currentWidth = 0;
+                CloseRow();
             }
         }
 
         if (currentRow.Count > 0)
         {
-            rows.Add(currentRow);
+            CloseRow();
+        }
+
+        while (coverage.AnyCovered)
+        {
+            CloseRow();
         }
 
         return rows;
     }
 
+    /// <summary>
+    /// The header and footer are written one control per row, so a control
+    /// spanning N rows is followed by N - 1 empty rows, the same as in a
+    /// single-column section.
+    /// </summary>
     private static XElement WriteHeaderOrFooter(string elementName, IReadOnlyList<FormControl> controls, List<XElement> controlDescriptions) => new(
         elementName,
         new XAttribute("id", DeterministicGuid(elementName)),
-        new XElement("rows", controls.Select(control => new XElement("row", WriteCell(elementName, control, controlDescriptions)))));
+        new XElement("rows", RegroupIntoRows(controls, columns: 1)
+            .Select(row => new XElement("row", row.Select(control => WriteCell(elementName, control, controlDescriptions))))));
+
+    /// <summary>
+    /// Which grid columns of a section the rows above the current one cover
+    /// with a <c>rowspan</c>. Rows are laid out top to bottom: <see cref="Cover"/>
+    /// what a cell in the current row spans, then <see cref="NextRow"/>.
+    /// </summary>
+    private sealed class RowCoverage(int columns)
+    {
+        // For each grid column, the index of the first row it is no longer covered in.
+        private readonly int[] _coveredUntil = new int[Math.Max(columns, 1)];
+
+        public int Columns => _coveredUntil.Length;
+
+        /// <summary>The index of the row being laid out.</summary>
+        public int Row { get; private set; }
+
+        /// <summary>
+        /// How many columns, from the left, are free in the current row: the
+        /// index of its first covered column, or <see cref="Columns"/>.
+        /// </summary>
+        public int FreePrefix
+        {
+            get
+            {
+                var first = Array.FindIndex(_coveredUntil, until => until > Row);
+                return first < 0 ? Columns : first;
+            }
+        }
+
+        /// <summary>Whether a span from an earlier row covers any column of the current row.</summary>
+        public bool AnyCovered => _coveredUntil.Any(until => until > Row);
+
+        public bool IsFree(int column) => _coveredUntil[column] <= Row;
+
+        /// <summary>A cell in the current row at <paramref name="column"/>, <paramref name="columnSpan"/> wide and <paramref name="rowSpan"/> high.</summary>
+        public void Cover(int column, int columnSpan, int rowSpan)
+        {
+            for (var c = column; c < Math.Min(column + columnSpan, Columns); c++)
+            {
+                _coveredUntil[c] = Math.Max(_coveredUntil[c], Row + Math.Max(rowSpan, 1));
+            }
+        }
+
+        public void NextRow() => Row++;
+    }
 
     private static XElement WriteCell(string scopeKey, FormControl control, List<XElement> controlDescriptions)
     {

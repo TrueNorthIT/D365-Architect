@@ -122,6 +122,10 @@ public sealed class LiveDataverse : IDisposable
         return json!["value"]!.AsArray().Select(c => Guid.Parse((string)c!["objectid"]!)).ToHashSet();
     }
 
+    /// <summary>Deletes the global choice; one that doesn't exist is fine.</summary>
+    public Task DeleteGlobalOptionSetAsync(string name, CancellationToken cancellationToken) =>
+        DeleteAsync($"GlobalOptionSetDefinitions(Name='{name}')", cancellationToken);
+
     /// <summary>Exports the unmanaged solution and returns its <c>customizations.xml</c> - what a solution PR actually diffs.</summary>
     public async Task<XDocument> ExportCustomizationsXmlAsync(string uniqueName, CancellationToken cancellationToken)
     {
