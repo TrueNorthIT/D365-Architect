@@ -1559,3 +1559,131 @@ correctly narrowed the unscoped export down to just that solution's own
 choices, correctly excluded choices outside it (spot-checked against known
 Microsoft system choices), and the scoped file round-tripped through
 `choice import --whatif` with zero false diffs.
+
+## Security roles (`security export`/`security import`)
+
+A solution's security roles are written as two kinds of file, and every
+table privilege a role holds lives in exactly one of them: a privilege on a
+table of the solution goes in that table's `*.security.yml`; a privilege on
+any other table, and every non-table privilege, goes in the role's
+`*.role.yml`. Only the solution's own roles (solution components of type
+`20`, Role) are ever read; a role outside the solution is never written,
+however much access it has.
+
+**A role is identified by its name, never its id.** A role's id differs in
+every environment, so neither file holds one: on import each role is found by
+name among the root business unit's roles, and a role that doesn't exist
+fails that file (`Role 'X' not found in this environment.`). Roles are never
+created.
+
+**Access levels** are one of five values, mapping onto Dataverse's privilege
+depth: `None` (not held), `User` (Basic), `BusinessUnit` (Local),
+`ParentChildBusinessUnit` (Deep) and `Organisation` (Global). Anything else
+is rejected by the deserialiser and flagged by the generated schemas.
+
+### Table security files (`<table>/<table>.security.yml`)
+
+```yaml
+table: tn_complaint
+roles:
+  - name: HIS User
+    create: User
+    read: Organisation
+    write: BusinessUnit
+    delete: None
+    append: User
+    appendTo: Organisation
+    assign: None
+    share: None
+```
+
+- Every role of the solution that holds **any** of the eight privileges on
+  the table is listed, and **all eight keys are always written** for it,
+  `None` included, so the file shows the whole picture for that table at a
+  glance. A key left out of a hand-written file reads as `None`.
+- A table no role of the solution can reach gets **no file**, never an empty
+  one.
+- On import the file only compares the eight privileges on its own table,
+  for the roles it names. A role the file doesn't name is never touched.
+
+### Role files (`roles/<role-name>.role.yml`)
+
+```yaml
+name: HIS User
+privileges:
+  prvExportToExcel: Organisation
+  prvGoMobile: Organisation
+tables:
+  account:
+    read: Organisation
+```
+
+- One file per role of the solution, named after the role, lower-cased and
+  slugged (`HIS User` gives `his-user.role.yml`; two names that slug the same
+  get `-2`, `-3`, … rather than overwriting each other). A role that holds
+  nothing outside its table files is just its `name:`.
+- `privileges:` lists non-table privileges by their platform name, spelt as
+  Dataverse spells it (`prvExportToExcel`, not re-cased).
+- `tables:` lists privileges on tables that are **not** in the solution, by
+  table logical name, with the same eight camelCase keys as a table file.
+- **Absent means not held.** Unlike a table file, only privileges the role
+  holds are written; there are no `None` lines.
+
+### Removals and the full-picture rule
+
+Import writes with add-privilege semantics: raising or lowering a level adds
+the privilege at its new depth (`AddPrivilegesRole`), so the role's other
+privileges are untouched. Nothing is ever replaced wholesale.
+
+A privilege the role holds live but the file leaves out (or sets to `None`)
+is a removal candidate. **It is only removed with `--allow-removals`**;
+without it, it is kept and reported as `~ would remove … (kept)`, and a file
+whose only differences are kept privileges counts as unchanged.
+
+What counts as "left out" differs by file:
+
+- A **table file** only covers its own table's eight privileges for the roles
+  it names.
+- A **role file** is the full picture of the role's privileges outside the
+  solution: every non-table privilege the role holds that the file doesn't
+  list, every privilege on a table outside the solution that the file doesn't
+  list (including a whole table missing from `tables:`), is a removal
+  candidate. The solution's own tables are resolved from Dataverse by
+  `--solution`, which is why importing a role file needs it; a privilege on
+  one of them is never reported or removed by a role file, even with
+  `--allow-removals`, and a solution table listed under `tables:` is ignored.
+
+### Shared privileges and conflicts
+
+A privilege is identified by its id, and some tables share one: the activity
+tables (email, appointment, phonecall, …) all use `prvCreateActivity` for
+Create. Changing `create:` for one of them changes it for all of them, so a
+shared privilege is one unit:
+
+- The import plan names every other table a change reaches, e.g.
+  `~ Create: Organisation → User (also changes: appointment, email, phonecall)`.
+- Every entry a run states for the same role and privilege id must ask for
+  the same level. A run is one `security import` (a file or a folder) or one
+  `solution import` (every security and role file in it); the check runs
+  across all of its files after every preview and before the prompt. Entries
+  that agree are written once. Entries that disagree (different levels, or
+  one sets it while another leaves it out or sets `None`) are a conflict:
+  the error names the role, the privilege and each file and entry, every file
+  involved fails as a whole so nothing is half-applied, and nothing is written
+  for that privilege. One file disagreeing with itself (the same role listed
+  twice, or two outside tables sharing a privilege at different levels in a
+  role file) fails the same way.
+- A shared privilege that also covers a table of the solution is owned by
+  that table's security file, like any other privilege on it: `security
+  export` doesn't repeat it in the role file, a role-file entry that would
+  change it is refused, and a role file leaving it out never makes it a
+  removal candidate.
+
+Every privilege is looked up during the preview, so nothing is written for a
+file that names one that doesn't exist (e.g. `assign: User` on an
+organisation-owned table, which has no Assign; `None` there is fine). A role
+file's `privileges:` is for non-table privileges only: a table privilege
+there (e.g. `prvWritetn_complaint`) is refused. In a folder import a table's
+security file must sit in that table's folder (`table:` matches the folder
+name), and a role name that matches more than one role in the root business
+unit is an error rather than a guess.

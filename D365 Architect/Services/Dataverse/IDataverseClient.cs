@@ -597,4 +597,41 @@ public interface IDataverseClient
     /// so is never added by a separate AddSolutionComponent call - see <see cref="UpdateSavedQueryAsync(Uri, string, Guid, string?, string?, string?, string?, CancellationToken)"/>).
     /// </summary>
     Task UpdateSystemFormXmlAsync(Uri environmentUrl, string accessToken, Guid formId, string formXml, string? solutionUniqueName, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The security roles that are components of <paramref name="solutionUniqueName"/> (solution component type 20, Role), each by name and
+    /// this environment's id. Null when no solution has that unique name. Roles outside the solution are never returned, however much access they have.
+    /// </summary>
+    Task<IReadOnlyList<SecurityRole>?> TryGetSolutionRolesAsync(Uri environmentUrl, string accessToken, string solutionUniqueName, CancellationToken cancellationToken);
+
+    /// <summary>The root business unit's role with this name (matched case-insensitively), or null when there is none. How a role in a file is found: by name, never by id.
+    /// Throws <see cref="DuplicateRoleNameException"/> when more than one root business unit role has the name, rather than picking one.</summary>
+    Task<SecurityRole?> TryGetRoleByNameAsync(Uri environmentUrl, string accessToken, string roleName, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Every privilege the role holds, with its depth. A table privilege carries its table and right in <see cref="PrivilegeIdentity"/>
+    /// (resolved from each table's own privilege metadata, so a privilege several tables share is returned once per table); a non-table
+    /// privilege carries only its platform name. A privilege held at a record-filter depth (which has no access level here) is not returned.
+    /// A privilege the role doesn't hold is not returned.
+    /// </summary>
+    Task<IReadOnlyList<RolePrivilege>> GetRolePrivilegesAsync(Uri environmentUrl, string accessToken, Guid roleId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Adds <paramref name="privileges"/> to the role at the given depths (the platform's AddPrivilegesRole). Adding a privilege the role already holds sets its depth.
+    /// Entries that resolve to one privilege (a shared one, listed from several tables) must ask for the same depth, or nothing is sent and it throws;
+    /// a privilege that doesn't exist fails the whole call before anything is sent.
+    /// Never replaces the role's privileges as a whole: any privilege not listed is untouched.
+    /// </summary>
+    Task AddRolePrivilegesAsync(Uri environmentUrl, string accessToken, Guid roleId, IReadOnlyList<RolePrivilege> privileges, CancellationToken cancellationToken);
+
+    /// <summary>Removes <paramref name="privileges"/> from the role (the platform's RemovePrivilegeRole, once each). Anything not listed is untouched.</summary>
+    Task RemoveRolePrivilegesAsync(Uri environmentUrl, string accessToken, Guid roleId, IReadOnlyList<PrivilegeIdentity> privileges, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Resolves each privilege to this environment's id, its platform name and every table and right it stands for: a table privilege by
+    /// (table, right), any other by name (a name that is in fact a table privilege resolves to its tables). The result is in the same order as
+    /// <paramref name="privileges"/>, with null for one that doesn't exist here (e.g. Assign or Share on an organisation-owned table).
+    /// A privilege several tables share (the activity tables' <c>prvCreateActivity</c>) resolves to the same id from each of them.
+    /// </summary>
+    Task<IReadOnlyList<ResolvedPrivilege?>> ResolvePrivilegesAsync(Uri environmentUrl, string accessToken, IReadOnlyList<PrivilegeIdentity> privileges, CancellationToken cancellationToken);
 }

@@ -63,6 +63,7 @@ public sealed class ImportSolutionCommandViewFormCreateTests : IDisposable
             new ViewImportService(client),
             new FormImportService(client, new FormJsonDefinitionReader()),
             new GlobalChoiceImportService(client),
+            new SecurityImportService(client),
             new ImportRunner(new FakeAuthenticationService()));
 
     private static ImportSolutionCommand.StepRunner CreateRunner(FakeDataverseClient client, bool noPublish = false) =>

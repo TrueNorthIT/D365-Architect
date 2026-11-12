@@ -28,6 +28,7 @@ public sealed record SolutionImportItem(string Path, Func<bool, CancellationToke
 public sealed class SolutionImportFlow(bool verbose)
 {
     private readonly List<(SolutionImportItem Item, PreparedImport Prepared)> _changed = [];
+    private readonly HashSet<string> _unchangedPaths = new(StringComparer.OrdinalIgnoreCase);
     private int _unchanged;
     private int _failed;
     private int _skipped;
@@ -68,6 +69,7 @@ public sealed class SolutionImportFlow(bool verbose)
                 break;
             case ImportOutcome.Unchanged:
                 _unchanged++;
+                _unchangedPaths.Add(item.Path);
                 break;
             default:
                 _failed++;
@@ -84,6 +86,25 @@ public sealed class SolutionImportFlow(bool verbose)
 
     /// <summary>Counts an asset that was never previewed (its table would be created first under <c>--whatif</c>), for the summary.</summary>
     public void CountSkipped() => _skipped++;
+
+    /// <summary>
+    /// Fails an item already previewed (changed or unchanged) because of something only visible across items - e.g. two security files
+    /// disagreeing about one privilege. A failed item is never applied and counts as failed in the summary and exit code.
+    /// </summary>
+    public void MarkFailed(string path)
+    {
+        var index = _changed.FindIndex(c => string.Equals(c.Item.Path, path, StringComparison.OrdinalIgnoreCase));
+        if (index >= 0)
+        {
+            _changed.RemoveAt(index);
+            _failed++;
+        }
+        else if (_unchangedPaths.Remove(path))
+        {
+            _unchanged--;
+            _failed++;
+        }
+    }
 
     /// <summary>Asks once (unless <c>yes</c>; never under <c>whatIf</c>) and applies every changed asset previewed so far. Returns the exit code.</summary>
     public async Task<int> ConfirmAndApplyAsync(bool yes, bool whatIf, Func<string, bool>? confirm, CancellationToken cancellationToken)

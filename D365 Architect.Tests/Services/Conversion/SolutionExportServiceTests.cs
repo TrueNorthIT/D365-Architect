@@ -75,7 +75,7 @@ public sealed class SolutionExportServiceTests
         var viewExport = new FakeViewExportService();
         var formExport = new FakeFormExportService();
         var choiceExport = new FakeGlobalChoiceExportService();
-        var service = new SolutionExportService(dataverseClient, tableExport, viewExport, formExport, choiceExport);
+        var service = new SolutionExportService(dataverseClient, tableExport, viewExport, formExport, choiceExport, new FakeSecurityExportService());
         return (service, dataverseClient, tableExport, viewExport, formExport, choiceExport);
     }
 

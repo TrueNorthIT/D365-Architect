@@ -140,6 +140,46 @@ public sealed class LiveDataverse : IDisposable
         return await XDocument.LoadAsync(xml, LoadOptions.None, cancellationToken);
     }
 
+    /// <summary>Creates an empty security role in the root business unit and adds it to the solution; returns its id.</summary>
+    public async Task<Guid> CreateRoleAsync(string name, string solutionUniqueName, CancellationToken cancellationToken)
+    {
+        var rootBusinessUnitId = await GetRootBusinessUnitIdAsync(cancellationToken);
+        using var request = Request(HttpMethod.Post, "roles");
+        request.Content = JsonContent.Create(new JsonObject { ["name"] = name, ["businessunitid@odata.bind"] = $"/businessunits({rootBusinessUnitId})" });
+        using var response = await _raw.SendAsync(request, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+        var entityId = response.Headers.GetValues("OData-EntityId").Single();
+        var roleId = Guid.Parse(entityId[(entityId.LastIndexOf('(') + 1)..^1]);
+
+        // 20 = Role (solutioncomponent componenttype).
+        await PostAsync("AddSolutionComponent", new JsonObject
+        {
+            ["ComponentId"] = roleId,
+            ["ComponentType"] = 20,
+            ["SolutionUniqueName"] = solutionUniqueName,
+            ["AddRequiredComponents"] = false,
+        }, cancellationToken);
+        return roleId;
+    }
+
+    /// <summary>Deletes the role; one that doesn't exist is fine.</summary>
+    public Task DeleteRoleAsync(Guid roleId, CancellationToken cancellationToken) =>
+        DeleteAsync($"roles({roleId})", cancellationToken);
+
+    private async Task<Guid> GetRootBusinessUnitIdAsync(CancellationToken cancellationToken)
+    {
+        var units = (await GetAsync("businessunits?$select=businessunitid&$filter=_parentbusinessunitid_value eq null", cancellationToken))!["value"]!.AsArray();
+        return Guid.Parse((string)units.Single()!["businessunitid"]!);
+    }
+
+    private async Task PostAsync(string relativePath, JsonObject body, CancellationToken cancellationToken)
+    {
+        using var request = Request(HttpMethod.Post, relativePath);
+        request.Content = JsonContent.Create(body);
+        using var response = await _raw.SendAsync(request, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+    }
+
     public void Dispose()
     {
         _raw.Dispose();

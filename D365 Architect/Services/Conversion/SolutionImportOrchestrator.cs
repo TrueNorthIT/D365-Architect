@@ -20,6 +20,12 @@ public enum SolutionImportStage
 
     /// <summary>A <c>*.form.yml</c> (<c>form import</c>'s flow).</summary>
     ImportForm,
+
+    /// <summary>A <c>*.security.yml</c> in a table's folder (<c>security import</c>'s flow), run after that folder's forms.</summary>
+    ImportSecurity,
+
+    /// <summary>A <c>*.role.yml</c> in the <c>roles</c> folder at the root (<c>security import</c>'s flow), run after every table folder. Never run under <c>--table</c>.</summary>
+    ImportRole,
 }
 
 /// <summary>How one step ended, as far as the rest of the run is concerned.</summary>
@@ -84,8 +90,9 @@ public sealed record SolutionImportResult(int Succeeded, int Failed, string? Sto
 /// <see cref="ISolutionImportStepRunner.CreateTablesAsync"/>: one question,
 /// one transaction), then (each stage reading live
 /// state afresh, because no preview is built before creation finishes) the
-/// same sequence as before - choices, then per table folder its table, views
-/// and forms. Never writes to the input folder. Behaviour pinned by
+/// same sequence as before - choices, then per table folder its table, views,
+/// forms and security file, then the role files in <c>roles/</c> (which is not
+/// a table folder). Never writes to the input folder. Behaviour pinned by
 /// <c>SolutionImportOrchestratorTests</c>.
 ///
 /// Failure handling differs by stage on purpose. A failed view or form (or
@@ -99,7 +106,7 @@ public sealed record SolutionImportResult(int Succeeded, int Failed, string? Sto
 ///
 /// Under <c>--whatif</c> nothing is created, so a table that would be is
 /// still missing when the later stages preview: every later step in that
-/// table's folder (its own table import, views and forms - the layout
+/// table's folder (its own table import, views, forms and security file - the layout
 /// <c>solution export</c> writes) is skipped and reported as such rather
 /// than counted as a failure.
 /// </summary>
@@ -112,12 +119,12 @@ public sealed class SolutionImportOrchestrator
     /// As above, limited by <c>--table</c>: when <paramref name="onlyTables"/>
     /// is set, only those table folders (names matched case-insensitively,
     /// already checked against the folder by <see cref="SolutionTableFilter"/>)
-    /// are created and imported, and <c>choices.yml</c> is skipped. Null runs
+    /// are created and imported, and <c>choices.yml</c> and the role files are skipped. Null runs
     /// everything.
     /// </summary>
     public async Task<SolutionImportResult> RunAsync(string inputDirectory, ISolutionImportStepRunner runner, IReadOnlyCollection<string>? onlyTables, CancellationToken cancellationToken)
     {
-        var tableDirectories = Sorted(Directory.GetDirectories(inputDirectory)
+        var tableDirectories = Sorted(TableDirectories(inputDirectory)
             .Where(d => onlyTables is null || onlyTables.Contains(Path.GetFileName(d), StringComparer.OrdinalIgnoreCase)));
         var succeeded = 0;
         var failed = 0;
@@ -147,6 +154,14 @@ public sealed class SolutionImportOrchestrator
             steps.AddRange(Sorted(Directory.GetFiles(directory, "*.table.yml")).Select(p => (SolutionImportStage.ImportTable, p)));
             steps.AddRange(Sorted(Directory.GetFiles(directory, "*.view.yml")).Select(p => (SolutionImportStage.ImportView, p)));
             steps.AddRange(Sorted(Directory.GetFiles(directory, "*.form.yml")).Select(p => (SolutionImportStage.ImportForm, p)));
+            steps.AddRange(Sorted(Directory.GetFiles(directory, "*.security.yml")).Select(p => (SolutionImportStage.ImportSecurity, p)));
+        }
+
+        // Role files belong to the solution, not to any table, so they run after every table folder - and never under --table.
+        var rolesDirectory = Path.Combine(inputDirectory, RolesFolderName);
+        if (onlyTables is null && Directory.Exists(rolesDirectory))
+        {
+            steps.AddRange(Sorted(Directory.GetFiles(rolesDirectory, "*.role.yml")).Select(p => (SolutionImportStage.ImportRole, p)));
         }
 
         foreach (var (stage, path) in steps)
@@ -169,6 +184,13 @@ public sealed class SolutionImportOrchestrator
 
         return new SolutionImportResult(succeeded, failed, StoppedAtAssetPath: null, Skipped: skipped);
     }
+
+    /// <summary>The folder at the solution root that holds the role files (<c>*.role.yml</c>). Never a table folder.</summary>
+    public const string RolesFolderName = "roles";
+
+    /// <summary>The table folders of a solution folder: every sub-folder except <see cref="RolesFolderName"/>.</summary>
+    public static IEnumerable<string> TableDirectories(string inputDirectory) =>
+        Directory.GetDirectories(inputDirectory).Where(d => !string.Equals(Path.GetFileName(d), RolesFolderName, StringComparison.OrdinalIgnoreCase));
 
     private static IEnumerable<string> Sorted(IEnumerable<string> paths) => paths.OrderBy(p => p, StringComparer.OrdinalIgnoreCase).ToList();
 

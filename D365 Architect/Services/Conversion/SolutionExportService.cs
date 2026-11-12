@@ -7,7 +7,8 @@ public sealed class SolutionExportService(
     ITableExportService tableExportService,
     IViewExportService viewExportService,
     IFormExportService formExportService,
-    IGlobalChoiceExportService globalChoiceExportService) : ISolutionExportService
+    IGlobalChoiceExportService globalChoiceExportService,
+    ISecurityExportService securityExportService) : ISolutionExportService
 {
     public async Task<SolutionExportResult> ExportSolutionAsync(Uri environmentUrl, string accessToken, string solutionUniqueName, CancellationToken cancellationToken, IReadOnlyCollection<string>? tables = null)
     {
@@ -18,6 +19,10 @@ public sealed class SolutionExportService(
         {
             entityLogicalNames = SolutionTableFilter.Select(entityLogicalNames, tables, $"in solution '{solutionUniqueName}'");
         }
+
+        // Security is limited exactly as the tables are: --table gives only those tables' security files and no role files.
+        var security = await securityExportService.ExportSecurityAsync(environmentUrl, accessToken, solutionUniqueName, tables is { Count: > 0 } ? entityLogicalNames : null, roles: null, cancellationToken);
+        var securityByTable = security.Tables.ToDictionary(t => t.TableLogicalName, t => t.Yaml, StringComparer.OrdinalIgnoreCase);
 
         var entities = new List<SolutionExportEntity>();
         foreach (var entityLogicalName in entityLogicalNames)
@@ -30,14 +35,14 @@ public sealed class SolutionExportService(
             // own command layer narrows it down to a single pick.
             var forms = await formExportService.ExportFormsAsync(environmentUrl, accessToken, entityLogicalName, solutionUniqueName, formId: null, cancellationToken);
 
-            entities.Add(new SolutionExportEntity(entityLogicalName, tableYaml, views, forms));
+            entities.Add(new SolutionExportEntity(entityLogicalName, tableYaml, views, forms, securityByTable.GetValueOrDefault(entityLogicalName)));
         }
 
         // A table-limited export never touches choices: they belong to the
         // solution, not to any table.
         if (tables is { Count: > 0 })
         {
-            return new SolutionExportResult(entities, null);
+            return new SolutionExportResult(entities, null, security.Roles);
         }
 
         var choicesYaml = await globalChoiceExportService.ExportGlobalChoicesAsync(environmentUrl, accessToken, solutionUniqueName, cancellationToken);
@@ -48,6 +53,6 @@ public sealed class SolutionExportService(
         // at all rather than one containing just "[]".
         var hasChoices = GlobalChoiceYamlDeserializer.FromYaml(choicesYaml).Count > 0;
 
-        return new SolutionExportResult(entities, hasChoices ? choicesYaml : null);
+        return new SolutionExportResult(entities, hasChoices ? choicesYaml : null, security.Roles);
     }
 }

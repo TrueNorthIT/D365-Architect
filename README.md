@@ -82,7 +82,8 @@ own options.
 | `view`        | Work with D365 view (saved query) definitions.                 |
 | `form`        | Work with D365 form definitions.                               |
 | `choice`      | Work with D365 global choice (option set) definitions.         |
-| `solution`    | Work with a whole D365 solution — every table, view, form, and global choice it customizes. |
+| `security`    | Work with the security roles of a solution — who can do what to each table, and each role's other privileges. |
+| `solution`    | Work with a whole D365 solution — every table, view, form, global choice and security role it customizes. |
 | `schema`      | Work with this tool's YAML schema.                             |
 
 ### `auth`
@@ -824,10 +825,19 @@ examplesolution/
     account.table.yml
     active-accounts.view.yml
     account-main-form.form.yml
+    account.security.yml            (only written if a role of the solution holds a privilege on the table)
   contact/
     contact.table.yml
     ...
+  roles/
+    his-user.role.yml               (one per role of the solution)
+    his-super-user.role.yml
 ```
+
+Each table's `<table>.security.yml` and each role's `roles/<role-name>.role.yml`
+are the files `security export` writes — see [`security`](#security) for what
+goes in each. With `--table`, only those tables' security files are written
+and `roles/` is skipped.
 
 Each table gets its own sub-folder, named after its logical name, holding
 that table's `*.table.yml` plus every `*.view.yml`/`*.form.yml` the solution
@@ -843,7 +853,7 @@ empty one.
 |-------------------|------------------------------------------------------------------------------|----------|
 | `-s, --solution`  | Unique name of the solution to export                                        | Yes      |
 | `-o, --output`    | Directory to create the solution's own folder under. Defaults to the current directory | No |
-| `-t, --table`     | Limit the export to this table (logical name, case-insensitive; repeatable). Skips `choices.yml`. Errors on a name not in the solution | No |
+| `-t, --table`     | Limit the export to this table (logical name, case-insensitive; repeatable). Skips `choices.yml` and `roles/`. Errors on a name not in the solution | No |
 
 #### `solution import`
 
@@ -852,8 +862,10 @@ file found, in stages. First, every `*.table.yml` is checked, the tables that
 don't exist live yet are listed, and after one "Create these N tables?" they
 are all created in one Dataverse transaction. Then `choices.yml`, then, for
 each table sub-folder, its `*.table.yml` (columns), then its `*.view.yml`
-file(s), then its `*.form.yml` file(s). Each preview reads live state afresh,
-so a table created in the first stage is visible to the rest.
+file(s), then its `*.form.yml` file(s), then its `*.security.yml`. Last come
+the role files in `roles/` (which is not a table folder), after every table
+folder. Each preview reads live state afresh, so a table created in the first
+stage is visible to the rest.
 
 ```
 d365architect solution import --input ./examplesolution --solution examplesolution
@@ -864,12 +876,12 @@ d365architect solution import --input ./examplesolution --solution examplesoluti
 | `-i, --input`                | Path to a solution folder previously written by `solution export`        | Yes      |
 | `-s, --solution`             | Unique name of the solution these files came from                        | Yes      |
 | `-y, --yes`                  | Skip both confirmation prompts (create tables, import changes) and go ahead immediately | No |
-| `-t, --table`                | Limit the import to this table's table/view/form files (folder name, case-insensitive; repeatable). Skips `choices.yml`. Errors on a name with no folder | No |
+| `-t, --table`                | Limit the import to this table's table/view/form/security files (folder name, case-insensitive; repeatable). Skips `choices.yml` and the role files. Errors on a name with no folder | No |
 | `--verbose`                  | Also print "No changes" for every unchanged asset (silent by default)    | No       |
 | `--whatif`                   | Only show each changed asset's diff/plan — never prompt and never write anything | No       |
 | `--no-transaction`           | For every table import: send column create/update one request at a time instead of as a single atomic Dataverse changeset | No |
 | `--allow-schema-violations`  | For every form import: proceed even if the rebuilt FormXML has a schema violation Dataverse might reject outright | No |
-| `--allow-removals`           | For every form import: remove what's live but missing from the YAML instead of keeping it | No |
+| `--allow-removals`           | For every form import: remove what's live but missing from the YAML instead of keeping it. For every security and role file: remove a privilege the role holds live but the file leaves out or sets to `None` | No |
 | `--allow-unexpected`         | For every form import: proceed even if the rebuilt FormXML changes something outside what the YAML changed | No |
 | `--no-publish`               | For every table, choice, view and form import: don't publish after importing | No |
 
@@ -915,8 +927,167 @@ step (its columns, a view or a form) that changes it.
 
 Under `--whatif` the tables that don't exist yet are listed as ones that would
 be created, nothing is asked or written, and each such table's own
-`*.table.yml` import, views and forms are skipped with a note (there's nothing
-live to preview them against) and counted as skipped rather than failed.
+`*.table.yml` import, views, forms and security file are skipped with a note
+(there's nothing live to preview them against) and counted as skipped rather
+than failed. Role files aren't tied to a table folder, so they are still
+previewed.
+
+Security and role files go through the same preview as `security import`:
+roles are found by name and never created, and `--solution` names the
+solution whose tables a role file leaves alone. The check that no two files
+disagree about one privilege (see [shared privileges](#security-import)) runs
+across every security and role file of the run before you are asked.
+
+### `security`
+
+Work with the security roles of a solution as YAML: who can do what to each
+table, and each role's other privileges. Roles are identified by name, never
+by id, so the same files work in dev, test and prod. Both commands need
+`auth login` first.
+
+Two kinds of file, and every table privilege lives in exactly one of them:
+
+- **`<table>/<table>.security.yml`** — one per table of the solution that at
+  least one of the solution's roles holds a privilege on. It lists each such
+  role with all eight privileges (`create`, `read`, `write`, `delete`,
+  `append`, `appendTo`, `assign`, `share`), each at an access level: `None`,
+  `User`, `BusinessUnit`, `ParentChildBusinessUnit` or `Organisation`. A table
+  no role of the solution can reach gets no file at all.
+- **`roles/<role-name>.role.yml`** — one per role of the solution. It lists
+  the role's non-table privileges by platform name (e.g. `prvExportToExcel`)
+  and, under `tables:`, its privileges on tables that are *not* in the
+  solution. Only privileges the role holds are listed: a privilege left out
+  is not held.
+
+Roles that aren't in the solution are never exported, however much access
+they have.
+
+```yaml
+# tn_complaint/tn_complaint.security.yml
+table: tn_complaint
+roles:
+  - name: HIS User
+    create: User
+    read: Organisation
+    write: BusinessUnit
+    delete: None
+    append: User
+    appendTo: Organisation
+    assign: None
+    share: None
+```
+
+```yaml
+# roles/his-user.role.yml
+name: HIS User
+privileges:
+  prvExportToExcel: Organisation
+  prvGoMobile: Organisation
+tables:
+  account:
+    read: Organisation
+```
+
+See `docs/yaml-conventions.md` for the full conventions.
+
+#### `security export`
+
+Writes the solution's table security files and role files, in the same layout
+`solution export` uses.
+
+```
+d365architect security export --solution examplesolution
+d365architect security export --solution examplesolution --table tn_complaint
+d365architect security export --solution examplesolution --role "HIS User"
+```
+
+| Option           | Description                                                                 | Required |
+|------------------|------------------------------------------------------------------------------|----------|
+| `-s, --solution` | Unique name of the solution whose roles and tables are exported               | Yes      |
+| `-o, --output`   | Directory to create the solution's own folder under. Defaults to the current directory | No |
+| `-t, --table`    | Limit the export to this table's security file (logical name, case-insensitive; repeatable). Without `--role`, no role files are written. Errors on a name not in the solution | No |
+| `-r, --role`     | Limit the export to this role's file (role name, case-insensitive; repeatable). Without `--table`, no table security files are written. Errors on a name that isn't a role of the solution | No |
+
+With neither `--table` nor `--role` every table security file and every role
+file is written; with both, both kinds are written, each limited.
+
+#### `security import`
+
+Writes table security files and role files back into Dataverse by changing
+what each named role holds. `--input` is a solution folder (every
+`<table>/*.security.yml`, then every `roles/*.role.yml`) or a single file.
+
+```
+d365architect security import --input ./examplesolution --solution examplesolution
+d365architect security import --input ./examplesolution/tn_complaint/tn_complaint.security.yml
+```
+
+| Option             | Description                                                                 | Required |
+|--------------------|------------------------------------------------------------------------------|----------|
+| `-i, --input`      | A solution folder, or a single `*.security.yml` or `*.role.yml` file          | Yes      |
+| `-s, --solution`   | Unique name of the solution the files belong to. Required for role files and for `--role` | For role files |
+| `-t, --table`      | Limit a folder import to this table's security file (folder name, case-insensitive; repeatable). Without `--role`, role files are skipped. Errors on a name with no folder | No |
+| `-r, --role`       | Limit a folder import to this role's file (role name, case-insensitive; repeatable). Without `--table`, table security files are skipped. Errors on a name that isn't a role of the solution | No |
+| `--allow-removals` | Remove a privilege the role holds live but the file leaves out or sets to `None`. Without it, such a privilege is kept and reported | No |
+| `-y, --yes`        | Skip the confirmation prompt and import immediately                           | No       |
+| `--whatif`         | Only show each file's plan — never prompt and never write anything            | No       |
+| `--verbose`        | When importing a folder, also print "No changes" for every unchanged file     | No       |
+
+Every file is previewed first and its plan printed, then you're asked once —
+"Import N changes?" — as `solution import` does:
+
+```
+Changes for 'tn_complaint' (table security):
+  HIS User
+    ~ Delete: None → User
+    ~ would remove Share: User (kept)
+Changes for role 'HIS User':
+    + prvBulkDelete: User
+```
+
+- Raising or lowering a level adds the privilege at its new depth. The role's
+  other privileges are untouched: nothing is ever replaced wholesale.
+- A privilege the role holds live but the file leaves out (or sets to `None`)
+  is only removed with `--allow-removals`; otherwise it is kept and reported
+  as `would remove ... (kept)`.
+- A table security file only compares the eight privileges on its own table,
+  for the roles it names. A role file is the full picture of the role's
+  privileges outside the solution: its non-table privileges, and its
+  privileges on every table that isn't one of the solution's (a table held
+  live but missing from `tables:` is a removal candidate). It never touches a
+  table of the solution, even with `--allow-removals`: those privileges belong
+  to that table's security file. This is why a role file needs `--solution`.
+- A role a file names that doesn't exist in the environment fails that file
+  (`Role 'HIS Auditor' not found in this environment.`); roles are never
+  created. The other files are still imported, and the exit code is non-zero.
+- `--table` and `--role` limit a folder import only; with a single file,
+  leave them out.
+- In a folder, a table's security file must be in that table's folder: a
+  `tn_task/tn_task.security.yml` that says `table: tn_complaint` fails.
+- Every privilege a file names is looked up before anything is written. One
+  that doesn't exist (e.g. `assign: User` on an organisation-owned table,
+  which has no Assign) fails the whole file; `None` for it is fine.
+- A role file's `privileges:` holds non-table privileges only: a table
+  privilege there (e.g. `prvWritetn_complaint`) is refused.
+
+**Shared privileges.** Some tables share one privilege: the activity tables
+(email, appointment, phonecall, …) all use `prvCreateActivity` for Create,
+and so on. Changing it on one changes it on all of them, so it is treated as
+one unit:
+
+- The plan names every other table a change reaches:
+  `~ Create: Organisation → User (also changes: appointment, email, phonecall)`.
+- Within one run (one file, a folder, or every security and role file of a
+  `solution import`), every entry covering the same role and privilege must
+  ask for the same level. If they disagree (different levels, or one sets it
+  and another leaves it out or sets `None`) that is a conflict: it is
+  reported naming the role, the privilege and each file and table, every
+  file involved fails as a whole (so nothing is half-applied) and nothing is
+  written for it. Entries that agree are written once.
+- A shared privilege that also covers a table of the solution belongs to that
+  table's security file: `security export` leaves it out of the role file, a
+  role file that would change it is refused, and leaving it out of a role
+  file never makes it a removal candidate.
 
 ### `schema`
 
@@ -934,11 +1105,14 @@ could. No sign-in needed.
 d365architect schema export --for table
 d365architect schema export --for view
 d365architect schema export --for form
+d365architect schema export --for choice
+d365architect schema export --for security
+d365architect schema export --for role
 ```
 
 | Option         | Description                                  | Required |
 |----------------|------------------------------------------------|----------|
-| `-f, --for`    | Which asset type to generate a schema for: `table`, `view`, or `form`. Defaults to `table` | No |
+| `-f, --for`    | Which asset type to generate a schema for: `table`, `view`, `form`, `choice`, `security` or `role`. Defaults to `table` | No |
 | `-o, --output` | Path to write the schema to. Defaults to `schema/<asset-type>.schema.json` | No |
 
 A dev-time-only detail: descriptions come from this assembly's own
@@ -951,16 +1125,20 @@ per-field descriptions will be blank — every other command is unaffected.
 
 This repository commits its generated schemas at
 [`schema/table.schema.json`](schema/table.schema.json),
-[`schema/view.schema.json`](schema/view.schema.json), and
-[`schema/form.schema.json`](schema/form.schema.json) — a `dotnet build`
-regenerates all three automatically (see `docs/DEVELOPING.md`), so they stay
+[`schema/view.schema.json`](schema/view.schema.json),
+[`schema/form.schema.json`](schema/form.schema.json),
+[`schema/choice.schema.json`](schema/choice.schema.json),
+[`schema/security.schema.json`](schema/security.schema.json) and
+[`schema/role.schema.json`](schema/role.schema.json) — a `dotnet build`
+regenerates all of them automatically (see `docs/DEVELOPING.md`), so they stay
 in sync with a model's shape without anyone needing to remember to run this
 command by hand. D365 developers can point their editor at them for inline
 validation and autocomplete while hand-editing or reviewing
-`*.table.yml`/`*.view.yml`/`*.form.yml` files:
+`*.table.yml`/`*.view.yml`/`*.form.yml`/`*.choice.yml`/`*.security.yml`/`*.role.yml` files:
 
 - **If you have this repo cloned**, it's already wired up — `.vscode/settings.json`
-  maps `*.table.yml`, `*.view.yml`, and `*.form.yml` files to their local
+  maps `*.table.yml`, `*.view.yml`, `*.form.yml`, `*.choice.yml`,
+  `*.security.yml` and `*.role.yml` files to their local
   schemas, so VS Code's
   [YAML extension](https://marketplace.visualstudio.com/items?itemName=redhat.vscode-yaml)
   validates them automatically.
@@ -973,7 +1151,7 @@ validation and autocomplete while hand-editing or reviewing
 #### `schema configure-vscode`
 
 Writes (or merges into) `.vscode/settings.json` in a folder so VS Code's YAML
-extension validates `*.table.yml`/`*.view.yml`/`*.form.yml` files there
+extension validates `*.table.yml`/`*.view.yml`/`*.form.yml`/`*.choice.yml`/`*.security.yml`/`*.role.yml` files there
 automatically — no sign-in needed, and no local clone of this repo required
 either: it points at this repository's raw schema files on GitHub, the same
 URLs documented under [Setting this up without the CLI](#setting-this-up-without-the-cli)
@@ -991,11 +1169,11 @@ d365architect schema configure-vscode --pre-release
 | `--pre-release`  | Point at the latest pre-release (the `develop` branch's schemas) instead | No |
 | `-p, --path`     | Folder to write `.vscode/settings.json` into. Defaults to the current directory | No |
 
-Only ever touches the three `yaml.schemas` entries for `*.table.yml`/
-`*.view.yml`/`*.form.yml` — any other setting already in the file, and any
+Only ever touches the `yaml.schemas` entries for `*.table.yml`/
+`*.view.yml`/`*.form.yml`/`*.choice.yml`/`*.security.yml`/`*.role.yml` — any other setting already in the file, and any
 other `yaml.schemas` entry (your own schemas for other file types), is left
 alone. Re-running it (e.g. switching from `--release` to `--pre-release`)
-replaces just those three entries rather than adding duplicates. One
+replaces just those entries rather than adding duplicates. One
 trade-off worth knowing: if `.vscode/settings.json` already exists, this
 rewrites it as plain JSON — any comments in the existing file won't survive
 (you'll see a note printed when that happens).
@@ -1010,7 +1188,10 @@ above writes: add a workspace setting pointing at the raw files on GitHub:
   "yaml.schemas": {
     "https://raw.githubusercontent.com/TrueNorthIT/D365-Architect/main/schema/table.schema.json": "*.table.yml",
     "https://raw.githubusercontent.com/TrueNorthIT/D365-Architect/main/schema/view.schema.json": "*.view.yml",
-    "https://raw.githubusercontent.com/TrueNorthIT/D365-Architect/main/schema/form.schema.json": "*.form.yml"
+    "https://raw.githubusercontent.com/TrueNorthIT/D365-Architect/main/schema/form.schema.json": "*.form.yml",
+    "https://raw.githubusercontent.com/TrueNorthIT/D365-Architect/main/schema/choice.schema.json": "*.choice.yml",
+    "https://raw.githubusercontent.com/TrueNorthIT/D365-Architect/main/schema/security.schema.json": "*.security.yml",
+    "https://raw.githubusercontent.com/TrueNorthIT/D365-Architect/main/schema/role.schema.json": "*.role.yml"
   }
 }
 ```

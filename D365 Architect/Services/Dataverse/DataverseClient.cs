@@ -1029,4 +1029,403 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         [property: JsonPropertyName("OrganizationId")] Guid OrganizationId);
 
     private sealed record SystemUserResponse([property: JsonPropertyName("fullname")] string? FullName);
+
+    // ---- Security roles ----
+
+    // componenttype 20 = Role, per the solutioncomponent componenttype option set:
+    // https://learn.microsoft.com/power-apps/developer/data-platform/reference/entities/solutioncomponent
+    private const int RoleComponentType = 20;
+
+    /// <summary>Per environment: which table privilege each privilege id is (see <see cref="GetTablePrivilegeCatalogAsync"/>). Read once per run.</summary>
+    private readonly Dictionary<Uri, TablePrivilegeCatalog> _tablePrivilegeCatalogs = [];
+
+    /// <summary>Per environment: the root business unit's id. Read once per run.</summary>
+    private readonly Dictionary<Uri, Guid> _rootBusinessUnitIds = [];
+
+    /// <summary>Per environment: every privilege's name and id (see <see cref="GetPrivilegeNamesAsync"/>). Read once per run.</summary>
+    private readonly Dictionary<Uri, PrivilegeNames> _privilegeNames = [];
+
+    public async Task<IReadOnlyList<SecurityRole>?> TryGetSolutionRolesAsync(Uri environmentUrl, string accessToken, string solutionUniqueName, CancellationToken cancellationToken)
+    {
+        var solutionId = await TryGetSolutionIdAsync(environmentUrl, accessToken, solutionUniqueName, cancellationToken);
+        if (solutionId is null)
+        {
+            return null;
+        }
+
+        // A Role solutioncomponent's objectid is the role's root (parent root role) id: the copy of the role in the root business unit.
+        var roleIds = await GetSolutionComponentObjectIdsAsync(environmentUrl, accessToken, solutionId.Value, RoleComponentType, cancellationToken);
+        if (roleIds.Count == 0)
+        {
+            return [];
+        }
+
+        return (await GetRootBusinessUnitRolesAsync(environmentUrl, accessToken, nameFilter: null, cancellationToken))
+            .Where(r => roleIds.Contains(r.RoleId))
+            .OrderBy(r => r.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    public async Task<SecurityRole?> TryGetRoleByNameAsync(Uri environmentUrl, string accessToken, string roleName, CancellationToken cancellationToken)
+    {
+        var matches = (await GetRootBusinessUnitRolesAsync(environmentUrl, accessToken, roleName, cancellationToken))
+            .Where(r => string.Equals(r.Name, roleName, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        // Two roles with one name can't be told apart by a file that names them, so neither is picked.
+        return matches.Count switch
+        {
+            0 => null,
+            1 => matches[0],
+            _ => throw new DuplicateRoleNameException(roleName, matches.Count),
+        };
+    }
+
+    public async Task<IReadOnlyList<RolePrivilege>> GetRolePrivilegesAsync(Uri environmentUrl, string accessToken, Guid roleId, CancellationToken cancellationToken)
+    {
+        var catalog = await GetTablePrivilegeCatalogAsync(environmentUrl, accessToken, cancellationToken);
+
+        using var request = CreateRequest(environmentUrl, $"RetrieveRolePrivilegesRole(RoleId=@roleId)?@roleId={roleId}", accessToken);
+        using var response = await SendAsync(request, RequestTimeout, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        using var doc = JsonDocument.Parse(json);
+
+        var result = new List<RolePrivilege>();
+        PrivilegeNames? names = null;
+        foreach (var held in doc.RootElement.GetProperty("RolePrivileges").EnumerateArray())
+        {
+            // A RecordFilter depth (4) has no access level in this tool's YAML; such a privilege is left out rather than misreported.
+            if (ParsePrivilegeDepth(held.GetProperty("Depth")) is not { } depth)
+            {
+                continue;
+            }
+
+            var privilegeId = held.GetProperty("PrivilegeId").GetGuid();
+            var name = held.TryGetProperty("PrivilegeName", out var nameElement) && nameElement.ValueKind == JsonValueKind.String ? nameElement.GetString() : null;
+
+            // One privilege can stand for the same right on several tables (e.g. the activity tables share theirs): it is reported on each.
+            if (catalog.ById.TryGetValue(privilegeId, out var tables))
+            {
+                result.AddRange(tables.Select(t => new RolePrivilege(PrivilegeIdentity.ForTable(t.Table, t.Right, name ?? t.Name), depth)));
+                continue;
+            }
+
+            // No name in the answer: look it up by id, so a non-table privilege is never silently dropped.
+            if (name is null)
+            {
+                names ??= await GetPrivilegeNamesAsync(environmentUrl, accessToken, cancellationToken);
+                name = names.ById.TryGetValue(privilegeId, out var looked) ? looked : throw new InvalidDataException($"Role {roleId} holds privilege {privilegeId}, which has no name in this environment.");
+            }
+
+            result.Add(new RolePrivilege(PrivilegeIdentity.ForName(name), depth));
+        }
+
+        return result;
+    }
+
+    public async Task AddRolePrivilegesAsync(Uri environmentUrl, string accessToken, Guid roleId, IReadOnlyList<RolePrivilege> privileges, CancellationToken cancellationToken)
+    {
+        if (privileges.Count == 0)
+        {
+            return;
+        }
+
+        var resolved = await ResolveForWriteAsync(environmentUrl, accessToken, privileges.Select(p => p.Privilege).ToList(), cancellationToken);
+
+        // Entries that resolve to one privilege (a shared one, listed from several tables) must agree: never pick one of them silently.
+        var byId = resolved.Zip(privileges, (r, p) => (r.PrivilegeId, r.Name, p.Depth)).GroupBy(p => p.PrivilegeId).ToList();
+        if (byId.FirstOrDefault(g => g.Select(p => p.Depth).Distinct().Count() > 1) is { } disagreeing)
+        {
+            throw new InvalidOperationException($"Privilege '{disagreeing.First().Name}' was asked for at more than one depth ({string.Join(", ", disagreeing.Select(p => p.Depth).Distinct())}); nothing was written.");
+        }
+
+        var businessUnitId = await GetRootBusinessUnitIdAsync(environmentUrl, accessToken, cancellationToken);
+
+        // AddPrivilegesRole adds each privilege at its depth, or changes the depth of one already held; every other privilege the role
+        // holds is untouched. (ReplacePrivilegesRole would replace them all, so it is never used.)
+        var body = new JsonObject
+        {
+            ["Privileges"] = new JsonArray(byId
+                .Select(g => (JsonNode)new JsonObject
+                {
+                    ["PrivilegeId"] = g.Key,
+                    ["Depth"] = g.First().Depth.ToString(),
+                    ["BusinessUnitId"] = businessUnitId,
+                })
+                .ToArray()),
+        };
+
+        await PostActionAsync(environmentUrl, $"roles({roleId})/Microsoft.Dynamics.CRM.AddPrivilegesRole", accessToken, body, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<ResolvedPrivilege?>> ResolvePrivilegesAsync(Uri environmentUrl, string accessToken, IReadOnlyList<PrivilegeIdentity> privileges, CancellationToken cancellationToken)
+    {
+        var catalog = await GetTablePrivilegeCatalogAsync(environmentUrl, accessToken, cancellationToken);
+        PrivilegeNames? names = null;
+
+        var result = new List<ResolvedPrivilege?>();
+        foreach (var privilege in privileges)
+        {
+            Guid? id;
+            if (privilege is { TableLogicalName: { } table, TableRight: { } right })
+            {
+                id = catalog.ByTableRight.TryGetValue((table, right), out var tableId) ? tableId : null;
+            }
+            else
+            {
+                var name = privilege.PrivilegeName ?? throw new ArgumentException("A privilege needs either a table and right or a name.", nameof(privileges));
+                names ??= await GetPrivilegeNamesAsync(environmentUrl, accessToken, cancellationToken);
+                id = names.ByName.TryGetValue(name, out var namedId) ? namedId : null;
+            }
+
+            if (id is not { } privilegeId)
+            {
+                result.Add(null);
+                continue;
+            }
+
+            var tables = catalog.ById.TryGetValue(privilegeId, out var entries) ? entries : [];
+            var platformName = tables.Count > 0
+                ? tables[0].Name
+                : (names ??= await GetPrivilegeNamesAsync(environmentUrl, accessToken, cancellationToken)).ById.GetValueOrDefault(privilegeId) ?? privilege.PrivilegeName ?? "";
+            result.Add(new ResolvedPrivilege(privilegeId, platformName, tables.Select(t => new TablePrivilegeRef(t.Table, t.Right)).ToList()));
+        }
+
+        return result;
+    }
+
+    public async Task RemoveRolePrivilegesAsync(Uri environmentUrl, string accessToken, Guid roleId, IReadOnlyList<PrivilegeIdentity> privileges, CancellationToken cancellationToken)
+    {
+        var resolved = await ResolveForWriteAsync(environmentUrl, accessToken, privileges, cancellationToken);
+
+        // RemovePrivilegeRole's one parameter is `Privilege`, of entity type `privilege` (Microsoft Learn, Web API reference: RemovePrivilegeRole Action).
+        foreach (var id in resolved.Select(r => r.PrivilegeId).Distinct())
+        {
+            var body = new JsonObject
+            {
+                ["Privilege"] = new JsonObject
+                {
+                    ["@odata.type"] = "Microsoft.Dynamics.CRM.privilege",
+                    ["privilegeid"] = id,
+                },
+            };
+
+            await PostActionAsync(environmentUrl, $"roles({roleId})/Microsoft.Dynamics.CRM.RemovePrivilegeRole", accessToken, body, cancellationToken);
+        }
+    }
+
+    /// <summary>Resolves every privilege about to be written; one that doesn't exist fails the whole write before anything is sent.</summary>
+    private async Task<IReadOnlyList<ResolvedPrivilege>> ResolveForWriteAsync(Uri environmentUrl, string accessToken, IReadOnlyList<PrivilegeIdentity> privileges, CancellationToken cancellationToken)
+    {
+        var resolved = await ResolvePrivilegesAsync(environmentUrl, accessToken, privileges, cancellationToken);
+        var missing = privileges.Where((_, i) => resolved[i] is null).Select(p => p.IsTablePrivilege ? $"{p.TableRight} on {p.TableLogicalName}" : p.PrivilegeName).ToList();
+        return missing.Count > 0
+            ? throw new InvalidDataException($"No such privilege in this environment: {string.Join(", ", missing)}. Nothing was written.")
+            : resolved.Select(r => r!).ToList();
+    }
+
+    /// <summary>The roles of the root business unit (optionally just those with one name), each by id and name.</summary>
+    private async Task<IReadOnlyList<SecurityRole>> GetRootBusinessUnitRolesAsync(Uri environmentUrl, string accessToken, string? nameFilter, CancellationToken cancellationToken)
+    {
+        var businessUnitId = await GetRootBusinessUnitIdAsync(environmentUrl, accessToken, cancellationToken);
+        var filter = $"_businessunitid_value eq {businessUnitId}";
+        if (nameFilter is not null)
+        {
+            filter += $" and name eq '{Uri.EscapeDataString(EscapeODataStringLiteral(nameFilter))}'";
+        }
+
+        var roles = new List<SecurityRole>();
+        foreach (var page in await GetAllPagesAsync(environmentUrl, accessToken, $"roles?$select=roleid,name&$filter={filter}", cancellationToken))
+        {
+            roles.AddRange(page.Select(e => new SecurityRole(e.GetProperty("roleid").GetGuid(), e.GetProperty("name").GetString() ?? "")));
+        }
+
+        return roles;
+    }
+
+    /// <summary>The root business unit: the one with no parent. Every role exists in it; its copy is the one a solution holds.</summary>
+    private async Task<Guid> GetRootBusinessUnitIdAsync(Uri environmentUrl, string accessToken, CancellationToken cancellationToken)
+    {
+        lock (_rootBusinessUnitIds)
+        {
+            if (_rootBusinessUnitIds.TryGetValue(environmentUrl, out var cached))
+            {
+                return cached;
+            }
+        }
+
+        using var request = CreateRequest(environmentUrl, "businessunits?$select=businessunitid&$filter=_parentbusinessunitid_value eq null", accessToken);
+        using var response = await SendAsync(request, RequestTimeout, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        using var doc = JsonDocument.Parse(json);
+        var id = doc.RootElement.GetProperty("value").EnumerateArray().Select(e => e.GetProperty("businessunitid").GetGuid()).FirstOrDefault();
+        if (id == Guid.Empty)
+        {
+            throw new InvalidDataException("Couldn't find the root business unit (the one with no parent).");
+        }
+
+        lock (_rootBusinessUnitIds)
+        {
+            _rootBusinessUnitIds[environmentUrl] = id;
+        }
+
+        return id;
+    }
+
+    /// <summary>
+    /// Every table's eight privileges, by id and by (table, right), from each table's own metadata (<c>EntityMetadata.Privileges</c>,
+    /// <c>SecurityPrivilegeMetadata</c>: PrivilegeId, Name, PrivilegeType). A privilege that isn't in here is a non-table privilege.
+    /// </summary>
+    private async Task<TablePrivilegeCatalog> GetTablePrivilegeCatalogAsync(Uri environmentUrl, string accessToken, CancellationToken cancellationToken)
+    {
+        lock (_tablePrivilegeCatalogs)
+        {
+            if (_tablePrivilegeCatalogs.TryGetValue(environmentUrl, out var cached))
+            {
+                return cached;
+            }
+        }
+
+        using var request = CreateRequest(environmentUrl, "EntityDefinitions?$select=LogicalName,Privileges", accessToken);
+        using var response = await SendAsync(request, RequestTimeout, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        using var doc = JsonDocument.Parse(json);
+
+        var byId = new Dictionary<Guid, List<(string Table, TablePrivilege Right, string Name)>>();
+        var byTableRight = new Dictionary<(string Table, TablePrivilege Right), Guid>(TableRightComparer.Instance);
+        foreach (var entity in doc.RootElement.GetProperty("value").EnumerateArray())
+        {
+            var table = entity.GetProperty("LogicalName").GetString()!;
+            if (!entity.TryGetProperty("Privileges", out var privileges) || privileges.ValueKind != JsonValueKind.Array)
+            {
+                continue;
+            }
+
+            foreach (var privilege in privileges.EnumerateArray())
+            {
+                if (ParsePrivilegeType(privilege.GetProperty("PrivilegeType")) is not { } right)
+                {
+                    continue;
+                }
+
+                var id = privilege.GetProperty("PrivilegeId").GetGuid();
+                var name = privilege.TryGetProperty("Name", out var nameElement) ? nameElement.GetString() ?? "" : "";
+                if (!byId.TryGetValue(id, out var list))
+                {
+                    byId[id] = list = [];
+                }
+
+                list.Add((table, right, name));
+                byTableRight[(table, right)] = id;
+            }
+        }
+
+        var catalog = new TablePrivilegeCatalog(byId, byTableRight);
+        lock (_tablePrivilegeCatalogs)
+        {
+            _tablePrivilegeCatalogs[environmentUrl] = catalog;
+        }
+
+        return catalog;
+    }
+    /// <summary>Every privilege's name by id and id by name (case-insensitive), from the <c>privileges</c> table. Read once per environment.</summary>
+    private async Task<PrivilegeNames> GetPrivilegeNamesAsync(Uri environmentUrl, string accessToken, CancellationToken cancellationToken)
+    {
+        lock (_privilegeNames)
+        {
+            if (_privilegeNames.TryGetValue(environmentUrl, out var cached))
+            {
+                return cached;
+            }
+        }
+
+        var byId = new Dictionary<Guid, string>();
+        var byName = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
+        foreach (var page in await GetAllPagesAsync(environmentUrl, accessToken, "privileges?$select=privilegeid,name", cancellationToken))
+        {
+            foreach (var row in page)
+            {
+                var id = row.GetProperty("privilegeid").GetGuid();
+                var name = row.GetProperty("name").GetString() ?? "";
+                byId[id] = name;
+                byName[name] = id;
+            }
+        }
+
+        var names = new PrivilegeNames(byId, byName);
+        lock (_privilegeNames)
+        {
+            _privilegeNames[environmentUrl] = names;
+        }
+
+        return names;
+    }
+
+    private sealed record PrivilegeNames(IReadOnlyDictionary<Guid, string> ById, IReadOnlyDictionary<string, Guid> ByName);
+
+    /// <summary>Every page of a collection query, following <c>@odata.nextLink</c>.</summary>
+    private async Task<List<List<JsonElement>>> GetAllPagesAsync(Uri environmentUrl, string accessToken, string relativePath, CancellationToken cancellationToken)
+    {
+        var pages = new List<List<JsonElement>>();
+        string? next = relativePath;
+        while (next is not null)
+        {
+            using var request = CreateRequest(environmentUrl, next, accessToken);
+            using var response = await SendAsync(request, RequestTimeout, cancellationToken);
+            await EnsureSuccessAsync(response, cancellationToken);
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            using var doc = JsonDocument.Parse(json);
+            pages.Add(doc.RootElement.GetProperty("value").EnumerateArray().Select(e => e.Clone()).ToList());
+            next = doc.RootElement.TryGetProperty("@odata.nextLink", out var link) ? link.GetString() : null;
+        }
+
+        return pages;
+    }
+
+    /// <summary>The Web API's PrivilegeDepth (Basic = 0, Local = 1, Deep = 2, Global = 3, RecordFilter = 4), as its name or its number. Null for RecordFilter.</summary>
+    private static PrivilegeDepth? ParsePrivilegeDepth(JsonElement element) =>
+        (element.ValueKind == JsonValueKind.Number ? element.GetInt32().ToString(System.Globalization.CultureInfo.InvariantCulture) : element.GetString()) switch
+        {
+            "Basic" or "0" => PrivilegeDepth.Basic,
+            "Local" or "1" => PrivilegeDepth.Local,
+            "Deep" or "2" => PrivilegeDepth.Deep,
+            "Global" or "3" => PrivilegeDepth.Global,
+            _ => null,
+        };
+
+    /// <summary>The Web API's PrivilegeType (None = 0, Create = 1, Read = 2, Write = 3, Delete = 4, Assign = 5, Share = 6, Append = 7, AppendTo = 8), as its name or its number. Null for None.</summary>
+    private static TablePrivilege? ParsePrivilegeType(JsonElement element) =>
+        (element.ValueKind == JsonValueKind.Number ? element.GetInt32().ToString(System.Globalization.CultureInfo.InvariantCulture) : element.GetString()) switch
+        {
+            "Create" or "1" => TablePrivilege.Create,
+            "Read" or "2" => TablePrivilege.Read,
+            "Write" or "3" => TablePrivilege.Write,
+            "Delete" or "4" => TablePrivilege.Delete,
+            "Assign" or "5" => TablePrivilege.Assign,
+            "Share" or "6" => TablePrivilege.Share,
+            "Append" or "7" => TablePrivilege.Append,
+            "AppendTo" or "8" => TablePrivilege.AppendTo,
+            _ => null,
+        };
+
+    private sealed record TablePrivilegeCatalog(
+        IReadOnlyDictionary<Guid, List<(string Table, TablePrivilege Right, string Name)>> ById,
+        IReadOnlyDictionary<(string Table, TablePrivilege Right), Guid> ByTableRight);
+
+    private sealed class TableRightComparer : IEqualityComparer<(string Table, TablePrivilege Right)>
+    {
+        public static readonly TableRightComparer Instance = new();
+
+        public bool Equals((string Table, TablePrivilege Right) x, (string Table, TablePrivilege Right) y) =>
+            x.Right == y.Right && string.Equals(x.Table, y.Table, StringComparison.OrdinalIgnoreCase);
+
+        public int GetHashCode((string Table, TablePrivilege Right) obj) => HashCode.Combine(StringComparer.OrdinalIgnoreCase.GetHashCode(obj.Table), obj.Right);
+    }
 }

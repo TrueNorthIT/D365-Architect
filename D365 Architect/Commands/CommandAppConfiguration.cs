@@ -3,6 +3,7 @@ using D365Architect.Commands.Choice;
 using D365Architect.Commands.Environments;
 using D365Architect.Commands.Form;
 using D365Architect.Commands.Schema;
+using D365Architect.Commands.Security;
 using D365Architect.Commands.Solution;
 using D365Architect.Commands.Table;
 using D365Architect.Commands.View;
@@ -31,6 +32,7 @@ public static class CommandAppConfiguration
         ViewCommands.Configure(config);
         FormCommands.Configure(config);
         ChoiceCommands.Configure(config);
+        SecurityCommands.Configure(config);
         SolutionCommands.Configure(config);
         SchemaCommands.Configure(config);
     }
