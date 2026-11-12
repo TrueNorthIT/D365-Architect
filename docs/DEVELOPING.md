@@ -660,7 +660,11 @@ is called out by name in its test's own doc comment or `[Fact]` name:
 A few tests run against a real Dataverse environment, to prove what the fakes
 can't (`TableCreateServiceLiveTests`: that `solution import`'s one-transaction
 table create really rolls back as one, names the failing table, and adds each
-table to the solution). They're marked `[LiveFact]` and
+table to the solution; `SecurityRoleShapeLiveTests`: that privileges written
+by `security import` export in the solution XML exactly as the file asked, and
+re-import as no changes). They're regression tests against Microsoft's API as
+much as against this tool: run them before a release to catch a platform
+change early. They're marked `[LiveFact]` and
 `[Trait("Category", "Live")]`, and are **off by default**: unless both
 environment variables below are set, a plain `dotnet test` reports them as
 skipped, so CI and everyone else stay green.

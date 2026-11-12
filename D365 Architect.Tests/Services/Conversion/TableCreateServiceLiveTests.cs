@@ -16,6 +16,7 @@ namespace D365Architect.Tests.Services.Conversion;
 /// under <see cref="TestTimeout"/>; whatever a test created is deleted in <see cref="DisposeAsync"/>, pass or fail.
 /// </summary>
 [Trait("Category", "Live")]
+[Collection(LiveCollection.Name)]
 public sealed class TableCreateServiceLiveTests : IAsyncLifetime
 {
     private static readonly TimeSpan TestTimeout = TimeSpan.FromMinutes(10);
