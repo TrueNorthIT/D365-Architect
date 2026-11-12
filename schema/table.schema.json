@@ -160,7 +160,7 @@
             "type": "string"
           },
           "relationshipSchemaName": {
-            "description": "Lookup only, required to create a brand-new Lookup column: the schema name of the one-to-many relationship that owns this lookup — a separate name from the column's own SchemaName, never inferred. Not used for Customer (its two relationship names are derived from SchemaName instead — see `docs/yaml-conventions.md`) or for any other type.",
+            "description": "Single-target Lookup only, required to create a brand-new one: the schema name of the one-to-many relationship that owns this lookup — a separate name from the column's own SchemaName, never inferred. Not used for a multi-table Lookup or Customer (every one of their relationship names is derived as {schemaName}_{target} instead — see `docs/yaml-conventions.md`) or for any other type.",
             "type": "string"
           },
           "relationshipBehavior": {

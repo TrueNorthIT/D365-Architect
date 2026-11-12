@@ -134,6 +134,20 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
                     await dataverseClient.CreateCustomerRelationshipsAsync(environmentUrl, accessToken, plan.RequestBody!, solutionUniqueName, cancellationToken);
                     break;
 
+                case AttributeImportAction.CreatePolymorphicLookup:
+                    await dataverseClient.CreatePolymorphicLookupAttributeAsync(environmentUrl, accessToken, plan.RequestBody!, solutionUniqueName, cancellationToken);
+                    break;
+
+                // Each added target is a new relationship component, so —
+                // like every other create — it's scoped to the solution.
+                case AttributeImportAction.AddLookupTargets:
+                    foreach (var added in plan.AddedLookupTargets!)
+                    {
+                        await dataverseClient.CreateOneToManyRelationshipAsync(environmentUrl, accessToken, added.RequestBody, solutionUniqueName, cancellationToken);
+                    }
+
+                    break;
+
                 // Unchanged/SkippedUnsupportedType/WouldRemove/Invalid: nothing to do, by design.
             }
 
@@ -194,6 +208,16 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
 
                 case AttributeImportAction.CreateCustomerRelationship:
                     writes.Add(new DataverseWrite.CreateCustomerRelationships(plan.RequestBody!, solutionUniqueName));
+                    break;
+
+                case AttributeImportAction.CreatePolymorphicLookup:
+                    writes.Add(new DataverseWrite.CreatePolymorphicLookupAttribute(plan.RequestBody!, solutionUniqueName));
+                    break;
+
+                // Each added target is a new relationship component, so —
+                // like every other create — it's scoped to the solution.
+                case AttributeImportAction.AddLookupTargets:
+                    writes.AddRange(plan.AddedLookupTargets!.Select(added => new DataverseWrite.CreateOneToManyRelationship(added.RequestBody, solutionUniqueName)));
                     break;
 
                 // Unchanged/SkippedUnsupportedType/WouldRemove/Invalid: nothing to do, by design.
@@ -280,8 +304,11 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
         // RelationshipSchemaName would both plan as CreateLookupRelationship
         // and only collide when Dataverse rejects the second
         // RelationshipDefinitions POST live.
+        // Only a single-target Lookup uses RelationshipSchemaName — a
+        // multi-table one derives every relationship name from its own
+        // SchemaName (already covered by duplicateSchemaNames above).
         var duplicateRelationshipSchemaNames = local.Attributes
-            .Where(a => !existingByName.ContainsKey(a.Name) && a.Type == "Lookup" && a.RelationshipSchemaName is not null)
+            .Where(a => !existingByName.ContainsKey(a.Name) && UsesRelationshipSchemaName(a))
             .GroupBy(a => a.RelationshipSchemaName, StringComparer.OrdinalIgnoreCase)
             .Where(g => g.Count() > 1)
             .Select(g => g.Key!)
@@ -298,7 +325,7 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
                     continue;
                 }
 
-                if (localAttribute.RelationshipSchemaName is not null && duplicateRelationshipSchemaNames.Contains(localAttribute.RelationshipSchemaName))
+                if (UsesRelationshipSchemaName(localAttribute) && duplicateRelationshipSchemaNames.Contains(localAttribute.RelationshipSchemaName!))
                 {
                     plans.Add(new AttributeImportPlan(localAttribute.Name, AttributeImportAction.Invalid,
                         $"RelationshipSchemaName '{localAttribute.RelationshipSchemaName}' is used by more than one new Lookup column in this YAML — Dataverse requires it to be unique.", null));
@@ -362,13 +389,12 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
         // isn't in AttributesMatch's field list either (this tool never
         // writes it back for an existing Lookup/Customer/Owner column),
         // so a changed Targets would otherwise be silently ignored
-        // rather than caught as the invalid, would-fail change it is.
+        // rather than caught here and planned for.
         if (localAttribute.Type is "Lookup" or "Customer" or "Owner"
             && localAttribute.Targets is not null
             && !TargetsMatch(localAttribute.Targets, existingAttribute.Targets))
         {
-            return new AttributeImportPlan(localAttribute.Name, AttributeImportAction.Invalid,
-                $"Can't change Targets on an existing {localAttribute.Type} column — immutable after creation.", null);
+            return PlanTargetsChange(entityLogicalName, localAttribute, existingAttribute);
         }
 
         if (AttributesMatch(localAttribute, existingAttribute))
@@ -378,6 +404,89 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
 
         return await BuildUpdatePlanAsync(environmentUrl, accessToken, entityLogicalName, localAttribute, existingAttribute, cancellationToken);
     }
+
+    /// <summary>
+    /// What a changed <c>Targets</c> list on an existing lookup column plans
+    /// as. Only one shape is a supported change: a multi-table Lookup (more
+    /// than one target live) gaining further targets, with none removed.
+    /// Each added target is an ordinary one-to-many relationship create
+    /// whose <c>Lookup.SchemaName</c> names the existing column (see
+    /// <see cref="AttributeMetadataJsonBuilder.BuildLookupTargetAddBody"/>),
+    /// one per target, all applied in the same import. Everything else stays
+    /// <see cref="AttributeImportAction.Invalid"/> with the reason: removing
+    /// a target, checked first so it's reported even when other targets are
+    /// being added (destructive: values pointing at the dropped table would
+    /// lose their lookup, and this tool never deletes, same policy as a
+    /// whole column); turning a single-target Lookup into a multi-table one
+    /// or the reverse (Dataverse can't convert an existing lookup between
+    /// the two shapes, so create a new column instead); and any change to
+    /// Customer's fixed account/contact pair or an Owner column.
+    /// </summary>
+    private static AttributeImportPlan PlanTargetsChange(string entityLogicalName, AttributeDefinition localAttribute, AttributeDefinition existingAttribute)
+    {
+        var existingTargets = existingAttribute.Targets ?? [];
+        var localTargets = localAttribute.Targets!;
+
+        if (localAttribute.Type != "Lookup")
+        {
+            return new AttributeImportPlan(localAttribute.Name, AttributeImportAction.Invalid,
+                $"Can't change Targets on an existing {localAttribute.Type} column — immutable after creation.", null);
+        }
+
+        var existingIsMultiTable = existingTargets.Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1;
+        var localIsMultiTable = localTargets.Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1;
+        if (existingIsMultiTable != localIsMultiTable)
+        {
+            return new AttributeImportPlan(localAttribute.Name, AttributeImportAction.Invalid,
+                "Can't change an existing Lookup between single-target and multi-table (polymorphic) — Dataverse can't convert an existing lookup between the two shapes. Create a new column instead.", null);
+        }
+
+        if (!existingIsMultiTable)
+        {
+            return new AttributeImportPlan(localAttribute.Name, AttributeImportAction.Invalid,
+                $"Can't change Targets on an existing {localAttribute.Type} column — immutable after creation.", null);
+        }
+
+        var localTargetSet = localTargets.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var removedTargets = existingTargets.Where(t => !localTargetSet.Contains(t)).ToList();
+        if (removedTargets.Count > 0)
+        {
+            return new AttributeImportPlan(localAttribute.Name, AttributeImportAction.Invalid,
+                $"Can't remove target table(s) {string.Join(", ", removedTargets)} from an existing multi-table Lookup — removing a target is destructive (values pointing at the dropped table lose their lookup) and, like every other destructive change, this tool refuses it. Delete the column and create it again with the remaining targets instead.", null);
+        }
+
+        var existingTargetSet = existingTargets.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var addedTargets = localTargets
+            .Where(t => !existingTargetSet.Contains(t))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        try
+        {
+            var added = addedTargets
+                .Select(target => new LookupTargetAddPlan(
+                    target,
+                    AttributeMetadataJsonBuilder.MultiTableRelationshipSchemaName(existingAttribute.SchemaName!, target),
+                    AttributeMetadataJsonBuilder.BuildLookupTargetAddBody(entityLogicalName, existingAttribute, target, localAttribute.RelationshipBehavior)))
+                .ToList();
+
+            return new AttributeImportPlan(localAttribute.Name, AttributeImportAction.AddLookupTargets, null, null)
+            {
+                AddedLookupTargets = added,
+            };
+        }
+        catch (InvalidOperationException ex)
+        {
+            // An existing column skips ValidateCreate, so an invalid
+            // relationshipBehavior (or a live column with no SchemaName) is
+            // caught here and reported instead of being sent.
+            return new AttributeImportPlan(localAttribute.Name, AttributeImportAction.Invalid, ex.Message, null);
+        }
+    }
+
+    /// <summary>True for a single-target Lookup, the only column whose create uses <see cref="AttributeDefinition.RelationshipSchemaName"/> (a multi-table Lookup and Customer derive their relationship names from SchemaName).</summary>
+    private static bool UsesRelationshipSchemaName(AttributeDefinition attribute) =>
+        attribute.Type == "Lookup" && attribute.Targets is { Count: 1 } && attribute.RelationshipSchemaName is not null;
 
     private static bool TargetsMatch(IReadOnlyList<string> local, IReadOnlyList<string>? existing) =>
         existing is not null && local.ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(existing);
@@ -444,9 +553,18 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
 
             try
             {
-                return local.Type == "Lookup"
-                    ? new AttributeImportPlan(local.Name, AttributeImportAction.CreateLookupRelationship, null, AttributeMetadataJsonBuilder.BuildRelationshipCreateBody(entityLogicalName, local))
-                    : new AttributeImportPlan(local.Name, AttributeImportAction.CreateCustomerRelationship, null, AttributeMetadataJsonBuilder.BuildCustomerRelationshipCreateBody(entityLogicalName, local));
+                if (local.Type == "Lookup")
+                {
+                    // A single-target Lookup is a plain one-to-many
+                    // relationship; more than one is a multi-table
+                    // (polymorphic) lookup, created by the dedicated
+                    // CreatePolymorphicLookupAttribute action instead.
+                    return local.Targets is { Count: 1 }
+                        ? new AttributeImportPlan(local.Name, AttributeImportAction.CreateLookupRelationship, null, AttributeMetadataJsonBuilder.BuildRelationshipCreateBody(entityLogicalName, local))
+                        : new AttributeImportPlan(local.Name, AttributeImportAction.CreatePolymorphicLookup, null, AttributeMetadataJsonBuilder.BuildPolymorphicLookupCreateBody(entityLogicalName, local));
+                }
+
+                return new AttributeImportPlan(local.Name, AttributeImportAction.CreateCustomerRelationship, null, AttributeMetadataJsonBuilder.BuildCustomerRelationshipCreateBody(entityLogicalName, local));
             }
             catch (InvalidOperationException ex)
             {

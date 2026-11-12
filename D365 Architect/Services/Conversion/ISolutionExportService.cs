@@ -30,8 +30,10 @@ public interface ISolutionExportService
 /// <param name="TableYaml">The table's own curated YAML, as <see cref="ITableExportService.ExportTableAsync"/> would write to <c>&lt;entity&gt;.table.yml</c>.</param>
 /// <param name="Views">Every view this solution customizes on the table — empty when it customizes none.</param>
 /// <param name="Forms">Every form this solution customizes on the table — empty when it customizes none.</param>
-public sealed record SolutionExportEntity(string EntityLogicalName, string TableYaml, IReadOnlyList<ExportedView> Views, IReadOnlyList<ExportedForm> Forms);
+/// <param name="SecurityYaml">The table's security file (<c>&lt;entity&gt;.security.yml</c>) as <see cref="ISecurityExportService"/> produced it - null when no role of the solution holds any privilege on the table, so the caller writes no file rather than an empty one.</param>
+public sealed record SolutionExportEntity(string EntityLogicalName, string TableYaml, IReadOnlyList<ExportedView> Views, IReadOnlyList<ExportedForm> Forms, string? SecurityYaml = null);
 
 /// <param name="Entities">One entry per table the solution's Entity components name — see <see cref="Dataverse.IDataverseClient.TryGetSolutionEntityLogicalNamesAsync"/>. Empty when the solution carries no table components at all (e.g. a choices-only solution).</param>
 /// <param name="ChoicesYaml">The solution's global choices, as <see cref="IGlobalChoiceExportService.ExportGlobalChoicesAsync"/> would write to <c>choices.yml</c> at the solution's root — null when the solution customizes none, so the caller writes no file rather than an empty list.</param>
-public sealed record SolutionExportResult(IReadOnlyList<SolutionExportEntity> Entities, string? ChoicesYaml);
+/// <param name="Roles">One entry per role file to write under <c>roles/</c> at the solution's root (<see cref="ISecurityExportService"/>): every role of the solution. Null or empty when the export is limited to tables (<c>--table</c>) or the solution has no roles.</param>
+public sealed record SolutionExportResult(IReadOnlyList<SolutionExportEntity> Entities, string? ChoicesYaml, IReadOnlyList<ExportedRole>? Roles = null);

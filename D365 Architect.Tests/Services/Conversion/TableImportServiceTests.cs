@@ -182,6 +182,213 @@ public sealed class TableImportServiceTests
         Assert.Contains("Targets", plan.Reason);
     }
 
+    // ---- Multi-table (polymorphic) Lookup ----
+
+    private const string ExistingMultiLookupJson = """{ "LogicalName": "tn_lookup", "SchemaName": "tn_Lookup", "AttributeType": "Lookup", "DisplayName": { "UserLocalizedLabel": { "Label": "Lookup" } }, "Targets": ["contact", "account"] }""";
+
+    [Fact]
+    public async Task PreviewAsync_NewMultiTargetLookup_PlansCreatePolymorphicLookup()
+    {
+        var (service, _) = CreateService(Entity(""));
+        var local = Local(Attr("tn_lookup", "Lookup", schemaName: "tn_Lookup", configure: b => b.Targets = ["contact", "account"]));
+
+        var preview = await service.PreviewAsync(new Uri("https://test.crm.dynamics.com"), "token", local, CancellationToken.None);
+
+        var plan = Assert.Single(preview.AttributePlans);
+        Assert.Equal(AttributeImportAction.CreatePolymorphicLookup, plan.Action);
+    }
+
+    [Fact]
+    public async Task PreviewAsync_NewMultiTargetLookup_SharingARelationshipSchemaNameWithASingleTargetLookup_NotADuplicate()
+    {
+        // A multi-table lookup doesn't use relationshipSchemaName, so it
+        // can't collide with a single-target lookup's.
+        var (service, _) = CreateService(Entity(""));
+        var local = Local(
+            Attr("tn_lookup", "Lookup", schemaName: "tn_Lookup", configure: b =>
+            {
+                b.RelationshipSchemaName = "tn_test_contact";
+                b.Targets = ["contact", "account"];
+            }),
+            Attr("tn_contact", "Lookup", schemaName: "tn_Contact", configure: b =>
+            {
+                b.RelationshipSchemaName = "tn_test_contact";
+                b.Targets = ["contact"];
+            }));
+
+        var preview = await service.PreviewAsync(new Uri("https://test.crm.dynamics.com"), "token", local, CancellationToken.None);
+
+        Assert.Equal(AttributeImportAction.CreatePolymorphicLookup, preview.AttributePlans.Single(p => p.LogicalName == "tn_lookup").Action);
+        Assert.Equal(AttributeImportAction.CreateLookupRelationship, preview.AttributePlans.Single(p => p.LogicalName == "tn_contact").Action);
+    }
+
+    [Fact]
+    public async Task PreviewAsync_NewLookupWithDuplicateTargets_PlansInvalid()
+    {
+        var (service, _) = CreateService(Entity(""));
+        var local = Local(Attr("tn_lookup", "Lookup", schemaName: "tn_Lookup", configure: b => b.Targets = ["contact", "Contact"]));
+
+        var preview = await service.PreviewAsync(new Uri("https://test.crm.dynamics.com"), "token", local, CancellationToken.None);
+
+        var plan = Assert.Single(preview.AttributePlans);
+        Assert.Equal(AttributeImportAction.Invalid, plan.Action);
+        Assert.Contains("more than once", plan.Reason);
+    }
+
+    [Fact]
+    public async Task ApplyAsync_MultiTargetLookupCreatePlan_CallsCreatePolymorphicLookupAttribute_NotCreateAttribute()
+    {
+        var (service, client) = CreateService(Entity(""));
+        var local = Local(Attr("tn_lookup", "Lookup", schemaName: "tn_Lookup", configure: b => b.Targets = ["contact", "account"]));
+        var preview = await service.PreviewAsync(new Uri("https://test.crm.dynamics.com"), "token", local, CancellationToken.None);
+
+        await service.ApplyAsync(new Uri("https://test.crm.dynamics.com"), "token", preview, CancellationToken.None);
+
+        var call = Assert.Single(client.CreatePolymorphicLookupAttributeCalls);
+        Assert.Empty(client.CreateAttributeCalls);
+        Assert.Empty(client.CreateOneToManyRelationshipCalls);
+        Assert.Equal("tn_Lookup", (string)call.Body["Lookup"]!["SchemaName"]!);
+        var names = ((System.Text.Json.Nodes.JsonArray)call.Body["OneToManyRelationships"]!).Select(r => (string)r!["SchemaName"]!).ToList();
+        Assert.Equal(["tn_Lookup_contact", "tn_Lookup_account"], names);
+    }
+
+    [Fact]
+    public async Task PreviewAsync_AddTargetToExistingMultiLookup_PlansAddLookupTargets()
+    {
+        var (service, _) = CreateService(Entity(ExistingMultiLookupJson));
+        var local = Local(Attr("tn_lookup", "Lookup", schemaName: "tn_Lookup", configure: b => b.Targets = ["contact", "account", "systemuser"]));
+
+        var preview = await service.PreviewAsync(new Uri("https://test.crm.dynamics.com"), "token", local, CancellationToken.None);
+
+        var plan = Assert.Single(preview.AttributePlans);
+        Assert.Equal(AttributeImportAction.AddLookupTargets, plan.Action);
+        Assert.Null(plan.RequestBody);
+        var added = Assert.Single(plan.AddedLookupTargets!);
+        Assert.Equal("systemuser", added.Target);
+        Assert.Equal("tn_Lookup_systemuser", added.RelationshipSchemaName);
+    }
+
+    [Fact]
+    public async Task ApplyAsync_AddTargetToExistingMultiLookup_CreatesOneToManyRelationshipInTheSolution()
+    {
+        var (service, client) = CreateService(Entity(ExistingMultiLookupJson));
+        var local = Local(Attr("tn_lookup", "Lookup", schemaName: "tn_Lookup", configure: b => b.Targets = ["contact", "account", "systemuser"]));
+        var preview = await service.PreviewAsync(new Uri("https://test.crm.dynamics.com"), "token", local, CancellationToken.None);
+
+        await service.ApplyAsync(new Uri("https://test.crm.dynamics.com"), "token", preview, useTransaction: false, solutionUniqueName: "JCTest", CancellationToken.None);
+
+        Assert.Empty(client.CreatePolymorphicLookupAttributeCalls);
+        var call = Assert.Single(client.CreateOneToManyRelationshipCalls);
+        Assert.Equal("JCTest", call.SolutionUniqueName);
+        Assert.Equal("Microsoft.Dynamics.CRM.OneToManyRelationshipMetadata", (string)call.Metadata["@odata.type"]!);
+        Assert.Equal("tn_Lookup_systemuser", (string)call.Metadata["SchemaName"]!);
+        Assert.Equal("systemuser", (string)call.Metadata["ReferencedEntity"]!);
+        Assert.Equal("systemuserid", (string)call.Metadata["ReferencedAttribute"]!);
+        Assert.Equal("tn_test", (string)call.Metadata["ReferencingEntity"]!);
+        // The Lookup names the existing column, so the relationship is added
+        // to it rather than creating a new column.
+        Assert.Equal("tn_Lookup", (string)call.Metadata["Lookup"]!["SchemaName"]!);
+        Assert.Equal("Lookup", (string)call.Metadata["Lookup"]!["DisplayName"]!["LocalizedLabels"]![0]!["Label"]!);
+    }
+
+    [Fact]
+    public async Task ApplyAsync_SeveralTargetsAddedToExistingMultiLookup_AllAddedInOneImport_ScopedToTheSolution()
+    {
+        var (service, client) = CreateService(Entity(ExistingMultiLookupJson));
+        var local = Local(Attr("tn_lookup", "Lookup", schemaName: "tn_Lookup", configure: b => b.Targets = ["contact", "systemuser", "account", "team"]));
+        var preview = await service.PreviewAsync(new Uri("https://test.crm.dynamics.com"), "token", local, CancellationToken.None);
+
+        var plan = Assert.Single(preview.AttributePlans);
+        Assert.Equal(AttributeImportAction.AddLookupTargets, plan.Action);
+        Assert.Null(plan.Warnings);
+        Assert.Equal(["systemuser", "team"], plan.AddedLookupTargets!.Select(a => a.Target).ToList());
+
+        await service.ApplyAsync(new Uri("https://test.crm.dynamics.com"), "token", preview, useTransaction: true, solutionUniqueName: "JCTest", CancellationToken.None);
+
+        var writes = Assert.Single(client.ExecuteTransactionCalls);
+        Assert.Equal(2, writes.Count);
+        Assert.All(writes, w => Assert.Equal("JCTest", Assert.IsType<DataverseWrite.CreateOneToManyRelationship>(w).SolutionUniqueName));
+        Assert.Equal(
+            ["tn_Lookup_systemuser", "tn_Lookup_team"],
+            writes.Cast<DataverseWrite.CreateOneToManyRelationship>().Select(w => (string)w.Metadata["SchemaName"]!).ToList());
+        Assert.All(writes.Cast<DataverseWrite.CreateOneToManyRelationship>(), w => Assert.Equal("tn_Lookup", (string)w.Metadata["Lookup"]!["SchemaName"]!));
+    }
+
+    [Fact]
+    public async Task PreviewAsync_AddTargetToExistingMultiLookup_InvalidRelationshipBehavior_PlansInvalid()
+    {
+        var (service, _) = CreateService(Entity(ExistingMultiLookupJson));
+        var local = Local(Attr("tn_lookup", "Lookup", schemaName: "tn_Lookup", configure: b =>
+        {
+            b.Targets = ["contact", "account", "systemuser"];
+            b.RelationshipBehavior = "Cascade";
+        }));
+
+        var preview = await service.PreviewAsync(new Uri("https://test.crm.dynamics.com"), "token", local, CancellationToken.None);
+
+        var plan = Assert.Single(preview.AttributePlans);
+        Assert.Equal(AttributeImportAction.Invalid, plan.Action);
+        Assert.Contains("RelationshipBehavior", plan.Reason);
+    }
+
+    [Fact]
+    public async Task PreviewAsync_RemoveTargetFromExistingMultiLookup_PlansInvalid()
+    {
+        var existing = Entity("""{ "LogicalName": "tn_lookup", "SchemaName": "tn_Lookup", "AttributeType": "Lookup", "Targets": ["contact", "account", "systemuser"] }""");
+        var (service, _) = CreateService(existing);
+        var local = Local(Attr("tn_lookup", "Lookup", schemaName: "tn_Lookup", configure: b => b.Targets = ["contact", "account"]));
+
+        var preview = await service.PreviewAsync(new Uri("https://test.crm.dynamics.com"), "token", local, CancellationToken.None);
+
+        var plan = Assert.Single(preview.AttributePlans);
+        Assert.Equal(AttributeImportAction.Invalid, plan.Action);
+        Assert.Contains("remove target table(s) systemuser", plan.Reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task PreviewAsync_TargetAddedAndAnotherRemoved_PlansInvalid_ReportsTheRemoval()
+    {
+        // Same count either side: the removal of systemuser must still be
+        // reported, never hidden behind the addition of team.
+        var existing = Entity("""{ "LogicalName": "tn_lookup", "SchemaName": "tn_Lookup", "AttributeType": "Lookup", "Targets": ["contact", "account", "systemuser"] }""");
+        var (service, _) = CreateService(existing);
+        var local = Local(Attr("tn_lookup", "Lookup", schemaName: "tn_Lookup", configure: b => b.Targets = ["contact", "account", "team"]));
+
+        var preview = await service.PreviewAsync(new Uri("https://test.crm.dynamics.com"), "token", local, CancellationToken.None);
+
+        var plan = Assert.Single(preview.AttributePlans);
+        Assert.Equal(AttributeImportAction.Invalid, plan.Action);
+        Assert.Contains("remove target table(s) systemuser", plan.Reason, StringComparison.OrdinalIgnoreCase);
+        Assert.Null(plan.AddedLookupTargets);
+    }
+
+    [Fact]
+    public async Task PreviewAsync_SingleToMultiConversion_PlansInvalid()
+    {
+        var existing = Entity("""{ "LogicalName": "tn_lookup", "SchemaName": "tn_Lookup", "AttributeType": "Lookup", "Targets": ["contact"] }""");
+        var (service, _) = CreateService(existing);
+        var local = Local(Attr("tn_lookup", "Lookup", schemaName: "tn_Lookup", configure: b => b.Targets = ["contact", "account"]));
+
+        var preview = await service.PreviewAsync(new Uri("https://test.crm.dynamics.com"), "token", local, CancellationToken.None);
+
+        var plan = Assert.Single(preview.AttributePlans);
+        Assert.Equal(AttributeImportAction.Invalid, plan.Action);
+        Assert.Contains("single-target and multi-table", plan.Reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task PreviewAsync_MultiToSingleConversion_PlansInvalid()
+    {
+        var (service, _) = CreateService(Entity(ExistingMultiLookupJson));
+        var local = Local(Attr("tn_lookup", "Lookup", schemaName: "tn_Lookup", configure: b => b.Targets = ["account"]));
+
+        var preview = await service.PreviewAsync(new Uri("https://test.crm.dynamics.com"), "token", local, CancellationToken.None);
+
+        var plan = Assert.Single(preview.AttributePlans);
+        Assert.Equal(AttributeImportAction.Invalid, plan.Action);
+        Assert.Contains("single-target and multi-table", plan.Reason, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public async Task PreviewAsync_NewOwnerStateOrStatusColumn_PlansInvalid()
     {

@@ -65,7 +65,13 @@ services.AddSingleton<IFormExportService, FormExportService>();
 services.AddSingleton<IGlobalChoiceExportService, GlobalChoiceExportService>();
 services.AddSingleton<IGlobalChoiceImportService, GlobalChoiceImportService>();
 
-// `solution export` composes the four export services above (discovering
+// A solution's security roles: a *.security.yml per table and a *.role.yml
+// per role. Roles are found by name and never created - see
+// ISecurityExportService/ISecurityImportService.
+services.AddSingleton<ISecurityExportService, SecurityExportService>();
+services.AddSingleton<ISecurityImportService, SecurityImportService>();
+
+// `solution export` composes the export services above (discovering
 // which tables a solution touches is the only piece none of them already
 // do) rather than reading from Dataverse itself — see
 // ISolutionExportService's own doc comment.

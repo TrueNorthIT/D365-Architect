@@ -211,6 +211,8 @@ public static partial class FormXmlWriter
         private readonly Dictionary<string, List<XElement>> _footerCells = [];
 
         private readonly HashSet<XElement> _placed = [];
+        // Rows this patch wrote for a cell of its own (see InsertInOwnRow).
+        private readonly HashSet<XElement> _ownRows = [];
         private readonly Dictionary<XElement, List<XElement>> _newControlDescriptions = [];
 
         public FormPatcher(FormDefinition yaml, XElement existingForm, bool allowRemovals)
@@ -393,6 +395,10 @@ public static partial class FormXmlWriter
         private void MergeControls(XElement rowsElement, IReadOnlyList<FormControl> controls, string scopeKey, Dictionary<string, List<XElement>> liveCells)
         {
             XElement? previousCell = null;
+            // Whether the rows' layout changed: a cell went in, or a cell's
+            // span changed. Only then are the spans checked (see ClearSpans),
+            // so a section the YAML leaves alone is never touched.
+            var layoutChanged = false;
 
             for (var i = 0; i < controls.Count; i++)
             {
@@ -407,9 +413,12 @@ public static partial class FormXmlWriter
                     {
                         Detach(cell);
                         InsertInOwnRow(cell, previousCell, rowsElement, isLastPresentHere);
+                        layoutChanged = true;
                     }
 
+                    var spansBefore = SpansOf(cell);
                     MergeCell(cell, control);
+                    layoutChanged |= SpansOf(cell) != spansBefore;
                     previousCell = cell;
                 }
                 else
@@ -419,7 +428,13 @@ public static partial class FormXmlWriter
                     InsertInOwnRow(newCell, previousCell, rowsElement, isLastPresentHere);
                     _placed.Add(newCell);
                     previousCell = newCell;
+                    layoutChanged = true;
                 }
+            }
+
+            if (layoutChanged)
+            {
+                ClearSpans(rowsElement);
             }
         }
 
@@ -477,22 +492,148 @@ public static partial class FormXmlWriter
             }
         }
 
-        private static void InsertInOwnRow(XElement cell, XElement? previousCell, XElement rowsElement, bool append)
+        private void InsertInOwnRow(XElement cell, XElement? previousCell, XElement rowsElement, bool append)
         {
             var row = new XElement("row", cell);
+            _ownRows.Add(row);
             if (append || (previousCell is null && !rowsElement.HasElements))
             {
                 rowsElement.Add(row);
             }
             else if (previousCell?.Parent is { } previousRow && previousRow.Parent == rowsElement)
             {
-                previousRow.AddAfterSelf(row);
+                if (RowAfterSpans(previousRow, SpanOf(cell, "colspan")) is { } next)
+                {
+                    next.AddBeforeSelf(row);
+                }
+                else
+                {
+                    rowsElement.Add(row);
+                }
             }
             else
             {
                 rowsElement.AddFirst(row);
             }
         }
+
+        // ---- row spans ----
+
+        /// <summary>
+        /// The row a new row <paramref name="width"/> columns wide goes before
+        /// when it follows <paramref name="previousRow"/>: the first row after
+        /// it whose leftmost <paramref name="width"/> columns no span covers,
+        /// so a field added after a spanned one goes below the span rather
+        /// than into the rows it covers. Null when that's past the last row.
+        /// </summary>
+        private XElement? RowAfterSpans(XElement previousRow, int width)
+        {
+            var rows = previousRow.Parent!.Elements("row").ToList();
+            var coverage = new RowCoverage(ColumnsOf(previousRow.Parent));
+            var index = rows.IndexOf(previousRow);
+
+            for (var i = 0; i <= index; i++)
+            {
+                LayOutRow(rows[i], coverage, _ownRows.Contains(rows[i]), commit: true);
+                coverage.NextRow();
+            }
+
+            var next = index + 1;
+            while (next < rows.Count && coverage.FreePrefix < Math.Min(width, coverage.Columns))
+            {
+                LayOutRow(rows[next], coverage, _ownRows.Contains(rows[next]), commit: true);
+                coverage.NextRow();
+                next++;
+            }
+
+            return next < rows.Count ? rows[next] : null;
+        }
+
+        /// <summary>
+        /// Makes sure no cell sits in a position a <c>rowspan</c> above it
+        /// covers, which the Unified Interface would silently not render: an
+        /// empty <c>&lt;row /&gt;</c> goes before any row that would, and after
+        /// the last row for a span that runs past it, as the form designer
+        /// writes them. Only ever adds empty rows; no cell moves relative to
+        /// another. Live rows are read the way the designer writes them (a
+        /// row's cells fill its free columns left to right); a row this patch
+        /// wrote is held to the stricter rule the writer uses (see
+        /// <see cref="RegroupIntoRows"/>): only columns left of the first
+        /// covered one.
+        /// </summary>
+        private void ClearSpans(XElement rowsElement)
+        {
+            var coverage = new RowCoverage(ColumnsOf(rowsElement));
+
+            foreach (var row in rowsElement.Elements("row").ToList())
+            {
+                var strict = _ownRows.Contains(row);
+                while (coverage.AnyCovered && !LayOutRow(row, coverage, strict, commit: false))
+                {
+                    row.AddBeforeSelf(new XElement("row"));
+                    coverage.NextRow();
+                }
+
+                LayOutRow(row, coverage, strict, commit: true);
+                coverage.NextRow();
+            }
+
+            while (coverage.AnyCovered)
+            {
+                rowsElement.Add(new XElement("row"));
+                coverage.NextRow();
+            }
+        }
+
+        /// <summary>
+        /// Lays <paramref name="row"/>'s cells out in the current row of
+        /// <paramref name="coverage"/>, and says whether every cell landed in
+        /// a free position. With <paramref name="strict"/>, cells only go in
+        /// the free columns left of the first covered one; otherwise each cell
+        /// takes the next free column. With <paramref name="commit"/>, each
+        /// cell's span is recorded, as far as it fits.
+        /// </summary>
+        private static bool LayOutRow(XElement row, RowCoverage coverage, bool strict, bool commit)
+        {
+            var limit = strict ? coverage.FreePrefix : coverage.Columns;
+            var cursor = 0;
+            var fits = true;
+
+            foreach (var cell in row.Elements("cell"))
+            {
+                var span = Math.Clamp(SpanOf(cell, "colspan"), 1, coverage.Columns);
+                while (!strict && cursor < coverage.Columns && !coverage.IsFree(cursor))
+                {
+                    cursor++;
+                }
+
+                if (cursor + span > limit || !Enumerable.Range(cursor, span).All(coverage.IsFree))
+                {
+                    fits = false;
+                    if (!commit)
+                    {
+                        return false;
+                    }
+                }
+
+                if (commit)
+                {
+                    coverage.Cover(cursor, span, SpanOf(cell, "rowspan"));
+                }
+
+                cursor += span;
+            }
+
+            return fits;
+        }
+
+        /// <summary>A section's (or the header's or footer's) grid width: its <c>columns</c> attribute has one digit per column.</summary>
+        private static int ColumnsOf(XElement rowsElement) =>
+            (string?)rowsElement.Parent?.Attribute("columns") is { Length: > 0 } columns ? columns.Length : 1;
+
+        private static int SpanOf(XElement cell, string attribute) => (int?)cell.Attribute(attribute) is > 1 and var span ? span : 1;
+
+        private static (int RowSpan, int ColumnSpan) SpansOf(XElement cell) => (SpanOf(cell, "rowspan"), SpanOf(cell, "colspan"));
 
         // ---- header and footer ----
 

@@ -1,7 +1,9 @@
+using System.IO.Compression;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json.Nodes;
+using System.Xml.Linq;
 using D365Architect.Services.Authentication;
 using D365Architect.Services.Dataverse;
 
@@ -118,6 +120,64 @@ public sealed class LiveDataverse : IDisposable
     {
         var json = await GetAsync($"solutioncomponents?$select=objectid&$filter=_solutionid_value eq {solutionId} and componenttype eq {componentType}", cancellationToken);
         return json!["value"]!.AsArray().Select(c => Guid.Parse((string)c!["objectid"]!)).ToHashSet();
+    }
+
+    /// <summary>Deletes the global choice; one that doesn't exist is fine.</summary>
+    public Task DeleteGlobalOptionSetAsync(string name, CancellationToken cancellationToken) =>
+        DeleteAsync($"GlobalOptionSetDefinitions(Name='{name}')", cancellationToken);
+
+    /// <summary>Exports the unmanaged solution and returns its <c>customizations.xml</c> - what a solution PR actually diffs.</summary>
+    public async Task<XDocument> ExportCustomizationsXmlAsync(string uniqueName, CancellationToken cancellationToken)
+    {
+        using var request = Request(HttpMethod.Post, "ExportSolution");
+        request.Content = JsonContent.Create(new JsonObject { ["SolutionName"] = uniqueName, ["Managed"] = false });
+        using var response = await _raw.SendAsync(request, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+
+        var zipBytes = Convert.FromBase64String((string)JsonNode.Parse(await response.Content.ReadAsStringAsync(cancellationToken))!["ExportSolutionFile"]!);
+        using var zip = new ZipArchive(new MemoryStream(zipBytes), ZipArchiveMode.Read);
+        await using var xml = zip.GetEntry("customizations.xml")!.Open();
+        return await XDocument.LoadAsync(xml, LoadOptions.None, cancellationToken);
+    }
+
+    /// <summary>Creates an empty security role in the root business unit and adds it to the solution; returns its id.</summary>
+    public async Task<Guid> CreateRoleAsync(string name, string solutionUniqueName, CancellationToken cancellationToken)
+    {
+        var rootBusinessUnitId = await GetRootBusinessUnitIdAsync(cancellationToken);
+        using var request = Request(HttpMethod.Post, "roles");
+        request.Content = JsonContent.Create(new JsonObject { ["name"] = name, ["businessunitid@odata.bind"] = $"/businessunits({rootBusinessUnitId})" });
+        using var response = await _raw.SendAsync(request, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+        var entityId = response.Headers.GetValues("OData-EntityId").Single();
+        var roleId = Guid.Parse(entityId[(entityId.LastIndexOf('(') + 1)..^1]);
+
+        // 20 = Role (solutioncomponent componenttype).
+        await PostAsync("AddSolutionComponent", new JsonObject
+        {
+            ["ComponentId"] = roleId,
+            ["ComponentType"] = 20,
+            ["SolutionUniqueName"] = solutionUniqueName,
+            ["AddRequiredComponents"] = false,
+        }, cancellationToken);
+        return roleId;
+    }
+
+    /// <summary>Deletes the role; one that doesn't exist is fine.</summary>
+    public Task DeleteRoleAsync(Guid roleId, CancellationToken cancellationToken) =>
+        DeleteAsync($"roles({roleId})", cancellationToken);
+
+    private async Task<Guid> GetRootBusinessUnitIdAsync(CancellationToken cancellationToken)
+    {
+        var units = (await GetAsync("businessunits?$select=businessunitid&$filter=_parentbusinessunitid_value eq null", cancellationToken))!["value"]!.AsArray();
+        return Guid.Parse((string)units.Single()!["businessunitid"]!);
+    }
+
+    private async Task PostAsync(string relativePath, JsonObject body, CancellationToken cancellationToken)
+    {
+        using var request = Request(HttpMethod.Post, relativePath);
+        request.Content = JsonContent.Create(body);
+        using var response = await _raw.SendAsync(request, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
     }
 
     public void Dispose()

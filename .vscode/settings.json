@@ -2,6 +2,9 @@
   "yaml.schemas": {
     "./schema/table.schema.json": "*.table.yml",
     "./schema/view.schema.json": "*.view.yml",
-    "./schema/form.schema.json": "*.form.yml"
+    "./schema/form.schema.json": "*.form.yml",
+    "./schema/choice.schema.json": "*.choice.yml",
+    "./schema/security.schema.json": "*.security.yml",
+    "./schema/role.schema.json": "*.role.yml"
   }
 }

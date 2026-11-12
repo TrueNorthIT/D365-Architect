@@ -223,7 +223,7 @@ decision not to — "accounted for" either way, never silently missing.
 | Tab/section `visible="false"` | ✅ Captured | confirmed live (a hidden tab) | `FormTab.Visible`/`FormSection.Visible` — genuinely missing (not just unstripped) until this was found live: a hidden tab silently came back visible on every export/import round-trip, since neither model had a place to hold it at all |
 | Cell/section `showlabel="false"` | ✅ Captured | confirmed live (a hidden subgrid/section label) | `FormControl.ShowLabel`/`FormSection.ShowLabel` — same "genuinely missing" story as tab/section `visible` above, found the same way; a tab's own `showlabel` stays excluded (see the chrome-attributes row below) since hiding a tab's label isn't the same kind of content change |
 | A section's own `columns` attribute (sub-column count) | ✅ Captured | 4+ sections | `FormSection.Columns` |
-| Cell `colspan`/`rowspan` | ✅ Captured | 5 non-default spans on one real form (up to `rowspan="15"`) | `FormControl.ColumnSpan`/`RowSpan` — genuinely structural (how much visual space a control's cell occupies), not cosmetic; found via a live round-trip check, not the initial schema audit |
+| Cell `colspan`/`rowspan` | ✅ Captured | 5 non-default spans on one real form (up to `rowspan="15"`) | `FormControl.ColumnSpan`/`RowSpan` — genuinely structural (how much visual space a control's cell occupies), not cosmetic; found via a live round-trip check, not the initial schema audit. The rows a `rowspan` covers come back as the designer writes them (an empty `<row />` per covered row in a single-column section, a shorter row in a multi-column one) and are never read as controls; a control written into a covered position is silently not rendered |
 | `ancestor` | ✅ Captured | 6 forms | `FormDefinition.Ancestor` |
 | `hiddencontrols` | ✅ Captured | 7 forms | `FormDefinition.HiddenFields`, including its own `relationship` attribute (`FormHiddenField.Relationship`) — previously only 2 of its 3 attributes were captured, `relationship` silently wasn't |
 | Non-primary-language `<label>` entries (`languagecode`/`description`) | ✅ Captured | not yet seen on a live multi-language tenant, added defensively | `FormTab.Translations`/`FormSection.Translations`/`FormControl.Translations` — previously every translation but the primary (English/1033, or first) was silently discarded on export; genuine maker-authored text, not a stripped default, permanently lost on a multi-language tenant's every round-trip until this was found |
@@ -1000,10 +1000,30 @@ needs the even more specific `CreateCustomerRelationships` action instead
 YAML shape for creating a brand-new plain `Lookup`: `relationshipSchemaName`
 (the relationship's own schema name — distinct from, and validated the same
 way as, the column's own `schemaName`; never inferred) plus exactly one
-`targets` entry. **A `targets` list with more than one entry is a
-"multi-table lookup"** — a materially more complex relationship shape
-Microsoft's own docs split into a separate article — and isn't supported for
-creation here; it's reported as `Invalid` with that reason. `Customer`
+`targets` entry.
+
+**A `targets` list with more than one entry is a "multi-table lookup"** — a
+materially more complex relationship shape Microsoft's own docs split into a
+separate article — and is created via the dedicated
+`CreatePolymorphicLookupAttribute` action instead of a plain
+`RelationshipDefinitions` POST (one `OneToManyRelationship` per target,
+sharing a single `ComplexLookupAttributeMetadata` `Lookup`, as in
+Microsoft's documented example). Its YAML shape is the column's
+`schemaName` plus the full `targets` list. Every target's relationship
+schema name is derived as `{schemaName}_{target}` — one rule for every
+target, the same convention Customer columns use for their fixed pair — so,
+as for Customer, `relationshipSchemaName` isn't needed and is ignored if
+present. `relationshipBehavior`, when given, applies to *every* generated
+relationship (there's no per-target override). A `targets` list naming the
+same table twice (compared case-insensitively) is rejected as `Invalid`,
+for a single-target or multi-table Lookup alike.
+`CreatePolymorphicLookupAttribute` ignores the `MSCRM.SolutionUniqueName`
+header (confirmed live: the column and its relationships were created
+outside the named solution, batched or not), so `--solution` is sent as the
+action's own `SolutionUniqueName` body parameter instead, as in Microsoft's
+example. That puts the column and every relationship into the solution
+(also confirmed live).
+`Customer`
 needs no `relationshipSchemaName` of its own: both of its relationship
 schema names are derived from the column's `schemaName` plus the fixed
 `account`/`contact` targets, and its `targets` must be exactly
@@ -1046,7 +1066,25 @@ Dataverse error rather than being caught locally first.
 **`targets` is immutable after creation** for all three types, checked
 before `AttributesMatch` alongside the existing `Type`/`SchemaName` checks —
 an attempted change comes back `Invalid` rather than being silently ignored
-or left for Dataverse's own API error to explain.
+or left for Dataverse's own API error to explain. The one supported
+exception is *adding* target tables to an existing **multi-table** Lookup,
+which Dataverse allows after creation. Each added target is an ordinary
+one-to-many relationship create (`POST RelationshipDefinitions`) whose
+`Lookup.SchemaName` matches the existing column, so Dataverse attaches the
+new relationship to that column (Microsoft's "Add a relationship to an
+existing multi-table lookup column"). Its relationship schema name is
+`{schemaName}_{target}`, the same rule as the targets the column was
+created with. Every added target is its own write, so all of them apply in
+one import; the import diff lists each one under the column with its
+relationship name. Like every other create, each new relationship is added
+to the solution when the import is scoped to one. **Removing** a target
+from an existing multi-table Lookup is `Invalid` — it's destructive
+(existing values pointing at the dropped table lose their lookup), the same
+policy as every other destructive change this tool refuses — and is
+reported even when other targets are being added in the same change (the
+whole change is then `Invalid`, and nothing is added). And a lookup can
+never be converted between single-target and multi-table (Dataverse can't
+do that conversion) — `Invalid`, with that reason.
 
 ### State and Status
 
@@ -1172,16 +1210,21 @@ real table, not just reasoned about:
 - **Creating a Picklist/MultiSelectPicklist with no `options` and no
   `globalOptionSetName`, both at once, or duplicate option `value`s** — see
   "Boolean and Choice" above.
-- **Creating a `Lookup` with no `relationshipSchemaName`, an invalid one,
-  more than one `targets` entry, or a `relationshipBehavior` that isn't
-  `Referential`/`ReferentialRestrictDelete`/`Parental`** — see "Lookup,
-  Customer, and Owner" above.
+- **Creating a `Lookup` with no `targets` entry, the same target listed
+  twice (case-insensitive), a `relationshipBehavior` that isn't
+  `Referential`/`ReferentialRestrictDelete`/`Parental`, or — for a
+  single-target Lookup — no `relationshipSchemaName` or an invalid one** —
+  see "Lookup, Customer, and Owner" above. (More than one `targets` entry
+  is *valid* — it's a multi-table lookup, which needs no
+  `relationshipSchemaName`.)
 - **Creating a `Customer` whose `targets` aren't exactly `["account",
   "contact"]`** — fixed by Dataverse for the type, not a maker choice.
 - **Attempting to create an `Owner`/`State`/`Status` column** — all three
   already exist automatically on every table.
 - **Changing `targets` on an existing `Lookup`/`Customer`/`Owner` column** —
-  immutable after creation, checked the same way as `Type`/`SchemaName`.
+  immutable after creation, checked the same way as `Type`/`SchemaName`;
+  the one exception is *adding* targets to an existing multi-table Lookup
+  without removing any (see "Lookup, Customer, and Owner" above).
 
 The MaxLength-ceiling and Precision-range checks above only fire when that
 specific value is actually being *changed* to something new — never when
@@ -1516,3 +1559,131 @@ correctly narrowed the unscoped export down to just that solution's own
 choices, correctly excluded choices outside it (spot-checked against known
 Microsoft system choices), and the scoped file round-tripped through
 `choice import --whatif` with zero false diffs.
+
+## Security roles (`security export`/`security import`)
+
+A solution's security roles are written as two kinds of file, and every
+table privilege a role holds lives in exactly one of them: a privilege on a
+table of the solution goes in that table's `*.security.yml`; a privilege on
+any other table, and every non-table privilege, goes in the role's
+`*.role.yml`. Only the solution's own roles (solution components of type
+`20`, Role) are ever read; a role outside the solution is never written,
+however much access it has.
+
+**A role is identified by its name, never its id.** A role's id differs in
+every environment, so neither file holds one: on import each role is found by
+name among the root business unit's roles, and a role that doesn't exist
+fails that file (`Role 'X' not found in this environment.`). Roles are never
+created.
+
+**Access levels** are one of five values, mapping onto Dataverse's privilege
+depth: `None` (not held), `User` (Basic), `BusinessUnit` (Local),
+`ParentChildBusinessUnit` (Deep) and `Organisation` (Global). Anything else
+is rejected by the deserialiser and flagged by the generated schemas.
+
+### Table security files (`<table>/<table>.security.yml`)
+
+```yaml
+table: tn_complaint
+roles:
+  - name: HIS User
+    create: User
+    read: Organisation
+    write: BusinessUnit
+    delete: None
+    append: User
+    appendTo: Organisation
+    assign: None
+    share: None
+```
+
+- Every role of the solution that holds **any** of the eight privileges on
+  the table is listed, and **all eight keys are always written** for it,
+  `None` included, so the file shows the whole picture for that table at a
+  glance. A key left out of a hand-written file reads as `None`.
+- A table no role of the solution can reach gets **no file**, never an empty
+  one.
+- On import the file only compares the eight privileges on its own table,
+  for the roles it names. A role the file doesn't name is never touched.
+
+### Role files (`roles/<role-name>.role.yml`)
+
+```yaml
+name: HIS User
+privileges:
+  prvExportToExcel: Organisation
+  prvGoMobile: Organisation
+tables:
+  account:
+    read: Organisation
+```
+
+- One file per role of the solution, named after the role, lower-cased and
+  slugged (`HIS User` gives `his-user.role.yml`; two names that slug the same
+  get `-2`, `-3`, … rather than overwriting each other). A role that holds
+  nothing outside its table files is just its `name:`.
+- `privileges:` lists non-table privileges by their platform name, spelt as
+  Dataverse spells it (`prvExportToExcel`, not re-cased).
+- `tables:` lists privileges on tables that are **not** in the solution, by
+  table logical name, with the same eight camelCase keys as a table file.
+- **Absent means not held.** Unlike a table file, only privileges the role
+  holds are written; there are no `None` lines.
+
+### Removals and the full-picture rule
+
+Import writes with add-privilege semantics: raising or lowering a level adds
+the privilege at its new depth (`AddPrivilegesRole`), so the role's other
+privileges are untouched. Nothing is ever replaced wholesale.
+
+A privilege the role holds live but the file leaves out (or sets to `None`)
+is a removal candidate. **It is only removed with `--allow-removals`**;
+without it, it is kept and reported as `~ would remove … (kept)`, and a file
+whose only differences are kept privileges counts as unchanged.
+
+What counts as "left out" differs by file:
+
+- A **table file** only covers its own table's eight privileges for the roles
+  it names.
+- A **role file** is the full picture of the role's privileges outside the
+  solution: every non-table privilege the role holds that the file doesn't
+  list, every privilege on a table outside the solution that the file doesn't
+  list (including a whole table missing from `tables:`), is a removal
+  candidate. The solution's own tables are resolved from Dataverse by
+  `--solution`, which is why importing a role file needs it; a privilege on
+  one of them is never reported or removed by a role file, even with
+  `--allow-removals`, and a solution table listed under `tables:` is ignored.
+
+### Shared privileges and conflicts
+
+A privilege is identified by its id, and some tables share one: the activity
+tables (email, appointment, phonecall, …) all use `prvCreateActivity` for
+Create. Changing `create:` for one of them changes it for all of them, so a
+shared privilege is one unit:
+
+- The import plan names every other table a change reaches, e.g.
+  `~ Create: Organisation → User (also changes: appointment, email, phonecall)`.
+- Every entry a run states for the same role and privilege id must ask for
+  the same level. A run is one `security import` (a file or a folder) or one
+  `solution import` (every security and role file in it); the check runs
+  across all of its files after every preview and before the prompt. Entries
+  that agree are written once. Entries that disagree (different levels, or
+  one sets it while another leaves it out or sets `None`) are a conflict:
+  the error names the role, the privilege and each file and entry, every file
+  involved fails as a whole so nothing is half-applied, and nothing is written
+  for that privilege. One file disagreeing with itself (the same role listed
+  twice, or two outside tables sharing a privilege at different levels in a
+  role file) fails the same way.
+- A shared privilege that also covers a table of the solution is owned by
+  that table's security file, like any other privilege on it: `security
+  export` doesn't repeat it in the role file, a role-file entry that would
+  change it is refused, and a role file leaving it out never makes it a
+  removal candidate.
+
+Every privilege is looked up during the preview, so nothing is written for a
+file that names one that doesn't exist (e.g. `assign: User` on an
+organisation-owned table, which has no Assign; `None` there is fine). A role
+file's `privileges:` is for non-table privileges only: a table privilege
+there (e.g. `prvWritetn_complaint`) is refused. In a folder import a table's
+security file must sit in that table's folder (`table:` matches the folder
+name), and a role name that matches more than one role in the root business
+unit is an error rather than a guess.

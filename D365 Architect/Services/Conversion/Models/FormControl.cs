@@ -174,7 +174,11 @@ public sealed class FormControl
     /// control like a subgrid or notes timeline visually occupy several
     /// otherwise-empty rows rather than being squeezed into one. Only
     /// present when greater than 1 — a single row is the common case;
-    /// applying this file back won't change a cell's own span.
+    /// applying this file back won't change a cell's own span. The rows a
+    /// span covers are written out as the form designer writes them, and
+    /// the next control goes below the span (or, in a multi-column section,
+    /// beside it, in a free column to its left), never into a covered
+    /// position, where it would not be shown.
     /// </summary>
     [YamlMember(Order = 14)]
     public int? RowSpan { get; init; }

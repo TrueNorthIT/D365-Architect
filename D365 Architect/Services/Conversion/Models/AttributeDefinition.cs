@@ -148,11 +148,12 @@ public sealed class AttributeDefinition
     public string? FalseOptionLabel { get; init; }
 
     /// <summary>
-    /// Lookup only, required to create a brand-new Lookup column: the
+    /// Single-target Lookup only, required to create a brand-new one: the
     /// schema name of the one-to-many <em>relationship</em> that owns this
     /// lookup — a separate name from the column's own <see cref="SchemaName"/>,
-    /// never inferred. Not used for Customer (its two relationship names are
-    /// derived from <see cref="SchemaName"/> instead — see
+    /// never inferred. Not used for a multi-table Lookup or Customer (every
+    /// one of their relationship names is derived as
+    /// <c>{schemaName}_{target}</c> instead — see
     /// `docs/yaml-conventions.md`) or for any other type.
     /// </summary>
     [YamlMember(Order = 21)]

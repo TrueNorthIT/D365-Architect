@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "D365 Architect table security definition",
+  "description": "Declarative YAML shape for who can do what to one Dynamics table: each role of the solution that holds any privilege on it, by name, with all eight privileges at their access level (None = not held). Produced by `d365architect security export` and `solution export`.",
+  "type": "object",
+  "properties": {
+    "table": {
+      "description": "The table's logical name, e.g. \"tn_complaint\".",
+      "type": "string"
+    },
+    "roles": {
+      "description": "The roles that hold any privilege on this table.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "description": "The role's name, e.g. \"HIS User\".",
+            "type": "string"
+          },
+          "create": {
+            "description": "Create access level.",
+            "type": "string",
+            "enum": [
+              "None",
+              "User",
+              "BusinessUnit",
+              "ParentChildBusinessUnit",
+              "Organisation"
+            ]
+          },
+          "read": {
+            "description": "Read access level.",
+            "type": "string",
+            "enum": [
+              "None",
+              "User",
+              "BusinessUnit",
+              "ParentChildBusinessUnit",
+              "Organisation"
+            ]
+          },
+          "write": {
+            "description": "Write access level.",
+            "type": "string",
+            "enum": [
+              "None",
+              "User",
+              "BusinessUnit",
+              "ParentChildBusinessUnit",
+              "Organisation"
+            ]
+          },
+          "delete": {
+            "description": "Delete access level.",
+            "type": "string",
+            "enum": [
+              "None",
+              "User",
+              "BusinessUnit",
+              "ParentChildBusinessUnit",
+              "Organisation"
+            ]
+          },
+          "append": {
+            "description": "Append access level.",
+            "type": "string",
+            "enum": [
+              "None",
+              "User",
+              "BusinessUnit",
+              "ParentChildBusinessUnit",
+              "Organisation"
+            ]
+          },
+          "appendTo": {
+            "description": "Append To access level.",
+            "type": "string",
+            "enum": [
+              "None",
+              "User",
+              "BusinessUnit",
+              "ParentChildBusinessUnit",
+              "Organisation"
+            ]
+          },
+          "assign": {
+            "description": "Assign access level.",
+            "type": "string",
+            "enum": [
+              "None",
+              "User",
+              "BusinessUnit",
+              "ParentChildBusinessUnit",
+              "Organisation"
+            ]
+          },
+          "share": {
+            "description": "Share access level.",
+            "type": "string",
+            "enum": [
+              "None",
+              "User",
+              "BusinessUnit",
+              "ParentChildBusinessUnit",
+              "Organisation"
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "name"
+        ]
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "table",
+    "roles"
+  ]
+}
