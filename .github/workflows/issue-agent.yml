@@ -16,7 +16,9 @@ permissions:
   issues: write
 
 env:
-  KIT_REF: v1.0.0            # bump by PR after testing with the kit's bench
+  # The kit branch this repo runs. Kit releases are fixed tags (v1.2.0, never moved); to
+  # move this repo to one, point the branch at that tag in the kit. No change needed here.
+  KIT_REF: release/D365-Architect
   KIT_PROFILE: D365-Architect
   AGENT_TEAM: local-agent-access   # admins manage who can trigger the agent via this team
 
@@ -77,6 +79,7 @@ jobs:
             -c "http.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "$TOKEN" | base64)" \
             clone -q --depth 1 --branch "$KIT_REF" https://github.com/TrueNorthIT/tn-local-agents.git "$RUNNER_TEMP/kit"
           echo "KIT_DIR=$RUNNER_TEMP/kit" >> "$GITHUB_ENV"
+          echo "::notice::Kit $KIT_REF at $(git -C "$RUNNER_TEMP/kit" rev-parse --short HEAD)"
 
       - name: Claim
         if: steps.auth.outputs.ok == 'true'
