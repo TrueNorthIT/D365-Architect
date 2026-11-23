@@ -700,6 +700,30 @@ public static class AttributeMetadataJsonBuilder
     }
 
     /// <summary>
+    /// Replaces an existing one-to-many relationship's
+    /// <c>CascadeConfiguration</c> with the preset for
+    /// <paramref name="behavior"/> (see <see cref="RelationshipBehaviors"/>),
+    /// on a deep clone of the <em>full live object</em> as fetched by
+    /// <see cref="Dataverse.IDataverseClient.GetOne2ManyRelationshipMetadataAsync"/>'s
+    /// underlying read — same full-object round trip as the attribute update
+    /// path (<see cref="ApplyUpdateFields"/>), never a freshly built body:
+    /// a relationship's ReferencingEntity/ReferencedAttribute/
+    /// AssociatedMenuConfiguration can't be changed anyway, so re-sending
+    /// the live values unchanged is the only safe shape.
+    /// </summary>
+    /// <exception cref="InvalidOperationException"><paramref name="behavior"/> isn't one of the three named behaviors — <see cref="RelationshipBehaviors.CascadeConfigurationOrNull"/> has no other preset to expand to, and "Configurable Cascading" isn't expressible as a single named behavior in the YAML either.</exception>
+    public static JsonObject BuildRelationshipBehaviorUpdateBody(JsonObject liveRelationship, string behavior)
+    {
+        var cascadeConfiguration = RelationshipBehaviors.CascadeConfigurationOrNull(behavior)
+            ?? throw new InvalidOperationException($"'{behavior}' isn't a valid RelationshipBehavior — expected one of: {string.Join(", ", RelationshipBehaviors.Names)}.");
+
+        var body = (JsonObject)liveRelationship.DeepClone();
+        body["@odata.type"] = "Microsoft.Dynamics.CRM.OneToManyRelationshipMetadata";
+        body["CascadeConfiguration"] = cascadeConfiguration;
+        return body;
+    }
+
+    /// <summary>
     /// Builds the <c>CreateCustomerRelationships</c> action body — see
     /// <see cref="Dataverse.IDataverseClient.CreateCustomerRelationshipsAsync"/>.
     /// Both relationship SchemaNames are derived from the attribute's own

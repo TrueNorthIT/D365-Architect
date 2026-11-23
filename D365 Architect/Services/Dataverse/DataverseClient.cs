@@ -636,6 +636,71 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
     public async Task CreateOneToManyRelationshipAsync(Uri environmentUrl, string accessToken, JsonObject relationshipMetadata, string? solutionUniqueName, CancellationToken cancellationToken) =>
         await SendWriteAsync(environmentUrl, accessToken, new DataverseWrite.CreateOneToManyRelationship(relationshipMetadata, solutionUniqueName), cancellationToken);
 
+    public async Task<IReadOnlyList<RelationshipMetadata>?> GetOne2ManyRelationshipMetadataAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string attributeLogicalName, CancellationToken cancellationToken)
+    {
+        // Resolved by the column (referencingentity + referencingattribute),
+        // not by a schema name — this tool never reads a live lookup's
+        // owning relationship name anywhere, so there's nothing to look it
+        // up by (see IDataverseClient's own doc comment). The full object
+        // (no $select), deliberately — the update this read exists to feed
+        // is a full-object PUT (see UpdateRelationshipAsync), same
+        // round-trip reasoning as GetAttributeMetadataJsonAsync.
+        var relativePath = "RelationshipDefinitions" +
+            $"?$filter=referencingentity eq '{Uri.EscapeDataString(entityLogicalName)}' and referencingattribute eq '{Uri.EscapeDataString(attributeLogicalName)}'" +
+            "&$orderby=schemaname";
+
+        using var request = CreateRequest(environmentUrl, relativePath, accessToken);
+        using var response = await SendAsync(request, RequestTimeout, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+
+        var collection = await response.Content.ReadFromJsonAsync<JsonObject>(JsonOptions, cancellationToken)
+            ?? throw new InvalidDataException($"Dataverse's RelationshipDefinitions response for '{entityLogicalName}.{attributeLogicalName}' had no body.");
+        var value = collection["value"] as JsonArray ?? [];
+        return value
+            .Select(item => ParseRelationshipMetadata(item))
+            .Where(r => r is not null)
+            .Select(r => r!)
+            .ToList();
+    }
+
+    public async Task<IReadOnlyList<RelationshipMetadata>> GetReferencingRelationshipsAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken)
+    {
+        // No $select — see GetOne2ManyRelationshipMetadataAsync above; the
+        // full objects are what the single-parental check reads
+        // (CascadeConfiguration) and the refusal message would name.
+        var relativePath = "RelationshipDefinitions" +
+            $"?$filter=referencingentity eq '{Uri.EscapeDataString(entityLogicalName)}'&$orderby=schemaname";
+
+        using var request = CreateRequest(environmentUrl, relativePath, accessToken);
+        using var response = await SendAsync(request, RequestTimeout, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+
+        var collection = await response.Content.ReadFromJsonAsync<JsonObject>(JsonOptions, cancellationToken)
+            ?? throw new InvalidDataException($"Dataverse's RelationshipDefinitions response for '{entityLogicalName}' had no body.");
+        var value = collection["value"] as JsonArray ?? [];
+        return value
+            .Select(item => ParseRelationshipMetadata(item))
+            .Where(r => r is not null)
+            .Select(r => r!)
+            .ToList();
+    }
+
+    private static RelationshipMetadata? ParseRelationshipMetadata(JsonNode? item)
+    {
+        if (item is not JsonObject relationship)
+        {
+            return null;
+        }
+
+        var schemaName = relationship["SchemaName"]?.GetValue<string>();
+        return schemaName is null
+            ? null
+            : new RelationshipMetadata(schemaName, relationship["CascadeConfiguration"] as JsonObject, relationship);
+    }
+
+    public async Task UpdateRelationshipAsync(Uri environmentUrl, string accessToken, string relationshipSchemaName, JsonObject relationshipMetadata, CancellationToken cancellationToken) =>
+        await SendWriteAsync(environmentUrl, accessToken, new DataverseWrite.UpdateRelationship(relationshipSchemaName, relationshipMetadata), cancellationToken);
+
     public async Task CreateCustomerRelationshipsAsync(Uri environmentUrl, string accessToken, JsonObject body, string? solutionUniqueName, CancellationToken cancellationToken) =>
         await SendWriteAsync(environmentUrl, accessToken, new DataverseWrite.CreateCustomerRelationships(body, solutionUniqueName), cancellationToken);
 
@@ -780,6 +845,13 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         DataverseWrite.UpdateAttribute w => (HttpMethod.Put, $"EntityDefinitions(LogicalName='{Uri.EscapeDataString(w.EntityLogicalName)}')/Attributes(LogicalName='{Uri.EscapeDataString(w.AttributeLogicalName)}')", w.Metadata, MergeLabelsHeader),
         DataverseWrite.CreateOneToManyRelationship w => (HttpMethod.Post, "RelationshipDefinitions", w.Metadata, SolutionHeader(w.SolutionUniqueName)),
         DataverseWrite.CreateCustomerRelationships w => (HttpMethod.Post, "CreateCustomerRelationships", w.Body, SolutionHeader(w.SolutionUniqueName)),
+        // PUT on the relationship's own key — Dataverse's documented way to
+        // change a live relationship's cascade configuration (see
+        // IDataverseClient.UpdateRelationshipAsync's own doc comment). No
+        // MSCRM.MergeLabels header: a OneToManyRelationshipMetadata carries
+        // no localized labels of its own, and no solution scoping either —
+        // an update never moves a component between solutions.
+        DataverseWrite.UpdateRelationship w => (HttpMethod.Put, $"RelationshipDefinitions(SchemaName='{Uri.EscapeDataString(w.RelationshipSchemaName)}')", w.Metadata, []),
         // This action ignores the MSCRM.SolutionUniqueName header (confirmed live: the column and its
         // relationships were created outside the named solution, batched or not), so the solution goes
         // in the body as the action's SolutionUniqueName parameter, as in Microsoft Learn's example:

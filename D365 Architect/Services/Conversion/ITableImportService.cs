@@ -142,6 +142,25 @@ public enum AttributeImportAction
     AddLookupTargets,
 
     /// <summary>
+    /// An existing single-target Lookup column whose YAML
+    /// <c>relationshipBehavior</c> differs from its live one-to-many
+    /// relationship's actual <c>CascadeConfiguration</c>. Applied by
+    /// updating the relationship itself — a PUT on
+    /// <c>RelationshipDefinitions(SchemaName='...')</c> (see
+    /// <see cref="Dataverse.IDataverseClient.UpdateRelationshipAsync"/>),
+    /// whose body is <see cref="AttributeImportPlan.RequestBody"/> (the full
+    /// live relationship with <c>CascadeConfiguration</c> replaced, from
+    /// <see cref="AttributeMetadataJsonBuilder.BuildRelationshipBehaviorUpdateBody"/>).
+    /// The relationship's schema name comes from
+    /// <see cref="AttributeImportPlan.RelationshipSchemaName"/> — a live
+    /// single-target lookup doesn't otherwise expose it anywhere this tool
+    /// reads. Making an existing relationship Parental is refused up front
+    /// (<see cref="Invalid"/>) when the table already has another parental
+    /// relationship live, since a table can be the child of only one.
+    /// </summary>
+    UpdateRelationshipBehavior,
+
+    /// <summary>
     /// Live but absent from the local YAML. Never applied — this tool never
     /// deletes a column automatically, no matter what the YAML says or
     /// doesn't say.
@@ -215,6 +234,17 @@ public sealed record AttributeImportPlan(string LogicalName, AttributeImportActi
     /// resolves the real one. Null for every ordinary plan.
     /// </summary>
     public string? PendingGlobalChoiceName { get; init; }
+
+    /// <summary>
+    /// Set on an <see cref="AttributeImportAction.UpdateRelationshipBehavior"/>
+    /// plan: the live relationship's schema name to PUT to (see
+    /// <see cref="Dataverse.IDataverseClient.UpdateRelationshipAsync"/>). A
+    /// live lookup's owning relationship isn't named anywhere else this tool
+    /// reads (the bulk entity-definition read carries no relationship data),
+    /// so it's resolved live at preview time and carried here. Null for every
+    /// other plan.
+    /// </summary>
+    public string? RelationshipSchemaName { get; init; }
 }
 
 /// <summary>What kind of option-value action <see cref="OptionChangePlan"/> carries — see <see cref="AttributeMetadataJsonBuilder.BuildOptionChangePlans"/>.</summary>
@@ -269,9 +299,9 @@ public sealed record TableImportPreview(string EntityLogicalName, string Existin
     /// <summary>True when there's at least one actual write to make — see <see cref="ChangeCount"/>.</summary>
     public bool HasChanges => ChangeCount > 0;
 
-    /// <summary>How many writes there are to make: one for a table-level change, plus one per column plan that writes something (Create/Update/CreateLookupRelationship/CreateCustomerRelationship/CreatePolymorphicLookup/AddLookupTargets).</summary>
+    /// <summary>How many writes there are to make: one for a table-level change, plus one per column plan that writes something (Create/Update/CreateLookupRelationship/CreateCustomerRelationship/CreatePolymorphicLookup/AddLookupTargets/UpdateRelationshipBehavior).</summary>
     public int ChangeCount => (TableUpdateBody is null ? 0 : 1) + AttributePlans.Count(p =>
-        p.Action is AttributeImportAction.Create or AttributeImportAction.Update or AttributeImportAction.CreateLookupRelationship or AttributeImportAction.CreateCustomerRelationship or AttributeImportAction.CreatePolymorphicLookup or AttributeImportAction.AddLookupTargets);
+        p.Action is AttributeImportAction.Create or AttributeImportAction.Update or AttributeImportAction.CreateLookupRelationship or AttributeImportAction.CreateCustomerRelationship or AttributeImportAction.CreatePolymorphicLookup or AttributeImportAction.AddLookupTargets or AttributeImportAction.UpdateRelationshipBehavior);
 }
 
 /// <summary>

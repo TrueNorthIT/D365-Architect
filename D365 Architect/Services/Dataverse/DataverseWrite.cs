@@ -38,6 +38,9 @@ public abstract record DataverseWrite
     /// <summary>See <see cref="IDataverseClient.CreateCustomerRelationshipsAsync"/>. <paramref name="SolutionUniqueName"/> null means "wherever Dataverse's own default context puts it".</summary>
     public sealed record CreateCustomerRelationships(JsonObject Body, string? SolutionUniqueName = null) : DataverseWrite;
 
+    /// <summary>See <see cref="IDataverseClient.UpdateRelationshipAsync"/>.</summary>
+    public sealed record UpdateRelationship(string RelationshipSchemaName, JsonObject Metadata) : DataverseWrite;
+
     /// <summary>See <see cref="IDataverseClient.CreatePolymorphicLookupAttributeAsync"/>. <paramref name="SolutionUniqueName"/> null means "wherever Dataverse's own default context puts it".</summary>
     public sealed record CreatePolymorphicLookupAttribute(JsonObject Body, string? SolutionUniqueName = null) : DataverseWrite;
 

@@ -726,4 +726,52 @@ public sealed class AttributeMetadataJsonBuilderTests
     {
         Assert.Empty(AttributeMetadataJsonBuilder.BuildOptionChangePlans("tn_test", Attr("String"), Attr("String")));
     }
+
+    // ---- BuildRelationshipBehaviorUpdateBody ----
+
+    [Fact]
+    public void BuildRelationshipBehaviorUpdateBody_SwapsOnlyTheCascadeConfiguration()
+    {
+        var live = new JsonObject
+        {
+            ["@odata.type"] = "Microsoft.Dynamics.CRM.OneToManyRelationshipMetadata",
+            ["SchemaName"] = "tn_test_tn_Lookup_account",
+            ["ReferencedEntity"] = "account",
+            ["ReferencedAttribute"] = "accountid",
+            ["ReferencingEntity"] = "tn_test",
+            ["CascadeConfiguration"] = RelationshipBehaviors.CascadeConfigurationOrNull("Referential")!,
+        };
+
+        var body = AttributeMetadataJsonBuilder.BuildRelationshipBehaviorUpdateBody(live, "Parental");
+
+        // Every live field is preserved untouched...
+        Assert.Equal("Microsoft.Dynamics.CRM.OneToManyRelationshipMetadata", (string)body["@odata.type"]!);
+        Assert.Equal("tn_test_tn_Lookup_account", (string)body["SchemaName"]!);
+        Assert.Equal("account", (string)body["ReferencedEntity"]!);
+        Assert.Equal("accountid", (string)body["ReferencedAttribute"]!);
+        Assert.Equal("tn_test", (string)body["ReferencingEntity"]!);
+        // ...and only the CascadeConfiguration is replaced with the new behavior's preset.
+        var cascade = body["CascadeConfiguration"]!;
+        Assert.Equal("Cascade", (string)cascade["Assign"]!);
+        Assert.Equal("Cascade", (string)cascade["Delete"]!);
+        Assert.Equal("Cascade", (string)cascade["Merge"]!);
+        Assert.Equal("Cascade", (string)cascade["Reparent"]!);
+        Assert.Equal("Cascade", (string)cascade["Share"]!);
+        Assert.Equal("Cascade", (string)cascade["Unshare"]!);
+        // The input object itself is not mutated.
+        Assert.Equal("RemoveLink", (string)live["CascadeConfiguration"]!["Delete"]!);
+    }
+
+    [Theory]
+    [InlineData("Referential")]
+    [InlineData("ReferentialRestrictDelete")]
+    [InlineData("Parental")]
+    public void BuildRelationshipBehaviorUpdateBody_EachBehaviorYieldsItsPreset(string behavior)
+    {
+        var live = new JsonObject { ["@odata.type"] = "Microsoft.Dynamics.CRM.OneToManyRelationshipMetadata", ["SchemaName"] = "tn_rel" };
+
+        var body = AttributeMetadataJsonBuilder.BuildRelationshipBehaviorUpdateBody(live, behavior);
+
+        Assert.True(JsonNode.DeepEquals(RelationshipBehaviors.CascadeConfigurationOrNull(behavior), body["CascadeConfiguration"]!));
+    }
 }

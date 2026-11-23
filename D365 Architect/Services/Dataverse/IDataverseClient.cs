@@ -354,6 +354,57 @@ public interface IDataverseClient
     Task CreateOneToManyRelationshipAsync(Uri environmentUrl, string accessToken, JsonObject relationshipMetadata, string? solutionUniqueName, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Fetches the live one-to-many <em>relationship</em> a Lookup column is
+    /// owned by, resolved from the column itself —
+    /// <c>RelationshipDefinitions</c> filtered by <c>referencingentity</c> and
+    /// <c>referencingattribute</c> (ordered by <c>schemaname</c>) — and returns
+    /// every match with its <c>CascadeConfiguration</c> and full object.
+    /// Needed because the bulk <see cref="GetEntityDefinitionJsonAsync"/>
+    /// read can't see cascade behavior at all (its <c>Attributes</c>
+    /// collection is the base <c>AttributeMetadata</c> type and carries no
+    /// relationship data), so without this <c>table import</c> can't tell
+    /// what an existing lookup's relationship is configured as and reports
+    /// a changed <c>relationshipBehavior</c> as "Unchanged" — the exact gap
+    /// the Redcentric CE Dev finding ("Invoice Centre → Account is
+    /// Referential while Terms &amp; Conditions → Account is Parental") hit.
+    /// Only ever called for single-target Lookups: a multi-table lookup and
+    /// a Customer column have one relationship <em>per target</em> and the
+    /// local YAML has no per-target behavior to diff against.
+    /// </summary>
+    Task<IReadOnlyList<RelationshipMetadata>?> GetOne2ManyRelationshipMetadataAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string attributeLogicalName, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Every live one-to-many relationship whose <em>referencing</em>
+    /// (child) entity is <paramref name="entityLogicalName"/> — the
+    /// <c>RelationshipDefinitions</c> rows filtered by <c>referencingentity</c>,
+    /// each with its <c>CascadeConfiguration</c> and full object. Used
+    /// to enforce the platform limit that an entity can be the child in only
+    /// one parental relationship (see
+    /// <see cref="RelationshipBehaviors.IsParental"/>) before
+    /// <see cref="UpdateRelationshipAsync"/> would make a live relationship
+    /// parental, so the refusal names the existing parental relationship
+    /// instead of Dataverse's own error explaining it.
+    /// </summary>
+    Task<IReadOnlyList<RelationshipMetadata>> GetReferencingRelationshipsAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Updates an existing one-to-many relationship's
+    /// <c>CascadeConfiguration</c> — a PUT on
+    /// <c>RelationshipDefinitions(SchemaName='...')</c>. Dataverse allows
+    /// changing a live relationship's cascade behavior (unlike its name or
+    /// referenced tables), which is what a changed <c>relationshipBehavior</c>
+    /// on an existing lookup must be applied through. One platform limit
+    /// applies: an entity can be the child in only one parental relationship
+    /// (see <see cref="RelationshipBehaviors.IsParental"/>), so callers check
+    /// that before making an existing relationship parental.
+    /// <paramref name="relationshipMetadata"/> is the full live object (see
+    /// <see cref="RelationshipMetadata.FullObject"/>) with
+    /// <c>CascadeConfiguration</c> replaced — same full-object round trip as
+    /// <see cref="UpdateAttributeAsync"/>, not a freshly built body.
+    /// </summary>
+    Task UpdateRelationshipAsync(Uri environmentUrl, string accessToken, string relationshipSchemaName, JsonObject relationshipMetadata, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Creates a brand-new Customer column via the dedicated
     /// <c>CreateCustomerRelationships</c> action — Microsoft's own docs are
     /// explicit that a Customer lookup needs this rather than a plain
