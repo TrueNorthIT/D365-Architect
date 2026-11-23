@@ -247,6 +247,18 @@ public static class AttributeChangeValidator
             return autoNumberError;
         }
 
+        // A changed relationshipBehavior on an existing lookup is applied via
+        // the relationship's own CascadeConfiguration update (see
+        // TableImportService.PlanRelationshipBehaviorChange), so an invalid
+        // name — a typo like "Cascade" — would throw when the body is built.
+        // Caught here so it's reported as Invalid, not dropped or thrown.
+        if (local.Type == "Lookup"
+            && local.RelationshipBehavior is not null
+            && !RelationshipBehaviors.Names.Contains(local.RelationshipBehavior, StringComparer.OrdinalIgnoreCase))
+        {
+            return $"'{local.RelationshipBehavior}' isn't a valid RelationshipBehavior for '{local.Name}' — expected one of: {string.Join(", ", RelationshipBehaviors.Names)}.";
+        }
+
         if (local.Type is "String" or "Memo" && local.MaxLength is <= 0)
         {
             return $"MaxLength must be greater than 0 (was {local.MaxLength}).";

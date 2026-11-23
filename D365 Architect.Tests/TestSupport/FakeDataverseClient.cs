@@ -30,6 +30,12 @@ public sealed class FakeDataverseClient : IDataverseClient
     public Func<string, IReadOnlyList<string>?>? SolutionEntityLogicalNames { get; set; }
     public Func<string, string, bool>? SolutionEntityIncludesSubcomponents { get; set; } // (solutionUniqueName, entityLogicalName) -> bool
 
+    /// <summary>Answers <see cref="IDataverseClient.GetOne2ManyRelationshipMetadataAsync"/>: (entityLogicalName, attributeLogicalName) -> relationships owning that lookup column. Unset throws, like every other unconfigured read.</summary>
+    public Func<string, string, IReadOnlyList<RelationshipMetadata>?>? One2ManyRelationships { get; set; }
+
+    /// <summary>Answers <see cref="IDataverseClient.GetReferencingRelationshipsAsync"/>: entityLogicalName -> every one-to-many relationship whose child is that table. Unset throws.</summary>
+    public Func<string, IReadOnlyList<RelationshipMetadata>>? ReferencingRelationships { get; set; }
+
     /// <summary>Answers <see cref="EntityExistsAsync"/>: logical name -> exists live. Unset throws, like every other unconfigured read.</summary>
     public Func<string, bool>? EntityExists { get; set; }
 
@@ -57,6 +63,9 @@ public sealed class FakeDataverseClient : IDataverseClient
     public List<(Guid FormId, string FormXml, string? SolutionUniqueName)> UpdateSystemFormXmlCalls { get; } = [];
     public List<string> PublishEntityCalls { get; } = [];
     public List<(string EntityLogicalName, string AttributeLogicalName, int Value)> SetAutoNumberSeedCalls { get; } = [];
+    public List<(string EntityLogicalName, string AttributeLogicalName)> One2ManyRelationshipCalls { get; } = [];
+    public List<string> ReferencingRelationshipCalls { get; } = [];
+    public List<(string RelationshipSchemaName, JsonObject Metadata)> UpdateRelationshipCalls { get; } = [];
 
     /// <summary>
     /// Column creates and seed writes in the order they were issued (e.g.
@@ -291,6 +300,24 @@ public sealed class FakeDataverseClient : IDataverseClient
         return Task.CompletedTask;
     }
 
+    public Task<IReadOnlyList<RelationshipMetadata>?> GetOne2ManyRelationshipMetadataAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string attributeLogicalName, CancellationToken cancellationToken)
+    {
+        One2ManyRelationshipCalls.Add((entityLogicalName, attributeLogicalName));
+        return Task.FromResult(One2ManyRelationships is not null ? One2ManyRelationships(entityLogicalName, attributeLogicalName) : throw new NotImplementedException());
+    }
+
+    public Task<IReadOnlyList<RelationshipMetadata>> GetReferencingRelationshipsAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken)
+    {
+        ReferencingRelationshipCalls.Add(entityLogicalName);
+        return Task.FromResult(ReferencingRelationships is not null ? ReferencingRelationships(entityLogicalName) : throw new NotImplementedException());
+    }
+
+    public Task UpdateRelationshipAsync(Uri environmentUrl, string accessToken, string relationshipSchemaName, JsonObject relationshipMetadata, CancellationToken cancellationToken)
+    {
+        UpdateRelationshipCalls.Add((relationshipSchemaName, relationshipMetadata));
+        return Task.CompletedTask;
+    }
+
     public Task InsertOptionValueAsync(Uri environmentUrl, string accessToken, JsonObject body, CancellationToken cancellationToken)
     {
         InsertOptionValueCalls.Add(body);
@@ -409,6 +436,10 @@ public sealed class FakeDataverseClient : IDataverseClient
 
                 case DataverseWrite.CreatePolymorphicLookupAttribute w:
                     CreatePolymorphicLookupAttributeCalls.Add((w.Body, w.SolutionUniqueName));
+                    break;
+
+                case DataverseWrite.UpdateRelationship w:
+                    UpdateRelationshipCalls.Add((w.RelationshipSchemaName, w.Metadata));
                     break;
 
                 case DataverseWrite.InsertOptionValue w:

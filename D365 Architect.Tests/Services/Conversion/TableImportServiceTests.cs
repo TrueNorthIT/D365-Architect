@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using D365Architect.Services.Conversion;
 using D365Architect.Services.Conversion.Models;
 using D365Architect.Services.Dataverse;
@@ -677,6 +678,119 @@ public sealed class TableImportServiceTests
         Assert.Equal(2, writes.Count);
         Assert.IsType<DataverseWrite.UpdateEntity>(writes[0]);
         Assert.IsType<DataverseWrite.CreateAttribute>(writes[1]);
+    }
+
+    // ---- relationshipBehavior on an existing lookup ----
+    //
+    // A changed relationshipBehavior on a lookup that already exists live
+    // used to produce no diff and no warning — the whole point of this
+    // change. It now plans an extra UpdateRelationshipBehavior write (or an
+    // Invalid one, with a clear reason, where the change can't be applied).
+
+    private const string ExistingSingleLookupJson = """{ "LogicalName": "tn_lookup", "SchemaName": "tn_Lookup", "AttributeType": "Lookup", "Targets": ["account"] }""";
+
+    private static RelationshipMetadata LiveRelationship(string schemaName, string behavior) =>
+        new(schemaName, RelationshipBehaviors.CascadeConfigurationOrNull(behavior)!,
+            new JsonObject { ["@odata.type"] = "Microsoft.Dynamics.CRM.OneToManyRelationshipMetadata", ["SchemaName"] = schemaName, ["ReferencedEntity"] = "account", ["ReferencingEntity"] = "tn_test", ["CascadeConfiguration"] = RelationshipBehaviors.CascadeConfigurationOrNull(behavior)! });
+
+    [Fact]
+    public async Task PreviewAsync_ChangedRelationshipBehaviorOnExistingLookup_PlansUpdateRelationshipBehavior()
+    {
+        var (service, client) = CreateService(Entity(ExistingSingleLookupJson));
+        client.One2ManyRelationships = (_, _) => [LiveRelationship("tn_test_tn_Lookup_account", "Referential")];
+        // No other parental relationship on the table, so the change is allowed.
+        client.ReferencingRelationships = _ => [LiveRelationship("tn_test_tn_Lookup_account", "Referential")];
+        var local = Local(Attr("tn_lookup", "Lookup", schemaName: "tn_Lookup", configure: b => { b.Targets = ["account"]; b.RelationshipBehavior = "Parental"; }));
+
+        var preview = await service.PreviewAsync(new Uri("https://test.crm.dynamics.com"), "token", local, CancellationToken.None);
+
+        var plans = preview.AttributePlans.Where(p => p.LogicalName == "tn_lookup").ToList();
+        // The lookup itself is unchanged; the behavior change is its own extra write.
+        Assert.Contains(plans, p => p.Action == AttributeImportAction.Unchanged);
+        var behavior = Assert.Single(plans, p => p.Action == AttributeImportAction.UpdateRelationshipBehavior);
+        Assert.Equal("tn_test_tn_Lookup_account", behavior.RelationshipSchemaName);
+        Assert.NotNull(behavior.RequestBody);
+        // Parental's Assign cascade value is "Cascade" (the behavior name "Parental"
+        // doesn't appear in the body — only its expanded CascadeConfiguration does).
+        Assert.Equal("Cascade", (string)behavior.RequestBody!["CascadeConfiguration"]!["Assign"]!);
+        Assert.Contains(behavior.Warnings!, w => w.Contains("Referential -> Parental"));
+        Assert.True(preview.HasChanges);
+    }
+
+    [Fact]
+    public async Task PreviewAsync_RelationshipBehaviorMatchingLive_NoExtraPlan()
+    {
+        var (service, client) = CreateService(Entity(ExistingSingleLookupJson));
+        client.One2ManyRelationships = (_, _) => [LiveRelationship("tn_test_tn_Lookup_account", "Referential")];
+        var local = Local(Attr("tn_lookup", "Lookup", schemaName: "tn_Lookup", configure: b => { b.Targets = ["account"]; b.RelationshipBehavior = "Referential"; }));
+
+        var preview = await service.PreviewAsync(new Uri("https://test.crm.dynamics.com"), "token", local, CancellationToken.None);
+
+        Assert.All(preview.AttributePlans.Where(p => p.LogicalName == "tn_lookup"),
+            p => Assert.Equal(AttributeImportAction.Unchanged, p.Action));
+    }
+
+    [Fact]
+    public async Task PreviewAsync_RelationshipBehaviorChangeToSecondParental_PlansInvalid()
+    {
+        var (service, client) = CreateService(Entity(ExistingSingleLookupJson));
+        client.One2ManyRelationships = (_, _) => [LiveRelationship("tn_test_tn_Lookup_account", "Referential")];
+        // A different relationship on this same table is already Parental.
+        client.ReferencingRelationships = _ => [LiveRelationship("tn_test_tn_Lookup_account", "Referential"), LiveRelationship("tn_other_tn_Lookup2_account", "Parental")];
+        var local = Local(Attr("tn_lookup", "Lookup", schemaName: "tn_Lookup", configure: b => { b.Targets = ["account"]; b.RelationshipBehavior = "Parental"; }));
+
+        var preview = await service.PreviewAsync(new Uri("https://test.crm.dynamics.com"), "token", local, CancellationToken.None);
+
+        var behavior = Assert.Single(preview.AttributePlans, p => p.Action == AttributeImportAction.Invalid);
+        Assert.Contains("only one parental relationship", behavior.Reason);
+    }
+
+    [Fact]
+    public async Task PreviewAsync_RelationshipBehaviorChangeWithNoLiveRelationship_PlansInvalid()
+    {
+        var (service, client) = CreateService(Entity(ExistingSingleLookupJson));
+        client.One2ManyRelationships = (_, _) => [];
+        var local = Local(Attr("tn_lookup", "Lookup", schemaName: "tn_Lookup", configure: b => { b.Targets = ["account"]; b.RelationshipBehavior = "Parental"; }));
+
+        var preview = await service.PreviewAsync(new Uri("https://test.crm.dynamics.com"), "token", local, CancellationToken.None);
+
+        var behavior = Assert.Single(preview.AttributePlans, p => p.Action == AttributeImportAction.Invalid);
+        Assert.Contains("no one-to-many relationship", behavior.Reason);
+    }
+
+    [Fact]
+    public async Task ApplyAsync_UpdateRelationshipBehavior_CallsUpdateRelationship()
+    {
+        var (service, client) = CreateService(Entity(ExistingSingleLookupJson));
+        client.One2ManyRelationships = (_, _) => [LiveRelationship("tn_test_tn_Lookup_account", "Referential")];
+        // No other parental relationship on the table, so the change is allowed.
+        client.ReferencingRelationships = _ => [LiveRelationship("tn_test_tn_Lookup_account", "Referential")];
+        var local = Local(Attr("tn_lookup", "Lookup", schemaName: "tn_Lookup", configure: b => { b.Targets = ["account"]; b.RelationshipBehavior = "Parental"; }));
+        var preview = await service.PreviewAsync(new Uri("https://test.crm.dynamics.com"), "token", local, CancellationToken.None);
+
+        await service.ApplyAsync(new Uri("https://test.crm.dynamics.com"), "token", preview, useTransaction: false, solutionUniqueName: null, CancellationToken.None);
+
+        var call = Assert.Single(client.UpdateRelationshipCalls);
+        Assert.Equal("tn_test_tn_Lookup_account", call.RelationshipSchemaName);
+        Assert.Equal("Microsoft.Dynamics.CRM.OneToManyRelationshipMetadata", (string)call.Metadata["@odata.type"]!);
+        Assert.Equal("Cascade", (string)call.Metadata["CascadeConfiguration"]!["Assign"]!);
+    }
+
+    [Fact]
+    public async Task ApplyAsync_UpdateRelationshipBehavior_WithTransaction_IsAnUpdateRelationshipWrite()
+    {
+        var (service, client) = CreateService(Entity(ExistingSingleLookupJson));
+        client.One2ManyRelationships = (_, _) => [LiveRelationship("tn_test_tn_Lookup_account", "Referential")];
+        // No other parental relationship on the table, so the change is allowed.
+        client.ReferencingRelationships = _ => [LiveRelationship("tn_test_tn_Lookup_account", "Referential")];
+        var local = Local(Attr("tn_lookup", "Lookup", schemaName: "tn_Lookup", configure: b => { b.Targets = ["account"]; b.RelationshipBehavior = "Parental"; }));
+        var preview = await service.PreviewAsync(new Uri("https://test.crm.dynamics.com"), "token", local, CancellationToken.None);
+
+        await service.ApplyAsync(new Uri("https://test.crm.dynamics.com"), "token", preview, CancellationToken.None);
+
+        var writes = Assert.Single(client.ExecuteTransactionCalls);
+        var write = Assert.Single(writes, w => w is DataverseWrite.UpdateRelationship);
+        Assert.Equal("tn_test_tn_Lookup_account", ((DataverseWrite.UpdateRelationship)write).RelationshipSchemaName);
     }
 }
 

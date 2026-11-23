@@ -3,6 +3,31 @@ using System.Text.Json.Nodes;
 namespace D365Architect.Services.Dataverse;
 
 /// <summary>
+/// What the live one-to-many <em>relationship</em> behind a single-target
+/// Lookup is actually configured as — the piece of live state the bulk
+/// entity-definition read can't see, because its <c>Attributes</c>
+/// collection carries no <c>CascadeConfiguration</c> (only a separate
+/// RelationshipDefinitions query does). Used by
+/// <see cref="Conversion.TableImportService"/> to diff an existing lookup's
+/// <c>relationshipBehavior</c> against the local YAML instead of reporting it
+/// as "Unchanged" (see
+/// <see cref="IDataverseClient.GetOne2ManyRelationshipMetadataAsync"/>).
+/// </summary>
+/// <param name="SchemaName">The relationship's schema name.</param>
+/// <param name="CascadeConfiguration">
+/// The live <c>CascadeConfiguration</c> — Assign/Delete/Merge/Reparent/
+/// Share/Unshare, each <c>Cascade</c>/<c>NoCascade</c>/<c>Restrict</c>/
+/// <c>RemoveLink</c>/<c>UserOwned</c>/<c>Active</c>/<c>CascadeDelete</c>.
+/// Null when the live object didn't carry one.
+/// </param>
+/// <param name="FullObject">
+/// The entire live relationship as fetched — the base object an update's
+/// body is built from (see
+/// <see cref="AttributeMetadataJsonBuilder.BuildRelationshipBehaviorUpdateBody"/>).
+/// </param>
+public sealed record RelationshipMetadata(string SchemaName, JsonObject? CascadeConfiguration, JsonObject FullObject);
+
+/// <summary>
 /// The relationship "Behavior" presets the Maker UI itself offers when
 /// creating a new one-to-many relationship, each expanded to the
 /// <c>CascadeConfiguration</c> Dataverse's Web API actually wants — see
@@ -73,4 +98,55 @@ public static class RelationshipBehaviors
         ["Share"] = share,
         ["Unshare"] = unshare,
     };
+
+    /// <summary>
+    /// The reverse of <see cref="CascadeConfigurationOrNull"/>: which named
+    /// behavior <paramref name="cascadeConfiguration"/> (a live
+    /// relationship's, from a RelationshipDefinitions read) is, when it's
+    /// exactly one of the three presets, null when it's a custom
+    /// configuration (e.g. the Maker UI's "Configurable Cascading") or
+    /// missing. "Referential" and "ReferentialRestrictDelete" stay distinct:
+    /// each maps to a different <c>Delete</c> value, so the six fields
+    /// identify the preset without ambiguity.
+    /// </summary>
+    public static string? BehaviorNameOrNull(JsonObject? cascadeConfiguration)
+    {
+        if (cascadeConfiguration is null)
+        {
+            return null;
+        }
+
+        string? Field(string name) => cascadeConfiguration[name]?.GetValue<string>();
+        return (Field("Assign"), Field("Delete"), Field("Merge"), Field("Reparent"), Field("Share"), Field("Unshare")) switch
+        {
+            ("NoCascade", "RemoveLink", "NoCascade", "NoCascade", "NoCascade", "NoCascade") => Referential,
+            ("NoCascade", "Restrict", "NoCascade", "NoCascade", "NoCascade", "NoCascade") => ReferentialRestrictDelete,
+            ("Cascade", "Cascade", "Cascade", "Cascade", "Cascade", "Cascade") => Parental,
+            _ => null,
+        };
+    }
+
+    /// <summary>
+    /// Microsoft's own "parental" test (see this class's <see cref="Referential"/>
+    /// doc comment for the citation): Delete is Cascade, *or* any of
+    /// Assign/Share/Unshare/Reparent is Cascade, UserOwned, or Active. Used
+    /// before an update that would make an existing relationship Parental,
+    /// to catch "this table is already the child of another parental
+    /// relationship" locally instead of letting Dataverse's 0x80047007
+    /// explain it.
+    /// </summary>
+    public static bool IsParental(JsonObject? cascadeConfiguration)
+    {
+        if (cascadeConfiguration is null)
+        {
+            return false;
+        }
+
+        string? Field(string name) => cascadeConfiguration[name]?.GetValue<string>();
+        return Field("Delete") is "Cascade" or "CascadeDelete"
+            || Field("Assign") is "Cascade" or "UserOwned" or "Active"
+            || Field("Share") is "Cascade" or "UserOwned" or "Active"
+            || Field("Unshare") is "Cascade" or "UserOwned" or "Active"
+            || Field("Reparent") is "Cascade" or "UserOwned" or "Active";
+    }
 }

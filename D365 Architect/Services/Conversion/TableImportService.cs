@@ -29,6 +29,7 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
 
         var tableUpdateBody = await BuildTableUpdateBodyAsync(environmentUrl, accessToken, entity, existingEntity, cancellationToken);
         var attributePlans = await BuildAttributePlansAsync(environmentUrl, accessToken, entity, existingEntity, pendingGlobalChoiceNames, cancellationToken);
+        attributePlans = await PlanRelationshipBehaviorUpdatesAsync(environmentUrl, accessToken, entity, attributePlans, cancellationToken);
 
         return new TableImportPreview(entity.LogicalName, existingYaml, newYaml, tableUpdateBody, attributePlans)
         {
@@ -148,6 +149,13 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
 
                     break;
 
+                // A cascade-behavior change updates the live relationship
+                // in place — no solution header: it's an update, not a
+                // create, so it can't be a solution component.
+                case AttributeImportAction.UpdateRelationshipBehavior:
+                    await dataverseClient.UpdateRelationshipAsync(environmentUrl, accessToken, plan.RelationshipSchemaName!, plan.RequestBody!, cancellationToken);
+                    break;
+
                 // Unchanged/SkippedUnsupportedType/WouldRemove/Invalid: nothing to do, by design.
             }
 
@@ -218,6 +226,10 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
                 // like every other create — it's scoped to the solution.
                 case AttributeImportAction.AddLookupTargets:
                     writes.AddRange(plan.AddedLookupTargets!.Select(added => new DataverseWrite.CreateOneToManyRelationship(added.RequestBody, solutionUniqueName)));
+                    break;
+
+                case AttributeImportAction.UpdateRelationshipBehavior:
+                    writes.Add(new DataverseWrite.UpdateRelationship(plan.RelationshipSchemaName!, plan.RequestBody!));
                     break;
 
                 // Unchanged/SkippedUnsupportedType/WouldRemove/Invalid: nothing to do, by design.
@@ -349,6 +361,141 @@ public sealed class TableImportService(IDataverseClient dataverseClient, EntityJ
         }
 
         return plans;
+    }
+
+    /// <summary>
+    /// A second, live-resolving pass over the plans <see cref="BuildAttributePlansAsync"/>
+    /// just built: any plan whose local column is an existing Lookup whose
+    /// <c>relationshipBehavior</c> differs from the live relationship's
+    /// actual <c>CascadeConfiguration</c> gets an extra
+    /// <see cref="AttributeImportAction.UpdateRelationshipBehavior"/> plan
+    /// (its request body is the live relationship with
+    /// <c>CascadeConfiguration</c> replaced, see
+    /// <see cref="AttributeMetadataJsonBuilder.BuildRelationshipBehaviorUpdateBody"/>)
+    /// — or an <see cref="AttributeImportAction.Invalid"/> plan where the
+    /// change can't be applied. The original plan is kept as-is: a changed
+    /// <c>relationshipBehavior</c> is an extra write on the same column,
+    /// never a replacement for a separate attribute update the same YAML
+    /// might also be making.
+    /// <para>
+    /// Why a separate pass rather than inside <see cref="BuildExistingColumnPlanAsync"/>:
+    /// cascade behavior isn't anywhere in the bulk entity-definition read
+    /// (<see cref="Dataverse.IDataverseClient.GetEntityDefinitionJsonAsync"/>'s
+    /// <c>Attributes</c> is the base <c>AttributeMetadata</c> type and carries
+    /// no relationship data), so it's invisible to
+    /// <see cref="AttributesMatch"/> — without this pass a changed
+    /// <c>relationshipBehavior</c> on an existing lookup is exactly the
+    /// "no diff, no warning" gap this issue reports (found on Redcentric CE
+    /// Dev: the tool-created Invoice Centre → Account lookup is Referential
+    /// while the existing Terms &amp; Conditions → Account is Parental).
+    /// </para>
+    /// </summary>
+    private async Task<IReadOnlyList<AttributeImportPlan>> PlanRelationshipBehaviorUpdatesAsync(
+        Uri environmentUrl,
+        string accessToken,
+        EntityDefinition local,
+        IReadOnlyList<AttributeImportPlan> plans,
+        CancellationToken cancellationToken)
+    {
+        var byName = local.Attributes.ToDictionary(a => a.Name);
+        var result = new List<AttributeImportPlan>(plans.Count);
+
+        foreach (var plan in plans)
+        {
+            result.Add(plan);
+
+            if (!byName.TryGetValue(plan.LogicalName, out var localAttribute)
+                || localAttribute.RelationshipBehavior is null
+                || localAttribute.Type != "Lookup"
+                || localAttribute.Targets is not { Count: 1 })
+            {
+                continue;
+            }
+
+            // Only reachable for an existing lookup in practice (a brand-new
+            // lookup plans as CreateLookupRelationship/CreatePolymorphicLookup
+            // and its behavior is applied at create time); guard it anyway so
+            // nothing live is ever read for a column this import is creating.
+            if (plan.Action is not (AttributeImportAction.Unchanged or AttributeImportAction.Update))
+            {
+                continue;
+            }
+
+            var liveRelationships = await dataverseClient.GetOne2ManyRelationshipMetadataAsync(environmentUrl, accessToken, local.LogicalName, plan.LogicalName, cancellationToken);
+            var live = liveRelationships is null ? null : liveRelationships.SingleOrDefault();
+
+            if (live is null)
+            {
+                result.Add(new AttributeImportPlan(plan.LogicalName, AttributeImportAction.Invalid,
+                    $"relationshipBehavior '{localAttribute.RelationshipBehavior}' not applied: live lookup column '{local.LogicalName}' has no one-to-many relationship to update its cascade behavior on — Dataverse may not have created one. Delete and re-create the column instead.", null));
+                continue;
+            }
+
+            if (string.Equals(RelationshipBehaviors.BehaviorNameOrNull(live.CascadeConfiguration), localAttribute.RelationshipBehavior, StringComparison.OrdinalIgnoreCase))
+            {
+                continue; // matches live, nothing to do
+            }
+
+            result.Add(await PlanRelationshipBehaviorChangeAsync(environmentUrl, accessToken, local, localAttribute, live, cancellationToken));
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// The one change <see cref="PlanRelationshipBehaviorUpdatesAsync"/> can
+    /// actually apply: the live relationship's <c>CascadeConfiguration</c>
+    /// replaced with the YAML behavior's preset, via a PUT on
+    /// <c>RelationshipDefinitions(SchemaName='...')</c>. Making the
+    /// relationship Parental is refused first (<see cref="AttributeImportAction.Invalid"/>
+    /// with a clear message, per this issue's expectation) when the table
+    /// already has a different parental relationship live — Dataverse
+    /// allows an entity to be the child of only one parental relationship,
+    /// so this check names the blocker up front instead of leaving it to
+    /// Dataverse's own 0x80047007 error at apply time.
+    /// </summary>
+    private async Task<AttributeImportPlan> PlanRelationshipBehaviorChangeAsync(
+        Uri environmentUrl,
+        string accessToken,
+        EntityDefinition local,
+        AttributeDefinition localAttribute,
+        RelationshipMetadata live,
+        CancellationToken cancellationToken)
+    {
+        var from = RelationshipBehaviors.BehaviorNameOrNull(live.CascadeConfiguration) ?? "(custom — Configurable Cascading)";
+        var to = localAttribute.RelationshipBehavior!;
+
+        if (to.Equals(RelationshipBehaviors.Parental, StringComparison.OrdinalIgnoreCase))
+        {
+            var existingParental = (await dataverseClient.GetReferencingRelationshipsAsync(environmentUrl, accessToken, local.LogicalName, cancellationToken))
+                .FirstOrDefault(r => !string.Equals(r.SchemaName, live.SchemaName, StringComparison.OrdinalIgnoreCase) && RelationshipBehaviors.IsParental(r.CascadeConfiguration));
+
+            if (existingParental is not null)
+            {
+                return new AttributeImportPlan(localAttribute.Name, AttributeImportAction.Invalid,
+                    $"relationshipBehavior '{to}' not applied: table '{local.LogicalName}' is already the child of parental relationship '{existingParental.SchemaName}' — Dataverse allows an entity to be the child of only one parental relationship. Change that relationship first (or its behavior in its own table's YAML), then re-run this import.", null);
+            }
+        }
+
+        try
+        {
+            return new AttributeImportPlan(localAttribute.Name, AttributeImportAction.UpdateRelationshipBehavior, null,
+                    AttributeMetadataJsonBuilder.BuildRelationshipBehaviorUpdateBody(live.FullObject, to))
+                {
+                    RelationshipSchemaName = live.SchemaName,
+                    // The plan line shows what changed: live behavior -> YAML behavior, on which relationship.
+                    Warnings = [$"'{live.SchemaName}' cascade behavior changes {from} -> {to} (updates the lookup's one-to-many relationship, not the column itself)."],
+                };
+        }
+        catch (InvalidOperationException ex)
+        {
+            // BuildRelationshipBehaviorUpdateBody rejects a behavior name
+            // RelationshipBehaviors doesn't know — normally pre-validated
+            // (AttributeChangeValidator), but a hand-edited YAML can still
+            // slip one through; report it, don't send it.
+            return new AttributeImportPlan(localAttribute.Name, AttributeImportAction.Invalid,
+                $"relationshipBehavior '{to}' not applied: {ex.Message}", null);
+        }
     }
 
     /// <summary>
