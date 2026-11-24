@@ -662,7 +662,9 @@ can't (`TableCreateServiceLiveTests`: that `solution import`'s one-transaction
 table create really rolls back as one, names the failing table, and adds each
 table to the solution; `GlobalChoiceOptionShapeLiveTests`: that an option the
 tool creates exports with the same empty `Description`/`ExternalValue` as a
-maker-portal one; `SecurityRoleShapeLiveTests`: that privileges written by
+maker-portal one; `ViewRenameLiveTests`: that a view renamed by `view import`'s
+`savedQueryId` path keeps its id and takes the new name, and re-imports as no
+changes; `SecurityRoleShapeLiveTests`: that privileges written by
 `security import` export in the solution XML exactly as the file asked, and
 re-import as no changes). They're regression tests against Microsoft's API as
 much as against this tool: run them before a release to catch a platform

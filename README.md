@@ -450,7 +450,7 @@ double-check that decomposition against.
 
 #### `view import`
 
-Writes a `*.view.yml` file's description/FetchXML/LayoutXML directly back
+Writes a `*.view.yml` file's name/description/FetchXML/LayoutXML directly back
 into Dataverse, or creates the view if it doesn't exist yet. Needs sign-in.
 
 ```
@@ -468,10 +468,15 @@ d365architect view import --input active-accounts.view.yml
 Each exported file carries the view's `savedQueryId`. Import uses it to pick
 the target view, so two live views sharing a name no longer clash; an id that
 is not found live is an error (never a fallback to the name), and an id that
-belongs to a view on a different table is refused (a different name only warns,
-since renames are legitimate). Without `savedQueryId`, import
-matches on table and name and refuses an ambiguous match, listing the
-candidate ids to copy into the file.
+belongs to a view on a different table is refused. When the view's live name
+differs from the file's `view:`, import renames it to that name, and the plan
+shows it as `name: 'old' -> 'new'`. The rename is confirmed like any other
+change and is written with the rest of the view. If another view on the same
+table already has the new name, a warning is printed and the rename still goes
+ahead, since Dataverse allows duplicate view names. Without `savedQueryId`,
+import matches on table and name and refuses an ambiguous match, listing the
+candidate ids to copy into the file. Matching by name can't rename a view, so a
+changed name in such a file creates a new view instead.
 
 A view that matches nothing is created. A file with no `savedQueryId` whose
 table + name matches no live view is shown in the plan as `+ view '<name>'
@@ -504,9 +509,10 @@ Simpler than `form import`: since FetchXML/LayoutXML are kept verbatim
 (never decomposed and rebuilt), the diff compares the live values against
 the local YAML directly, with no canonicalization step needed first. Dataverse
 adds a `savedqueryid` attribute to the stored FetchXML on save; a file that
-leaves it out isn't shown as a change. Only `description`/`fetchXml`/`layoutXml`
-are ever written on an update — a view's type, default status, and Quick Find
-flag are never changed by this command. Unless `--yes` is passed, you get a
+leaves it out isn't shown as a change. Only `name` (when it differs, as above),
+`description`, `fetchXml` and `layoutXml` are ever written on an update — a
+view's type, default status, and Quick Find flag are never changed by this
+command. Unless `--yes` is passed, you get a
 confirmation prompt (defaulting to "no") before anything actually changes in
 Dataverse. Pass `--whatif` to see the diff and stop there — no prompt, no
 write, regardless of `--yes`.
