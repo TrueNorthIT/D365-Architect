@@ -87,7 +87,7 @@ public interface IDataverseClient
     /// the Web API, as raw JSON — the shape
     /// <see cref="Conversion.ViewJsonDefinitionReader"/> reads. Reflects the
     /// *published* state, same as <see cref="TryGetSavedQueryAsync"/> — see
-    /// <see cref="UpdateSavedQueryAsync(Uri, string, Guid, string?, string?, string?, CancellationToken)"/>'s own doc comment for what that
+    /// <see cref="UpdateSavedQueryAsync(Uri, string, Guid, string?, string?, string?, string?, string?, CancellationToken)"/>'s own doc comment for what that
     /// means for a just-written, not-yet-published change.
     /// </summary>
     Task<string> GetViewDefinitionsJsonAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken);
@@ -233,17 +233,27 @@ public interface IDataverseClient
     Task<ExistingSavedQuery?> TryGetSavedQueryByIdAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Updates an existing <c>savedquery</c>'s <c>description</c>/
-    /// <c>fetchxml</c>/<c>layoutxml</c> via a PATCH request — the actual
-    /// write <c>view import</c> performs. Only the non-null arguments are
-    /// included in the request, matching this tool's own "an absent field
-    /// means don't touch it" convention (see `docs/yaml-conventions.md`
-    /// Rule 1) — pass null for anything the local YAML didn't have, not an
-    /// empty string, or it would be cleared rather than left alone. Doesn't
-    /// publish the change itself, and unlike <see cref="UpdateSystemFormXmlAsync(Uri, string, Guid, string, CancellationToken)"/>
-    /// (which <c>form import</c> now follows with its own call to
-    /// <see cref="PublishEntityAsync"/>), <c>view import</c> doesn't call
-    /// that either yet — a still-open gap, not a closed one, for views.
+    /// Updates an existing <c>savedquery</c>'s <c>name</c>/<c>description</c>/
+    /// <c>fetchxml</c>/<c>layoutxml</c> in one PATCH request — the actual
+    /// write <c>view import</c> performs, so a rename and a FetchXML/LayoutXML
+    /// change go out together. Only the non-null arguments are included in
+    /// the request, matching this tool's own "an absent field means don't
+    /// touch it" convention (see `docs/yaml-conventions.md` Rule 1) — pass
+    /// null for anything the local YAML didn't have (and for
+    /// <paramref name="name"/> unless it's a rename), not an empty string, or
+    /// it would be cleared rather than left alone. A call with nothing to
+    /// write sends nothing. Dataverse accepting <c>name</c> on a
+    /// <c>savedquery</c> update is confirmed live (<c>ViewRenameLiveTests</c>).
+    ///
+    /// <paramref name="solutionUniqueName"/> is sent as <c>MSCRM.SolutionUniqueName</c> on the PATCH
+    /// so the changed view joins that solution. Learn lists Update (PATCH) among the operations that
+    /// accept the header, and the AddSolutionComponent page itself calls the header "a better option"
+    /// for a component being created or updated
+    /// (https://learn.microsoft.com/power-apps/developer/data-platform/webapi/reference/addsolutioncomponent ),
+    /// so no separate AddSolutionComponent call (component type 26, Saved Query) is made. Null sends no header.
+    ///
+    /// Doesn't publish the change itself; <c>view import</c> follows it with
+    /// <see cref="PublishEntityAsync"/> unless <c>--no-publish</c>.
     ///
     /// Confirmed live, the same platform behavior <see cref="UpdateSystemFormXmlAsync(Uri, string, Guid, string, CancellationToken)"/>'s
     /// own doc comment already notes for forms: a plain <c>savedqueries</c>
@@ -257,7 +267,7 @@ public interface IDataverseClient
     /// take until that happens — worth knowing up front rather than
     /// rediscovering it.
     /// </summary>
-    Task UpdateSavedQueryAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, string? description, string? fetchXml, string? layoutXml, CancellationToken cancellationToken);
+    Task UpdateSavedQueryAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, string? name, string? description, string? fetchXml, string? layoutXml, string? solutionUniqueName, CancellationToken cancellationToken);
 
     /// <summary>
     /// Fetches a table's own metadata — no <c>$expand=Attributes</c>, unlike
@@ -558,16 +568,11 @@ public interface IDataverseClient
     Task CreateSavedQueryAsync(Uri environmentUrl, string accessToken, JsonObject body, string? solutionUniqueName, CancellationToken cancellationToken);
 
     /// <summary>
-    /// As <see cref="UpdateSavedQueryAsync(Uri, string, Guid, string?, string?, string?, CancellationToken)"/>,
-    /// plus <paramref name="solutionUniqueName"/> sent as <c>MSCRM.SolutionUniqueName</c> on the PATCH
-    /// so the changed view joins that solution. Learn lists Update (PATCH) among the operations that
-    /// accept the header, and the AddSolutionComponent page itself calls the header "a better option"
-    /// for a component being created or updated
-    /// (https://learn.microsoft.com/power-apps/developer/data-platform/webapi/reference/addsolutioncomponent ),
-    /// so no separate AddSolutionComponent call (component type 26, Saved Query) is made. A call with
-    /// nothing to write sends nothing, header or not. Null sends no header.
+    /// The ids (and nothing else) of every view on <paramref name="entityLogicalName"/> named <paramref name="viewName"/>:
+    /// how a rename finds out the new name is already taken. Empty when none is. Unlike
+    /// <see cref="TryGetSavedQueryAsync"/> this never throws for two matches, since Dataverse allows duplicate view names.
     /// </summary>
-    Task UpdateSavedQueryAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, string? description, string? fetchXml, string? layoutXml, string? solutionUniqueName, CancellationToken cancellationToken);
+    Task<IReadOnlyList<Guid>> FindSavedQueryIdsByNameAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string viewName, CancellationToken cancellationToken);
 
     /// <summary>
     /// Every form on <paramref name="entityLogicalName"/> whose name is <paramref name="formName"/> and whose
@@ -594,7 +599,7 @@ public interface IDataverseClient
     /// <summary>
     /// As <see cref="UpdateSystemFormXmlAsync(Uri, string, Guid, string, CancellationToken)"/>, plus
     /// <paramref name="solutionUniqueName"/> sent as <c>MSCRM.SolutionUniqueName</c> on the PATCH (component type 60, System Form,
-    /// so is never added by a separate AddSolutionComponent call - see <see cref="UpdateSavedQueryAsync(Uri, string, Guid, string?, string?, string?, string?, CancellationToken)"/>).
+    /// so is never added by a separate AddSolutionComponent call - see <see cref="UpdateSavedQueryAsync(Uri, string, Guid, string?, string?, string?, string?, string?, CancellationToken)"/>).
     /// </summary>
     Task UpdateSystemFormXmlAsync(Uri environmentUrl, string accessToken, Guid formId, string formXml, string? solutionUniqueName, CancellationToken cancellationToken);
 

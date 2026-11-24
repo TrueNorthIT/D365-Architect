@@ -166,6 +166,19 @@ public sealed class LiveDataverse : IDisposable
     public Task DeleteRoleAsync(Guid roleId, CancellationToken cancellationToken) =>
         DeleteAsync($"roles({roleId})", cancellationToken);
 
+    /// <summary>Deletes every view on the table with one of these names (a test's view may exist under either its old or its new name); none is fine.</summary>
+    public async Task DeleteViewsNamedAsync(string entityLogicalName, IEnumerable<string> names, CancellationToken cancellationToken)
+    {
+        foreach (var name in names)
+        {
+            var views = (await GetAsync($"savedqueries?$select=savedqueryid&$filter=returnedtypecode eq '{entityLogicalName}' and name eq '{name.Replace("'", "''")}'", cancellationToken))!["value"]!.AsArray();
+            foreach (var view in views)
+            {
+                await DeleteAsync($"savedqueries({(string)view!["savedqueryid"]!})", cancellationToken);
+            }
+        }
+    }
+
     private async Task<Guid> GetRootBusinessUnitIdAsync(CancellationToken cancellationToken)
     {
         var units = (await GetAsync("businessunits?$select=businessunitid&$filter=_parentbusinessunitid_value eq null", cancellationToken))!["value"]!.AsArray();
