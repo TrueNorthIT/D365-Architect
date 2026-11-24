@@ -53,7 +53,8 @@ public sealed class ViewRenameLiveTests : IAsyncLifetime
         using var timeout = new CancellationTokenSource(TestTimeout);
         var ct = timeout.Token;
         _live = await LiveDataverse.ConnectAsync(ct);
-        var (original, renamed) = (_live.NewName("view"), _live.NewName("renamed"));
+        var original = _live.NewName("view");
+        var renamed = _live.NewName("renamed");
         _viewNamesToDelete.AddRange([original, renamed]);
         var service = new ViewImportService(_live.Client);
 

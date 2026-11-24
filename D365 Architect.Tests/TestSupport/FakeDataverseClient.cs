@@ -111,9 +111,6 @@ public sealed class FakeDataverseClient : IDataverseClient
     /// <summary>Every live view's id, table and name, for <see cref="FindSavedQueryIdsByNameAsync"/>. Empty means no view has any name.</summary>
     public List<(Guid SavedQueryId, string EntityLogicalName, string Name)> NamedSavedQueries { get; } = [];
 
-    /// <summary>Every (table, name) <see cref="FindSavedQueryIdsByNameAsync"/> was asked about.</summary>
-    public List<(string EntityLogicalName, string Name)> FindSavedQueryIdsByNameCalls { get; } = [];
-
     /// <summary>
     /// Live views keyed by <c>savedqueryid</c> - what
     /// <see cref="TryGetSavedQueryByIdAsync"/> resolves against. A missing key
@@ -138,12 +135,6 @@ public sealed class FakeDataverseClient : IDataverseClient
     public Task<ExistingSavedQuery?> TryGetSavedQueryByIdAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, CancellationToken cancellationToken) =>
         Task.FromResult(SavedQueriesById.GetValueOrDefault(savedQueryId));
 
-    public Task UpdateSavedQueryAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, string? description, string? fetchXml, string? layoutXml, CancellationToken cancellationToken) =>
-        UpdateSavedQueryAsync(environmentUrl, accessToken, savedQueryId, description, fetchXml, layoutXml, solutionUniqueName: null, cancellationToken);
-
-    public Task UpdateSavedQueryAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, string? description, string? fetchXml, string? layoutXml, string? solutionUniqueName, CancellationToken cancellationToken) =>
-        UpdateSavedQueryAsync(environmentUrl, accessToken, savedQueryId, name: null, description, fetchXml, layoutXml, solutionUniqueName, cancellationToken);
-
     public Task UpdateSavedQueryAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, string? name, string? description, string? fetchXml, string? layoutXml, string? solutionUniqueName, CancellationToken cancellationToken)
     {
         UpdateSavedQueryCalls.Add((savedQueryId, description, fetchXml, layoutXml, solutionUniqueName, name));
@@ -166,13 +157,13 @@ public sealed class FakeDataverseClient : IDataverseClient
 
     public Task<IReadOnlyList<Guid>> FindSavedQueryIdsByNameAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string viewName, CancellationToken cancellationToken)
     {
-        FindSavedQueryIdsByNameCalls.Add((entityLogicalName, viewName));
         IReadOnlyList<Guid> ids = NamedSavedQueries
             .Where(v => string.Equals(v.EntityLogicalName, entityLogicalName, StringComparison.OrdinalIgnoreCase) && v.Name == viewName)
             .Select(v => v.SavedQueryId)
             .ToList();
         return Task.FromResult(ids);
     }
+
     // ---- Simpler hand-written forms and views ----
 
     /// <summary>Every create/update of a table, view or form, in the order issued, e.g. <c>create-table:tn_Project</c>, <c>create-view:All projects</c>, <c>create-form:Project</c> - what the one-run ordering test reads.</summary>

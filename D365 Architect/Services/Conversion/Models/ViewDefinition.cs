@@ -17,10 +17,10 @@ namespace D365Architect.Services.Conversion.Models;
 ///
 /// Identity: <see cref="SavedQueryId"/> when present, since view names aren't
 /// unique and a rename changes the name; otherwise table + <see cref="Name"/>,
-/// which is all a hand-written file for a new view has. Export keeps FetchXml/LayoutXml verbatim
-/// rather than decomposing them — see <see cref="ViewJsonDefinitionReader"/>
-/// for why; a hand-written view may give <see cref="Columns"/> instead of a
-/// LayoutXml.
+/// which is all a hand-written file for a new view has. Export keeps
+/// FetchXml/LayoutXml verbatim rather than decomposing them — see
+/// <see cref="ViewJsonDefinitionReader"/> for why; a hand-written view may give
+/// <see cref="Columns"/> instead of a LayoutXml.
 /// </summary>
 public sealed class ViewDefinition
 {

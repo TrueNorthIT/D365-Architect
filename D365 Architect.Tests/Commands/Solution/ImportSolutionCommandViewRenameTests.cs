@@ -15,8 +15,10 @@ namespace D365Architect.Tests.Commands.Solution;
 /// with only Dataverse, sign-in and the console faked.
 ///
 /// In the "Console" collection because it swaps <c>AnsiConsole.Console</c>; a prompt nobody answered fails the test.
+/// Tagged with the "Feature" trait "view-rename".
 /// </summary>
 [Collection(ConsoleCollection.Name)]
+[Trait("Feature", "view-rename")]
 public sealed class ImportSolutionCommandViewRenameTests : IDisposable
 {
     private const string Solution = "TNCore";
@@ -76,7 +78,7 @@ public sealed class ImportSolutionCommandViewRenameTests : IDisposable
 
         Expect.Equal(0, result.Failed, $"REQ-7: the rename should not fail. Output: <{console.Output}>");
         Expect.Equal(0, exitCode, $"REQ-7: the run should succeed. Output: <{console.Output}>");
-        Expect.Contains("1 changed, 0 unchanged, 0 failed", console.Output, "REQ-7: a renamed view should be counted as one change (today it counts as unchanged).");
+        Expect.Contains("1 changed, 0 unchanged, 0 failed", console.Output, "REQ-7: a renamed view should be counted as one change.");
         Expect.Equal(1, client.UpdateSavedQueryCalls.Count, $"REQ-7: the renamed view should be updated once. Output: <{console.Output}>");
         var call = client.UpdateSavedQueryCalls[0];
         Expect.Equal(NewName, call.Name, "REQ-7: the new name should be written.");

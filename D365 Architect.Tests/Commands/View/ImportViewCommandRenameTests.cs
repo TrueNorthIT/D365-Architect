@@ -18,8 +18,10 @@ namespace D365Architect.Tests.Commands.View;
 /// <see cref="ViewImportPreview.DuplicateNameWarning"/> is printed as <c>Warning: &lt;text&gt;</c> beside the other warnings.
 ///
 /// In the "Console" collection because it swaps <c>AnsiConsole.Console</c>; a prompt nobody answered fails the test.
+/// Tagged with the "Feature" trait "view-rename".
 /// </summary>
 [Collection(ConsoleCollection.Name)]
+[Trait("Feature", "view-rename")]
 public sealed class ImportViewCommandRenameTests : IDisposable
 {
     private static readonly Guid ViewId = new("db985fe6-a889-f111-8077-002248426c39");
@@ -75,7 +77,7 @@ public sealed class ImportViewCommandRenameTests : IDisposable
     }
 
     // REQ-3: "A rename on its own counts as a change, so it's confirmed and published like any other."
-    // One confirmation, then the name is written and the view's table is published (today the run reports "No changes").
+    // One confirmation, then the name is written and the view's table is published.
     [Fact]
     [Trait("Requirement", "REQ-3")]
     public async Task RunAsync_RenameOnlyAndConfirmed_WritesTheNameAndPublishesTheTable()
@@ -86,7 +88,7 @@ public sealed class ImportViewCommandRenameTests : IDisposable
         var exitCode = await command.RunAsync(Settings(WriteRenameOnlyFile()), CancellationToken.None);
 
         Expect.Equal(0, exitCode, $"REQ-3: confirming a rename should succeed. Output: <{console.Output}>");
-        Expect.Equal(1, client.UpdateSavedQueryCalls.Count, $"REQ-3: the confirmed rename should be written in one update (today it reports no changes). Output: <{console.Output}>");
+        Expect.Equal(1, client.UpdateSavedQueryCalls.Count, $"REQ-3: the confirmed rename should be written in one update. Output: <{console.Output}>");
         Expect.Equal(NewName, client.UpdateSavedQueryCalls[0].Name, "REQ-3: the update should carry the new name.");
         Expect.Sequence(["account"], client.PublishEntityCalls, "REQ-3: a written rename should publish the view's table, once.");
     }
@@ -102,7 +104,7 @@ public sealed class ImportViewCommandRenameTests : IDisposable
         var exitCode = await command.RunAsync(Settings(WriteRenameOnlyFile()), CancellationToken.None);
 
         Expect.Equal(0, exitCode, $"REQ-3: declining should exit 0, as every import does. Output: <{console.Output}>");
-        Expect.Contains("Import these changes into Dataverse?", console.Output, "REQ-3: a rename should be put to the user for confirmation (today it reports no changes and never asks).");
+        Expect.Contains("Import these changes into Dataverse?", console.Output, "REQ-3: a rename should be put to the user for confirmation.");
         Expect.Empty(client.UpdateSavedQueryCalls, "REQ-3: declining should write nothing.");
         PublishAssertions.NothingPublished(client, "REQ-3: declining wrote nothing, so there is nothing to publish.");
     }

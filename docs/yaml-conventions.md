@@ -728,11 +728,12 @@ Dataverse accepts `name` on a `savedquery` PATCH and keeps the id
 table + name lookup that finds nothing is a create, not a rename.
 
 **Only four fields are ever written on an update**: `Name` (only when renamed,
-above), `Description`, `FetchXml`, `LayoutXml`. `QueryType`/`IsDefault`/`IsQuickFindQuery`/`IsUserDefined`/
-`IsCustomizable` are all documented on `ViewDefinition` itself as fields
-applying a YAML file back doesn't change (setting the default view, for
-one, needs a dedicated qualifying action, not a plain field write) — import
-respects that boundary rather than attempting a guess at any of them.
+above), `Description`, `FetchXml`, `LayoutXml`. `QueryType`/`IsDefault`/
+`IsQuickFindQuery`/`IsUserDefined`/`IsCustomizable` are all documented on
+`ViewDefinition` itself as fields applying a YAML file back doesn't change
+(setting the default view, for one, needs a dedicated qualifying action, not
+a plain field write) — import respects that boundary rather than attempting a
+guess at any of them.
 
 **Creates a view that matches nothing.** Without a `savedQueryId`, a table +
 name match that finds nothing is a create (`ViewImportService.ApplyAsync`,

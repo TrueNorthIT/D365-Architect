@@ -127,7 +127,7 @@ public sealed class DataverseClientViewAndFormCreateTests
         var (client, handler) = Client();
         var id = Guid.NewGuid();
 
-        await client.UpdateSavedQueryAsync(EnvironmentUrl, "token", id, null, "<fetch/>", null, "TableCreateTest", CancellationToken.None);
+        await client.UpdateSavedQueryAsync(EnvironmentUrl, "token", id, name: null, null, "<fetch/>", null, "TableCreateTest", CancellationToken.None);
 
         Expect.Equal("PATCH", handler.Request!.Method.Method, "updating a view should be a PATCH.");
         Expect.Contains($"savedqueries({id})", handler.Request.RequestUri!.AbsolutePath, "the PATCH should target the view by id.");
@@ -140,7 +140,7 @@ public sealed class DataverseClientViewAndFormCreateTests
     {
         var (client, handler) = Client();
 
-        await client.UpdateSavedQueryAsync(EnvironmentUrl, "token", Guid.NewGuid(), null, "<fetch/>", null, solutionUniqueName: null, CancellationToken.None);
+        await client.UpdateSavedQueryAsync(EnvironmentUrl, "token", Guid.NewGuid(), name: null, null, "<fetch/>", null, solutionUniqueName: null, CancellationToken.None);
 
         Expect.Equal(null, Header(handler), "with no solution, no MSCRM.SolutionUniqueName header should be sent.");
     }
@@ -148,6 +148,7 @@ public sealed class DataverseClientViewAndFormCreateTests
     // REQ-1/REQ-4: the rename and a FetchXML change travel in one PATCH to the view, as `name` and `fetchxml`.
     // Code path: DataverseClient.UpdateSavedQueryAsync(..., name, description, fetchXml, layoutXml, solutionUniqueName, ...).
     [Fact]
+    [Trait("Feature", "view-rename")]
     [Trait("Requirement", "REQ-4")]
     public async Task UpdateSavedQueryAsync_WithAName_PatchesNameAndFetchXmlInOneRequest()
     {
@@ -164,6 +165,7 @@ public sealed class DataverseClientViewAndFormCreateTests
 
     // REQ-1: a rename with nothing else to write still sends a request.
     [Fact]
+    [Trait("Feature", "view-rename")]
     [Trait("Requirement", "REQ-1")]
     public async Task UpdateSavedQueryAsync_WithOnlyAName_StillPatchesTheName()
     {
@@ -178,6 +180,7 @@ public sealed class DataverseClientViewAndFormCreateTests
     // REQ-9: how the duplicate check asks Dataverse - ids only, for views of that table with that name.
     // Code path: DataverseClient.FindSavedQueryIdsByNameAsync.
     [Fact]
+    [Trait("Feature", "view-rename")]
     [Trait("Requirement", "REQ-9")]
     public async Task FindSavedQueryIdsByNameAsync_RequestsOnlyTheIdsOfViewsOnThatTableWithThatName()
     {
@@ -197,6 +200,7 @@ public sealed class DataverseClientViewAndFormCreateTests
 
     // REQ-9: a name nobody uses gives an empty list, not null or an error.
     [Fact]
+    [Trait("Feature", "view-rename")]
     [Trait("Requirement", "REQ-9")]
     public async Task FindSavedQueryIdsByNameAsync_NoViewHasTheName_ReturnsAnEmptyList()
     {

@@ -512,10 +512,9 @@ adds a `savedqueryid` attribute to the stored FetchXML on save; a file that
 leaves it out isn't shown as a change. Only `name` (when it differs, as above),
 `description`, `fetchXml` and `layoutXml` are ever written on an update — a
 view's type, default status, and Quick Find flag are never changed by this
-command. Unless `--yes` is passed, you get a
-confirmation prompt (defaulting to "no") before anything actually changes in
-Dataverse. Pass `--whatif` to see the diff and stop there — no prompt, no
-write, regardless of `--yes`.
+command. Unless `--yes` is passed, you get a confirmation prompt (defaulting
+to "no") before anything actually changes in Dataverse. Pass `--whatif` to
+see the diff and stop there — no prompt, no write, regardless of `--yes`.
 
 `--solution` (sent as the `MSCRM.SolutionUniqueName` header) adds whatever is
 created or changed to that solution. A view created on a table that isn't in

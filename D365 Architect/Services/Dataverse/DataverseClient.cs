@@ -547,9 +547,6 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         return new ExistingSavedQuery(savedQueryId, description, fetchXml, layoutXml, entity, name);
     }
 
-    public Task UpdateSavedQueryAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, string? description, string? fetchXml, string? layoutXml, string? solutionUniqueName, CancellationToken cancellationToken) =>
-        UpdateSavedQueryAsync(environmentUrl, accessToken, savedQueryId, name: null, description, fetchXml, layoutXml, solutionUniqueName, cancellationToken);
-
     public async Task UpdateSavedQueryAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, string? name, string? description, string? fetchXml, string? layoutXml, string? solutionUniqueName, CancellationToken cancellationToken)
     {
         var body = new Dictionary<string, string>();

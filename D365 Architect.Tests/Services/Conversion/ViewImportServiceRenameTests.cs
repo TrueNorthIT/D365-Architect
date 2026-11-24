@@ -17,7 +17,9 @@ namespace D365Architect.Tests.Services.Conversion;
 /// <c>ApplyAsync</c> sends the name through <c>IDataverseClient.UpdateSavedQueryAsync(..., name, ...)</c> only when it is a rename
 /// (null otherwise), together with whatever else changed in the same call; <see cref="ViewImportPreview.DuplicateNameWarning"/>
 /// is set when <c>IDataverseClient.FindSavedQueryIdsByNameAsync</c> finds another view on the table with the new name.
+/// Tagged with the "Feature" trait "view-rename".
 /// </summary>
+[Trait("Feature", "view-rename")]
 public sealed class ViewImportServiceRenameTests
 {
     private static readonly Uri Environment = new("https://test.crm.dynamics.com");
@@ -62,7 +64,7 @@ public sealed class ViewImportServiceRenameTests
 
         var call = Assert.Single(client.UpdateSavedQueryCalls);
         Expect.Equal(ViewId, call.SavedQueryId, "REQ-1: the rename should go to the view the file's savedQueryId names.");
-        Expect.Equal(NewName, call.Name, "REQ-1: the update should carry the file's view name as the new name; ViewImportService.ApplyAsync passes none today.");
+        Expect.Equal(NewName, call.Name, "REQ-1: the update should carry the file's view name as the new name.");
     }
 
     // ---- REQ-2: the preview carries both names, for the diff ----
@@ -83,7 +85,7 @@ public sealed class ViewImportServiceRenameTests
 
     // ---- REQ-3: a rename alone is a change ----
 
-    // REQ-3: "A rename on its own counts as a change, so it's confirmed and published like any other (today it reports no changes)."
+    // REQ-3: "A rename on its own counts as a change, so it's confirmed and published like any other."
     // Given a file that differs from the live view only by name, ViewImportPreview.HasChanges is true and ChangeCount is 1.
     [Fact]
     [Trait("Requirement", "REQ-3")]
@@ -93,7 +95,7 @@ public sealed class ViewImportServiceRenameTests
 
         var preview = await service.PreviewAsync(Environment, "token", RenamedView(), CancellationToken.None);
 
-        Expect.True(preview.HasChanges, "REQ-3: a rename on its own should be a change (ViewImportPreview.HasChanges ignores the name today).");
+        Expect.True(preview.HasChanges, "REQ-3: a rename on its own should be a change.");
         Expect.Equal(1, preview.ChangeCount, "REQ-3: a rename on its own should count as exactly one change.");
     }
 

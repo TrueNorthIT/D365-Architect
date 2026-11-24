@@ -192,8 +192,9 @@ public sealed class ViewImportServiceTests
     }
 
     // REQ-6: same table, different name is a rename the user asked for, so there is no "double-check this is the file you meant" warning.
-    // (Superseded the old test that expected that warning; the rename itself is covered in ViewImportServiceRenameTests.)
+    // The rename itself is covered in ViewImportServiceRenameTests.
     [Fact]
+    [Trait("Feature", "view-rename")]
     [Trait("Requirement", "REQ-6")]
     public async Task PreviewAsync_WithSavedQueryIdWhoseLiveNameDiffers_ProceedsWithoutAnIdentityWarning()
     {
