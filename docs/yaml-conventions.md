@@ -727,6 +727,15 @@ Dataverse accepts `name` on a `savedquery` PATCH and keeps the id
 (`ViewRenameLiveTests`). Without a `savedQueryId` there's nothing to rename: a
 table + name lookup that finds nothing is a create, not a rename.
 
+**`solution import` refuses a `savedQueryId` in more than one file.**
+`solution export` names a view's file after the view and never removes the
+old one, so exporting again after a rename leaves both: the new file previews
+as unchanged and the old one as a rename back. Before anything is confirmed,
+`SavedQueryIdConflictCheck` reads the id from every view file of the run and
+fails every file that shares one, matching names included (one must be a stray
+copy), with `DuplicateSavedQueryIdException` naming them all. `view import`
+takes one file, so it can't hit this.
+
 **Only four fields are ever written on an update**: `Name` (only when renamed,
 above), `Description`, `FetchXml`, `LayoutXml`. `QueryType`/`IsDefault`/
 `IsQuickFindQuery`/`IsUserDefined`/`IsCustomizable` are all documented on

@@ -917,6 +917,12 @@ terms (`table import`'s changeset, in particular), but nothing ties multiple
 files' writes together. Recovery is to fix the file and rerun: existing tables
 are skipped, and each import applies only what still differs.
 
+Two view files with the same `savedQueryId` both fail, changed or not, before
+you're asked anything (`--whatif` reports the same), and the error names every
+file sharing the id. It's usually an export after a rename: `solution export`
+names view files after the view and doesn't remove the old one, so importing
+both would rename the view back. Delete the file that's out of date.
+
 Creating the tables is different. They are created together, in one
 transaction, before anything else is previewed (their columns, views and forms
 can't be previewed against a table that isn't there yet), so a run that

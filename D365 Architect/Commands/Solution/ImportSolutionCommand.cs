@@ -68,7 +68,10 @@ namespace D365Architect.Commands.Solution;
 /// rejection, a missing live counterpart) doesn't stop the rest: it's
 /// reported, never applied, and the remaining changes are still offered and
 /// applied. The exit code is non-zero if anything failed. There's no
-/// cross-file rollback.
+/// cross-file rollback. Some failures only show across files, so are checked
+/// once every file is previewed: security files disagreeing about a privilege
+/// (<see cref="SecurityConflictCheck"/>) and view files sharing a
+/// <c>savedQueryId</c> (<see cref="SavedQueryIdConflictCheck"/>).
 /// </summary>
 public sealed class ImportSolutionCommand(
     ITableCreateService tableCreateService,
@@ -321,6 +324,7 @@ public sealed class ImportSolutionCommand(
         private readonly Settings _settings;
         private readonly SolutionImportFlow _flow;
         private readonly SecurityImportBatch _securityBatch = new();
+        private readonly List<string> _viewPaths = [];
         private readonly IReadOnlySet<string> _pendingChoiceNames;
 
         public StepRunner(ImportSolutionCommand command, Settings settings)
@@ -333,6 +337,11 @@ public sealed class ImportSolutionCommand(
 
         public async Task<SolutionImportStepOutcome> RunAsync(SolutionImportStage stage, string assetPath, CancellationToken cancellationToken)
         {
+            if (stage == SolutionImportStage.ImportView)
+            {
+                _viewPaths.Add(assetPath);
+            }
+
             var item = new SolutionImportItem(assetPath, (printUnchanged, ct) =>
                 _command.PreviewStepAsync(_settings, stage, assetPath, printUnchanged, _pendingChoiceNames, _securityBatch, ct));
             return await _flow.PreviewAsync(item, cancellationToken) == ImportOutcome.Failed
@@ -343,8 +352,10 @@ public sealed class ImportSolutionCommand(
         /// <summary>Asks once (unless <c>--yes</c>; never under <c>--whatif</c>) and applies every change <see cref="RunAsync"/> previewed. Returns the exit code.</summary>
         public Task<int> ConfirmAndApplyAsync(CancellationToken cancellationToken)
         {
-            // The cross-file step: security and role files disagreeing about one privilege fail before anything is confirmed.
+            // The cross-file steps: security and role files disagreeing about one privilege, and view files sharing a savedQueryId,
+            // fail before anything is confirmed.
             SecurityConflictCheck.Apply(_securityBatch, _flow);
+            SavedQueryIdConflictCheck.Apply(_viewPaths, _flow);
             return _flow.ConfirmAndApplyAsync(_settings.Yes, _settings.WhatIf, confirm: null, cancellationToken);
         }
 

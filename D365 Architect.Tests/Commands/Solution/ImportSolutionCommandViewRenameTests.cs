@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using D365Architect.Commands;
 using D365Architect.Commands.Solution;
 using D365Architect.Services.Conversion;
@@ -13,6 +14,10 @@ namespace D365Architect.Tests.Commands.Solution;
 /// <see cref="ViewImportService"/>: a table folder holding one view file whose <c>savedQueryId</c> resolves to a live view with a
 /// different name. Runs the real <see cref="SolutionImportOrchestrator"/> and <see cref="ImportSolutionCommand.StepRunner"/>,
 /// with only Dataverse, sign-in and the console faked.
+///
+/// Also pins the guard for a folder exported again after a rename: <c>solution export</c> names view files after the view and never
+/// removes the old one, so two files can carry the same <c>savedQueryId</c>. Neither is imported, so the stray copy can't rename the
+/// view back.
 ///
 /// In the "Console" collection because it swaps <c>AnsiConsole.Console</c>; a prompt nobody answered fails the test.
 /// Tagged with the "Feature" trait "view-rename".
@@ -100,5 +105,107 @@ public sealed class ImportSolutionCommandViewRenameTests : IDisposable
         Expect.Contains("1 would change, 0 unchanged, 0 failed", console.Output, "REQ-7: --whatif should count the rename as one change that would be made.");
         Expect.Contains($"'{LiveName}' -> '{NewName}'", console.Output, "REQ-2: the plan should show the rename as 'old' -> 'new'.");
         Expect.Empty(client.UpdateSavedQueryCalls, "REQ-7: --whatif must not write the rename.");
+    }
+
+    /// <summary>
+    /// The folder as a second export after a rename leaves it: the old file still asks for the old name (a rename back), the new one
+    /// already matches live. Both carry the same <c>savedQueryId</c>.
+    /// </summary>
+    private FakeDataverseClient ClientWithStaleCopyOfRenamedView(string staleName = LiveName)
+    {
+        WriteView(LiveName, staleName, ViewId);
+        WriteView(NewName, NewName, ViewId);
+
+        var client = new FakeDataverseClient();
+        client.SavedQueriesById[ViewId] = new ExistingSavedQuery(ViewId, null, "<fetch/>", null, "tn_project", NewName);
+        return client;
+    }
+
+    private void WriteView(string fileName, string viewName, Guid savedQueryId) =>
+        File.WriteAllText(
+            Path.Combine(_root, "tn_project", $"{fileName}.view.yml"),
+            ViewYamlSerializer.ToYaml(new ViewDefinition { Name = viewName, Entity = "tn_project", SavedQueryId = savedQueryId }));
+
+    // Long temp paths can wrap the error line, so compare with whitespace collapsed.
+    private static string Flat(string text) => Regex.Replace(text, @"\s+", " ");
+
+    private void ExpectBothFilesReportedAsDuplicates(string output)
+    {
+        var oldPath = Path.Combine(_root, "tn_project", $"{LiveName}.view.yml");
+        var newPath = Path.Combine(_root, "tn_project", $"{NewName}.view.yml");
+        var flat = Flat(output);
+        Expect.Contains($"'{oldPath}' failed:", flat, $"the stale copy should be reported as failed. Output: <{output}>");
+        Expect.Contains($"'{newPath}' failed:", flat, $"the current file should be reported as failed. Output: <{output}>");
+        Expect.Contains($"{newPath}, {oldPath}", flat, $"the error should name every file sharing the id. Output: <{output}>");
+        Expect.Contains("left over from before the view was renamed", flat, $"the error should say why there are two files. Output: <{output}>");
+    }
+
+    [Fact]
+    public async Task WholeRun_TwoFilesWithTheSameSavedQueryId_AppliesNeitherAndFailsBoth()
+    {
+        using var console = new ConsoleHarness(); // --yes
+        var client = ClientWithStaleCopyOfRenamedView();
+        var runner = CreateRunner(client);
+
+        await new SolutionImportOrchestrator().RunAsync(_root, runner, CancellationToken.None);
+        var exitCode = await runner.ConfirmAndApplyAsync(CancellationToken.None);
+
+        Expect.Empty(client.UpdateSavedQueryCalls, $"neither file should be applied, or the stale one renames the view back. Output: <{console.Output}>");
+        Expect.Empty(client.PublishEntityCalls, "nothing was applied, so nothing should be published.");
+        ExpectBothFilesReportedAsDuplicates(console.Output);
+        Expect.Contains("0 changed, 0 unchanged, 2 failed", console.Output, "both files should be counted as failed.");
+        Expect.Equal(1, exitCode, "a run with failed files should exit non-zero.");
+    }
+
+    [Fact]
+    public async Task WholeRun_TwoFilesWithTheSameSavedQueryIdUnderWhatIf_ReportsTheSameConflict()
+    {
+        using var console = new ConsoleHarness();
+        var client = ClientWithStaleCopyOfRenamedView();
+        var runner = CreateRunner(client, whatIf: true);
+
+        await new SolutionImportOrchestrator().RunAsync(_root, runner, CancellationToken.None);
+        var exitCode = await runner.ConfirmAndApplyAsync(CancellationToken.None);
+
+        Expect.Empty(client.UpdateSavedQueryCalls, "--whatif must not write anything.");
+        ExpectBothFilesReportedAsDuplicates(console.Output);
+        Expect.Contains("0 changed, 0 unchanged, 2 failed", console.Output, "--whatif should count both files as failed.");
+        Expect.Equal(1, exitCode, "--whatif should exit non-zero when a file fails.");
+    }
+
+    [Fact]
+    public async Task WholeRun_TwoFilesWithTheSameSavedQueryIdAndName_AppliesNeither()
+    {
+        using var console = new ConsoleHarness(); // --yes
+        var client = ClientWithStaleCopyOfRenamedView(staleName: NewName);
+        var runner = CreateRunner(client);
+
+        await new SolutionImportOrchestrator().RunAsync(_root, runner, CancellationToken.None);
+        var exitCode = await runner.ConfirmAndApplyAsync(CancellationToken.None);
+
+        Expect.Empty(client.UpdateSavedQueryCalls, $"one of the two files is a stray copy even when the names match. Output: <{console.Output}>");
+        ExpectBothFilesReportedAsDuplicates(console.Output);
+        Expect.Contains("0 changed, 0 unchanged, 2 failed", console.Output, "both files should be counted as failed.");
+        Expect.Equal(1, exitCode, "a run with failed files should exit non-zero.");
+    }
+
+    [Fact]
+    public async Task WholeRun_TwoFilesWithTheSameSavedQueryId_StillAppliesAnUnrelatedView()
+    {
+        using var console = new ConsoleHarness(); // --yes
+        var client = ClientWithStaleCopyOfRenamedView();
+        var otherId = new Guid("2b0c3c0e-6f1a-4c0e-9a51-6d3f0c7a1e22");
+        WriteView("Active projects", "Active projects (renamed)", otherId);
+        client.SavedQueriesById[otherId] = new ExistingSavedQuery(otherId, null, "<fetch/>", null, "tn_project", "Active projects");
+
+        var runner = CreateRunner(client);
+
+        await new SolutionImportOrchestrator().RunAsync(_root, runner, CancellationToken.None);
+        var exitCode = await runner.ConfirmAndApplyAsync(CancellationToken.None);
+
+        Expect.Equal(1, client.UpdateSavedQueryCalls.Count, $"only the unrelated view should be applied. Output: <{console.Output}>");
+        Expect.Equal(otherId, client.UpdateSavedQueryCalls[0].SavedQueryId, "the view applied should be the unrelated one.");
+        Expect.Contains("1 changed, 0 unchanged, 2 failed", console.Output, "the unrelated view should count as changed alongside the two failures.");
+        Expect.Equal(1, exitCode, "the run still has failed files, so it should exit non-zero.");
     }
 }
