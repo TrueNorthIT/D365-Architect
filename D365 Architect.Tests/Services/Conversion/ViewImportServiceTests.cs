@@ -191,9 +191,12 @@ public sealed class ViewImportServiceTests
         Assert.Contains("'tn_inspection'", ex.Message, StringComparison.Ordinal);
     }
 
-    // Same table, different name: a legitimate rename, so warn but proceed.
+    // REQ-6: same table, different name is a rename the user asked for, so there is no "double-check this is the file you meant" warning.
+    // The rename itself is covered in ViewImportServiceRenameTests.
     [Fact]
-    public async Task PreviewAsync_WithSavedQueryIdWhoseLiveNameDiffers_WarnsButProceeds()
+    [Trait("Feature", "view-rename")]
+    [Trait("Requirement", "REQ-6")]
+    public async Task PreviewAsync_WithSavedQueryIdWhoseLiveNameDiffers_ProceedsWithoutAnIdentityWarning()
     {
         var client = new FakeDataverseClient();
         client.SavedQueriesById[TargetViewId] = new ExistingSavedQuery(TargetViewId, null, "<fetch>old</fetch>", null, "tn_inspection", "Old Name");
@@ -201,9 +204,8 @@ public sealed class ViewImportServiceTests
 
         var preview = await service.PreviewAsync(Environment, "token", ViewPinnedTo(TargetViewId, "<fetch>new</fetch>"), CancellationToken.None);
 
-        Assert.True(preview.HasChanges);
-        Assert.NotNull(preview.IdentityMismatchWarning);
-        Assert.Contains("'Old Name'", preview.IdentityMismatchWarning, StringComparison.Ordinal);
+        Assert.True(preview.HasChanges, "REQ-6: a different name on the same table should still preview as a change.");
+        Assert.True(preview.DuplicateNameWarning is null, $"REQ-6: a name-only difference is a rename and no other view has the name, so no warning was expected, but got: <{preview.DuplicateNameWarning}>.");
     }
 
     [Fact]
@@ -215,7 +217,8 @@ public sealed class ViewImportServiceTests
 
         var preview = await service.PreviewAsync(Environment, "token", ViewPinnedTo(TargetViewId, "<fetch>new</fetch>"), CancellationToken.None);
 
-        Assert.Null(preview.IdentityMismatchWarning);
+        Assert.False(preview.IsRename);
+        Assert.Null(preview.DuplicateNameWarning);
     }
 
     // Without a savedQueryId, an ambiguous name still refuses. Given two live

@@ -36,16 +36,16 @@ public sealed class ViewImportService(IDataverseClient dataverseClient) : IViewI
         // already filtered on them). Same approach as form import's
         // BuildIdentityMismatchWarning, except a different table is refused
         // outright: it's an id pasted into the wrong file, and writing would
-        // overwrite an unrelated view. A name-only difference is a warning,
-        // since renaming a view is legitimate.
+        // overwrite an unrelated view. A name-only difference is a rename.
         if (existing?.EntityLogicalName is not null
             && !string.Equals(existing.EntityLogicalName, view.Entity, StringComparison.OrdinalIgnoreCase))
         {
             throw new ViewIdentityMismatchException(existing.SavedQueryId, view.Entity, view.Name, existing.EntityLogicalName, existing.Name);
         }
 
-        var identityMismatchWarning = existing?.Name is not null && existing.Name != view.Name
-            ? $"This YAML's savedQueryId resolves to the view '{existing.Name}' on '{existing.EntityLogicalName}', not this file's own '{view.Name}' — the id is still what's being used (it's authoritative, and the name itself isn't written), but double-check this is the file you meant."
+        var isRename = existing?.Name is not null && existing.Name != view.Name;
+        var duplicateNameWarning = isRename
+            ? await BuildDuplicateNameWarningAsync(environmentUrl, accessToken, view, existing!.SavedQueryId, cancellationToken)
             : null;
 
         var (newFetchXml, newLayoutXml) = await BuildFetchAndLayoutAsync(environmentUrl, accessToken, view, existing, cancellationToken);
@@ -59,7 +59,8 @@ public sealed class ViewImportService(IDataverseClient dataverseClient) : IViewI
             existing?.LayoutXml,
             newLayoutXml)
         {
-            IdentityMismatchWarning = identityMismatchWarning,
+            ExistingName = existing?.Name,
+            DuplicateNameWarning = duplicateNameWarning,
             IsCreate = existing is null,
             Name = view.Name,
             Entity = view.Entity,
@@ -80,6 +81,7 @@ public sealed class ViewImportService(IDataverseClient dataverseClient) : IViewI
                 environmentUrl,
                 accessToken,
                 preview.SavedQueryId,
+                preview.IsRename ? preview.Name : null,
                 preview.NewDescription,
                 preview.NewFetchXml,
                 preview.NewLayoutXml,
@@ -166,6 +168,23 @@ public sealed class ViewImportService(IDataverseClient dataverseClient) : IViewI
         {
             throw new InvalidDataException($"View '{view.Name}' lists {string.Join(", ", duplicates.Select(d => $"'{d}'"))} more than once in 'columns' — list each column once.");
         }
+    }
+
+    /// <summary>
+    /// A warning when a rename's new name is already used by another view on the table. Dataverse allows duplicate
+    /// view names, so the rename still goes ahead, but the two can't be told apart in the view selector and a later
+    /// import of a file without <c>savedQueryId</c> would refuse the name as ambiguous. The view itself is ignored,
+    /// since a case-only rename can find it.
+    /// </summary>
+    private async Task<string?> BuildDuplicateNameWarningAsync(Uri environmentUrl, string accessToken, ViewDefinition view, Guid savedQueryId, CancellationToken cancellationToken)
+    {
+        var ids = await dataverseClient.FindSavedQueryIdsByNameAsync(environmentUrl, accessToken, view.Entity, view.Name, cancellationToken);
+        if (!ids.Any(id => id != savedQueryId))
+        {
+            return null;
+        }
+
+        return $"Another view on '{view.Entity}' is already called '{view.Name}'. Dataverse allows that, so the rename goes ahead, but the two will look the same in the view selector, and a file without a savedQueryId can't import either of them by name.";
     }
 
     /// <summary>What a view that matches nothing needs before it can be created.</summary>

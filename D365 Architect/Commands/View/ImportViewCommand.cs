@@ -11,7 +11,9 @@ namespace D365Architect.Commands.View;
 /// <summary>
 /// `d365architect view import --input account-active.view.yml [--solution UNIQUE_NAME] [--yes] [--whatif]`
 /// Writes a `*.view.yml` file's Description/FetchXml/LayoutXml directly
-/// back into Dataverse. Needs sign-in.
+/// back into Dataverse, and its name when its `savedQueryId` names a view
+/// called something else (shown in the plan as `name: 'old' -> 'new'`).
+/// Needs sign-in.
 ///
 /// Simpler than `form import`: a view's FetchXml/LayoutXml are kept
 /// verbatim (see <see cref="Services.Conversion.Models.ViewDefinition"/>'s
@@ -34,7 +36,7 @@ namespace D365Architect.Commands.View;
 /// plain <c>savedqueries</c> GET reflects the *published* state, so a
 /// follow-up `view export` won't show a just-written FetchXml/LayoutXml
 /// change until something publishes the table (same platform behavior
-/// documented on <see cref="Services.Dataverse.IDataverseClient.UpdateSavedQueryAsync(Uri, string, Guid, string?, string?, string?, CancellationToken)"/>,
+/// documented on <see cref="Services.Dataverse.IDataverseClient.UpdateSavedQueryAsync(Uri, string, Guid, string?, string?, string?, string?, string?, CancellationToken)"/>,
 /// confirmed for forms first — see <see cref="Services.Dataverse.IDataverseClient.UpdateSystemFormXmlAsync(Uri, string, Guid, string, CancellationToken)"/>).
 /// The write itself genuinely takes regardless.
 ///
@@ -74,9 +76,9 @@ public sealed class ImportViewCommand(IViewImportService viewImportService, Impo
 
             OnPreviewBuilt = preview =>
             {
-                if (preview.IdentityMismatchWarning is not null)
+                if (preview.DuplicateNameWarning is not null)
                 {
-                    ErrorConsole.Warn($"Warning: {preview.IdentityMismatchWarning}");
+                    ErrorConsole.Warn($"Warning: {preview.DuplicateNameWarning}");
                     AnsiConsole.WriteLine();
                 }
             },
@@ -90,6 +92,12 @@ public sealed class ImportViewCommand(IViewImportService viewImportService, Impo
                 if (preview.IsCreate)
                 {
                     AnsiConsole.MarkupLine($"[green]{$"+ view '{preview.Name}' (create)".EscapeMarkup()}[/]");
+                }
+
+                if (preview.IsRename)
+                {
+                    AnsiConsole.WriteLine();
+                    AnsiConsole.MarkupLine($"[bold]name:[/] {$"'{preview.ExistingName}' -> '{preview.Name}'".EscapeMarkup()}");
                 }
 
                 PrintFieldDiff("description", preview.ExistingDescription, preview.NewDescription, pretty: false);
@@ -138,8 +146,8 @@ public sealed class ImportViewCommand(IViewImportService viewImportService, Impo
     /// <summary>
     /// Prints one field's diff (skipping it entirely when the local YAML
     /// never had a value there, or when the two sides already match) —
-    /// unlike form/table import, a view has exactly three writable fields
-    /// total, so showing each by name is clearer than merging them into one
+    /// unlike form/table import, a view has only a handful of writable
+    /// fields, so showing each by name is clearer than merging them into one
     /// combined block.
     /// </summary>
     private static void PrintFieldDiff(string fieldName, string? existingValue, string? newValue, bool pretty)

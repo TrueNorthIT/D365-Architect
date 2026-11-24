@@ -127,7 +127,7 @@ public sealed class DataverseClientViewAndFormCreateTests
         var (client, handler) = Client();
         var id = Guid.NewGuid();
 
-        await client.UpdateSavedQueryAsync(EnvironmentUrl, "token", id, null, "<fetch/>", null, "TableCreateTest", CancellationToken.None);
+        await client.UpdateSavedQueryAsync(EnvironmentUrl, "token", id, name: null, null, "<fetch/>", null, "TableCreateTest", CancellationToken.None);
 
         Expect.Equal("PATCH", handler.Request!.Method.Method, "updating a view should be a PATCH.");
         Expect.Contains($"savedqueries({id})", handler.Request.RequestUri!.AbsolutePath, "the PATCH should target the view by id.");
@@ -140,9 +140,75 @@ public sealed class DataverseClientViewAndFormCreateTests
     {
         var (client, handler) = Client();
 
-        await client.UpdateSavedQueryAsync(EnvironmentUrl, "token", Guid.NewGuid(), null, "<fetch/>", null, solutionUniqueName: null, CancellationToken.None);
+        await client.UpdateSavedQueryAsync(EnvironmentUrl, "token", Guid.NewGuid(), name: null, null, "<fetch/>", null, solutionUniqueName: null, CancellationToken.None);
 
         Expect.Equal(null, Header(handler), "with no solution, no MSCRM.SolutionUniqueName header should be sent.");
+    }
+
+    // REQ-1/REQ-4: the rename and a FetchXML change travel in one PATCH to the view, as `name` and `fetchxml`.
+    // Code path: DataverseClient.UpdateSavedQueryAsync(..., name, description, fetchXml, layoutXml, solutionUniqueName, ...).
+    [Fact]
+    [Trait("Feature", "view-rename")]
+    [Trait("Requirement", "REQ-4")]
+    public async Task UpdateSavedQueryAsync_WithAName_PatchesNameAndFetchXmlInOneRequest()
+    {
+        var (client, handler) = Client();
+        var id = Guid.NewGuid();
+
+        await client.UpdateSavedQueryAsync(EnvironmentUrl, "token", id, "Active Accounts Renamed", null, "<fetch/>", null, null, CancellationToken.None);
+
+        Expect.Equal("PATCH", handler.Request!.Method.Method, "REQ-4: updating a view should be a PATCH.");
+        Expect.Contains($"savedqueries({id})", handler.Request.RequestUri!.AbsolutePath, "REQ-4: the PATCH should target the view by id.");
+        Expect.Contains("\"name\":\"Active Accounts Renamed\"", handler.RequestBody, "REQ-1: the PATCH body should carry the new name.");
+        Expect.Contains("\"fetchxml\"", handler.RequestBody, "REQ-4: the same PATCH body should carry the FetchXML change.");
+    }
+
+    // REQ-1: a rename with nothing else to write still sends a request.
+    [Fact]
+    [Trait("Feature", "view-rename")]
+    [Trait("Requirement", "REQ-1")]
+    public async Task UpdateSavedQueryAsync_WithOnlyAName_StillPatchesTheName()
+    {
+        var (client, handler) = Client();
+
+        await client.UpdateSavedQueryAsync(EnvironmentUrl, "token", Guid.NewGuid(), "Active Accounts Renamed", null, null, null, null, CancellationToken.None);
+
+        Expect.True(handler.Request is not null, "REQ-1: a name-only update should still be sent.");
+        Expect.Contains("\"name\":\"Active Accounts Renamed\"", handler.RequestBody, "REQ-1: the PATCH body should carry the new name.");
+    }
+
+    // REQ-9: how the duplicate check asks Dataverse - ids only, for views of that table with that name.
+    // Code path: DataverseClient.FindSavedQueryIdsByNameAsync.
+    [Fact]
+    [Trait("Feature", "view-rename")]
+    [Trait("Requirement", "REQ-9")]
+    public async Task FindSavedQueryIdsByNameAsync_RequestsOnlyTheIdsOfViewsOnThatTableWithThatName()
+    {
+        var first = Guid.NewGuid();
+        var second = Guid.NewGuid();
+        var (client, handler) = Client(HttpStatusCode.OK, $$"""{"value":[{"savedqueryid":"{{first}}"},{"savedqueryid":"{{second}}"}]}""");
+
+        var ids = await client.FindSavedQueryIdsByNameAsync(EnvironmentUrl, "token", "account", "Active Accounts Renamed", CancellationToken.None);
+
+        var request = Decoded(handler);
+        Expect.Contains("savedqueries?", request, "REQ-9: views are read from the savedqueries collection.");
+        Expect.Contains("$select=savedqueryid", request, "REQ-9: only the id should be requested, nothing else about the views.");
+        Expect.Contains("returnedtypecode eq 'account'", request, "REQ-9: only views of the renamed view's table should be considered.");
+        Expect.Contains("name eq 'Active Accounts Renamed'", request, "REQ-9: only views with the new name should be considered.");
+        Expect.Sequence([first, second], ids, "REQ-9: every matching view's id should be returned, with no ambiguity error.");
+    }
+
+    // REQ-9: a name nobody uses gives an empty list, not null or an error.
+    [Fact]
+    [Trait("Feature", "view-rename")]
+    [Trait("Requirement", "REQ-9")]
+    public async Task FindSavedQueryIdsByNameAsync_NoViewHasTheName_ReturnsAnEmptyList()
+    {
+        var (client, _) = Client(HttpStatusCode.OK, """{"value":[]}""");
+
+        var ids = await client.FindSavedQueryIdsByNameAsync(EnvironmentUrl, "token", "account", "Unused name", CancellationToken.None);
+
+        Expect.Empty(ids, "REQ-9: no view has the name, so no ids should be returned.");
     }
 
     [Fact]

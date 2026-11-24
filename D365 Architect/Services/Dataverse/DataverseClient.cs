@@ -547,12 +547,14 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         return new ExistingSavedQuery(savedQueryId, description, fetchXml, layoutXml, entity, name);
     }
 
-    public Task UpdateSavedQueryAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, string? description, string? fetchXml, string? layoutXml, CancellationToken cancellationToken) =>
-        UpdateSavedQueryAsync(environmentUrl, accessToken, savedQueryId, description, fetchXml, layoutXml, solutionUniqueName: null, cancellationToken);
-
-    public async Task UpdateSavedQueryAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, string? description, string? fetchXml, string? layoutXml, string? solutionUniqueName, CancellationToken cancellationToken)
+    public async Task UpdateSavedQueryAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, string? name, string? description, string? fetchXml, string? layoutXml, string? solutionUniqueName, CancellationToken cancellationToken)
     {
         var body = new Dictionary<string, string>();
+        if (name is not null)
+        {
+            body["name"] = name;
+        }
+
         if (description is not null)
         {
             body["description"] = description;
@@ -579,6 +581,20 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
 
         using var response = await SendAsync(request, RequestTimeout, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<Guid>> FindSavedQueryIdsByNameAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string viewName, CancellationToken cancellationToken)
+    {
+        var relativePath = "savedqueries?$select=savedqueryid" +
+            $"&$filter=returnedtypecode eq '{Uri.EscapeDataString(entityLogicalName)}' and name eq '{Uri.EscapeDataString(EscapeODataStringLiteral(viewName))}'";
+
+        using var request = CreateRequest(environmentUrl, relativePath, accessToken);
+        using var response = await SendAsync(request, RequestTimeout, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        using var doc = JsonDocument.Parse(json);
+        return doc.RootElement.GetProperty("value").EnumerateArray().Select(r => r.GetProperty("savedqueryid").GetGuid()).ToList();
     }
 
     public async Task<string> GetEntityMetadataJsonAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken)

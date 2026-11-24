@@ -15,18 +15,16 @@ namespace D365Architect.Services.Conversion.Models;
 /// record, not wrapped in the metadata API's managed-property shapes — so
 /// one reader (<see cref="ViewJsonDefinitionReader"/>) is enough.
 ///
-/// Deliberately excluded: <c>savedqueryid</c>. It's a GUID assigned at
-/// creation with no meaning to a human editing this YAML, and — unlike an
-/// entity's LogicalName or an attribute's SchemaName — Dataverse doesn't
-/// require it as input when creating a view; <see cref="Name"/> is this
-/// asset's only practical identity. Export keeps FetchXml/LayoutXml verbatim
-/// rather than decomposing them — see <see cref="ViewJsonDefinitionReader"/>
-/// for why; a hand-written view may give <see cref="Columns"/> instead of a
-/// LayoutXml.
+/// Identity: <see cref="SavedQueryId"/> when present, since view names aren't
+/// unique and a rename changes the name; otherwise table + <see cref="Name"/>,
+/// which is all a hand-written file for a new view has. Export keeps
+/// FetchXml/LayoutXml verbatim rather than decomposing them — see
+/// <see cref="ViewJsonDefinitionReader"/> for why; a hand-written view may give
+/// <see cref="Columns"/> instead of a LayoutXml.
 /// </summary>
 public sealed class ViewDefinition
 {
-    /// <summary>The view's display name, e.g. "Active Accounts" — written as the top-level "view" key.</summary>
+    /// <summary>The view's display name, e.g. "Active Accounts" — written as the top-level "view" key. With a <c>savedQueryId</c>, changing it renames the view on import.</summary>
     [YamlMember(Alias = "view", Order = 0)]
     public required string Name { get; init; }
 
@@ -39,8 +37,10 @@ public sealed class ViewDefinition
     /// the target view directly rather than by table + name - which can match
     /// more than one live view (two views may share a name) and is then
     /// refused as ambiguous. An id that no longer exists live is an error,
-    /// never a fallback to the name. Omit to match by table + name; export
-    /// always writes it.
+    /// never a fallback to the name, and an id from a view on another table
+    /// is refused. When the id's view has a different name, import renames it
+    /// to this file's "view". Omit to match by table + name (which can't
+    /// rename); export always writes it.
     /// </summary>
     [YamlMember(Order = 2)]
     public Guid? SavedQueryId { get; init; }
