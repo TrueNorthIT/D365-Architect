@@ -781,6 +781,13 @@ save, so the diff ignores them when the file leaves them out.
 `<fetch>` root when the file's own `<fetch>` lacks it (an exported file keeps
 it and compares as written). Cell labels are the same case on a form (see
 the form section). Consequently a hand-written view re-imports as unchanged.
+Line endings are compared as equal too (`ViewImportPreview.Differs`):
+Dataverse can store a view's XML with CRLF line breaks (confirmed live, a
+`layoutxml` ending in `\r\n`), and YAML reads every line break back as LF, so
+without this an exported view with a CRLF never re-imported as unchanged. A
+difference that is only whitespace still counts as a change and is written
+as the file has it; the plan says `<field>: whitespace only`, since the
+pretty-printed diff has no lines to show.
 
 A local field that's null means "don't touch this", never "clear it" — confirmed in
 `IDataverseClient.UpdateSavedQueryAsync`'s own contract, and mirrored in

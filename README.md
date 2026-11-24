@@ -509,7 +509,9 @@ Simpler than `form import`: since FetchXML/LayoutXML are kept verbatim
 (never decomposed and rebuilt), the diff compares the live values against
 the local YAML directly, with no canonicalization step needed first. Dataverse
 adds a `savedqueryid` attribute to the stored FetchXML on save; a file that
-leaves it out isn't shown as a change. Only `name` (when it differs, as above),
+leaves it out isn't shown as a change, and nor is CRLF versus LF line endings
+(YAML reads every line break back as LF). A difference that's only
+whitespace is shown as `whitespace only`. Only `name` (when it differs, as above),
 `description`, `fetchXml` and `layoutXml` are ever written on an update — a
 view's type, default status, and Quick Find flag are never changed by this
 command. Unless `--yes` is passed, you get a confirmation prompt (defaulting

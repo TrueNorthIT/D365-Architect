@@ -148,20 +148,29 @@ public sealed class ImportViewCommand(IViewImportService viewImportService, Impo
     /// never had a value there, or when the two sides already match) —
     /// unlike form/table import, a view has only a handful of writable
     /// fields, so showing each by name is clearer than merging them into one
-    /// combined block.
+    /// combined block. Pretty-printing drops whitespace between elements, so
+    /// a change that's only whitespace would print the field name over an
+    /// empty diff; it's named as such instead.
     /// </summary>
     private static void PrintFieldDiff(string fieldName, string? existingValue, string? newValue, bool pretty)
     {
-        if (newValue is null || newValue == existingValue)
+        if (!ViewImportPreview.Differs(existingValue, newValue))
         {
             return;
         }
 
-        AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine($"[bold]{fieldName}:[/]");
-
         var existingText = pretty && existingValue is not null ? DiffConsole.PrettyPrintXml(existingValue) : existingValue ?? "";
-        var newText = pretty ? DiffConsole.PrettyPrintXml(newValue) : newValue;
-        DiffConsole.PrintDiff(TextDiff.Compute(existingText, newText));
+        var newText = pretty ? DiffConsole.PrettyPrintXml(newValue!) : newValue!;
+        var diff = TextDiff.Compute(existingText, newText);
+
+        AnsiConsole.WriteLine();
+        if (diff.All(line => line.Kind == TextDiffLineKind.Unchanged))
+        {
+            AnsiConsole.MarkupLine($"[bold]{fieldName}:[/] whitespace only");
+            return;
+        }
+
+        AnsiConsole.MarkupLine($"[bold]{fieldName}:[/]");
+        DiffConsole.PrintDiff(diff);
     }
 }
