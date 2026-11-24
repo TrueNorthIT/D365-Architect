@@ -116,6 +116,8 @@ public sealed class ImportViewCommandLineEndingTests : IDisposable
         var exitCode = await command.RunAsync(Settings(WriteFile(spacedFetchXml, LayoutXml), whatIf: true), CancellationToken.None);
 
         Expect.Equal(0, exitCode, $"--whatif should succeed. Output: <{console.Output}>");
-        Expect.Contains("fetchxml: whitespace only", console.Output, "A whitespace-only difference should be named, not shown as an empty diff.");
+        // The field name is bold, so a colour console puts an escape code between it and the message.
+        Expect.Contains("fetchxml:", console.Output, "The whitespace-only field should be named.");
+        Expect.Contains(" whitespace only", console.Output, "A whitespace-only difference should say so, not show an empty diff.");
     }
 }
