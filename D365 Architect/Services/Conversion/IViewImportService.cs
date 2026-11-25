@@ -108,7 +108,19 @@ public sealed record ViewImportPreview(
     /// <summary>How many of the name and the three fields differ (see <see cref="HasChanges"/>).</summary>
     public int ChangeCount =>
         (IsRename ? 1 : 0)
-        + (NewDescription is not null && NewDescription != ExistingDescription ? 1 : 0)
-        + (NewFetchXml is not null && NewFetchXml != ExistingFetchXml ? 1 : 0)
-        + (NewLayoutXml is not null && NewLayoutXml != ExistingLayoutXml ? 1 : 0);
+        + (Differs(ExistingDescription, NewDescription) ? 1 : 0)
+        + (Differs(ExistingFetchXml, NewFetchXml) ? 1 : 0)
+        + (Differs(ExistingLayoutXml, NewLayoutXml) ? 1 : 0);
+
+    /// <summary>
+    /// Whether a field the file sets differs from live, ignoring CRLF versus
+    /// LF. Dataverse can store a view's XML with CRLF line breaks (confirmed
+    /// live: a layoutxml ending in <c>\r\n</c>), but YAML turns every line
+    /// break into LF when the file is read, so an unedited export would
+    /// otherwise never re-import as unchanged.
+    /// </summary>
+    public static bool Differs(string? existingValue, string? newValue) =>
+        newValue is not null && NormaliseLineEndings(newValue) != NormaliseLineEndings(existingValue);
+
+    private static string? NormaliseLineEndings(string? value) => value?.Replace("\r\n", "\n");
 }
