@@ -106,7 +106,10 @@ public sealed class FakeDataverseClient : IDataverseClient
     public Task<IReadOnlySet<Guid>?> TryGetSolutionSavedQueryIdsAsync(Uri environmentUrl, string accessToken, string solutionUniqueName, CancellationToken cancellationToken) => throw new NotImplementedException();
 
     public ExistingSavedQuery? SavedQuery { get; set; }
-    public List<(Guid SavedQueryId, string? Description, string? FetchXml, string? LayoutXml, string? SolutionUniqueName)> UpdateSavedQueryCalls { get; } = [];
+    public List<(Guid SavedQueryId, string? Description, string? FetchXml, string? LayoutXml, string? SolutionUniqueName, string? Name)> UpdateSavedQueryCalls { get; } = [];
+
+    /// <summary>Every live view's id, table and name, for <see cref="FindSavedQueryIdsByNameAsync"/>. Empty means no view has any name.</summary>
+    public List<(Guid SavedQueryId, string EntityLogicalName, string Name)> NamedSavedQueries { get; } = [];
 
     /// <summary>
     /// Live views keyed by <c>savedqueryid</c> - what
@@ -124,23 +127,86 @@ public sealed class FakeDataverseClient : IDataverseClient
     /// </summary>
     public bool SavedQueryNameIsAmbiguous { get; set; }
 
-    public Task<ExistingSavedQuery?> TryGetSavedQueryAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string viewName, CancellationToken cancellationToken) =>
-        SavedQueryNameIsAmbiguous
+    /// <summary>How many times a view was loaded in full (by name or by id): the work the import cache exists to avoid.</summary>
+    public int SavedQueryFullLoads { get; private set; }
+
+    /// <summary>Live views' <c>versionnumber</c> and table, for <see cref="GetSavedQueryVersionsAsync"/>. <see cref="UpdateSavedQueryAsync"/> bumps it, as Dataverse does on a write.</summary>
+    public Dictionary<Guid, (string EntityLogicalName, long Version)> SavedQueryVersions { get; } = [];
+
+    /// <summary>The table of every <see cref="GetSavedQueryVersionsAsync"/> request, in order.</summary>
+    public List<string> SavedQueryVersionQueries { get; } = [];
+
+    /// <summary>When set, a view or form write throws it, as a rejected request would.</summary>
+    public Exception? WriteFailure { get; set; }
+
+    public Task<IReadOnlyDictionary<Guid, long>> GetSavedQueryVersionsAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken)
+    {
+        SavedQueryVersionQueries.Add(entityLogicalName);
+        return Task.FromResult(VersionsOn(SavedQueryVersions, entityLogicalName));
+    }
+
+    private static IReadOnlyDictionary<Guid, long> VersionsOn(Dictionary<Guid, (string EntityLogicalName, long Version)> versions, string entityLogicalName) =>
+        versions
+            .Where(v => string.Equals(v.Value.EntityLogicalName, entityLogicalName, StringComparison.OrdinalIgnoreCase))
+            .ToDictionary(v => v.Key, v => v.Value.Version);
+
+    private static void Bump(Dictionary<Guid, (string EntityLogicalName, long Version)> versions, Guid id)
+    {
+        if (versions.TryGetValue(id, out var live))
+        {
+            versions[id] = (live.EntityLogicalName, live.Version + 1);
+        }
+    }
+
+    public Task<ExistingSavedQuery?> TryGetSavedQueryAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string viewName, CancellationToken cancellationToken)
+    {
+        SavedQueryFullLoads++;
+        return SavedQueryNameIsAmbiguous
             ? throw new AmbiguousSavedQueryException(entityLogicalName, viewName, [Guid.NewGuid(), Guid.NewGuid()])
             : Task.FromResult(SavedQuery);
+    }
 
-    public Task<ExistingSavedQuery?> TryGetSavedQueryByIdAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, CancellationToken cancellationToken) =>
-        Task.FromResult(SavedQueriesById.GetValueOrDefault(savedQueryId));
-
-    public Task UpdateSavedQueryAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, string? description, string? fetchXml, string? layoutXml, CancellationToken cancellationToken) =>
-        UpdateSavedQueryAsync(environmentUrl, accessToken, savedQueryId, description, fetchXml, layoutXml, solutionUniqueName: null, cancellationToken);
-
-    public Task UpdateSavedQueryAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, string? description, string? fetchXml, string? layoutXml, string? solutionUniqueName, CancellationToken cancellationToken)
+    public Task<ExistingSavedQuery?> TryGetSavedQueryByIdAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, CancellationToken cancellationToken)
     {
-        UpdateSavedQueryCalls.Add((savedQueryId, description, fetchXml, layoutXml, solutionUniqueName));
+        SavedQueryFullLoads++;
+        return Task.FromResult(SavedQueriesById.GetValueOrDefault(savedQueryId));
+    }
+
+    public Task UpdateSavedQueryAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, string? name, string? description, string? fetchXml, string? layoutXml, string? solutionUniqueName, CancellationToken cancellationToken)
+    {
+        if (WriteFailure is not null)
+        {
+            throw WriteFailure;
+        }
+
+        UpdateSavedQueryCalls.Add((savedQueryId, description, fetchXml, layoutXml, solutionUniqueName, name));
         WriteOrder.Add($"update-view:{savedQueryId}");
+        Bump(SavedQueryVersions, savedQueryId);
+
+        // A view looked up by id keeps what was written, so a second import sees the first one's result.
+        if (SavedQueriesById.TryGetValue(savedQueryId, out var live))
+        {
+            SavedQueriesById[savedQueryId] = live with
+            {
+                Name = name ?? live.Name,
+                Description = description ?? live.Description,
+                FetchXml = fetchXml ?? live.FetchXml,
+                LayoutXml = layoutXml ?? live.LayoutXml,
+            };
+        }
+
         return Task.CompletedTask;
     }
+
+    public Task<IReadOnlyList<Guid>> FindSavedQueryIdsByNameAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string viewName, CancellationToken cancellationToken)
+    {
+        IReadOnlyList<Guid> ids = NamedSavedQueries
+            .Where(v => string.Equals(v.EntityLogicalName, entityLogicalName, StringComparison.OrdinalIgnoreCase) && v.Name == viewName)
+            .Select(v => v.SavedQueryId)
+            .ToList();
+        return Task.FromResult(ids);
+    }
+
     // ---- Simpler hand-written forms and views ----
 
     /// <summary>Every create/update of a table, view or form, in the order issued, e.g. <c>create-table:tn_Project</c>, <c>create-view:All projects</c>, <c>create-form:Project</c> - what the one-run ordering test reads.</summary>
@@ -189,6 +255,7 @@ public sealed class FakeDataverseClient : IDataverseClient
     public Task<IReadOnlyList<ExistingSystemForm>> FindSystemFormsAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string formName, int formType, CancellationToken cancellationToken)
     {
         FindSystemFormsCalls.Add((entityLogicalName, formName, formType));
+        SystemFormFullLoads++;
 
         IReadOnlyList<ExistingSystemForm> found = LiveSystemForms.Count > 0 || SystemForm is null
             ? LiveSystemForms
@@ -207,34 +274,72 @@ public sealed class FakeDataverseClient : IDataverseClient
     /// <summary>The live form both <see cref="TryGetSystemFormAsync"/> and <see cref="TryGetSystemFormByIdAsync"/> return (null = not found).</summary>
     public ExistingSystemForm? SystemForm { get; set; }
 
-    public Task<ExistingSystemForm?> TryGetSystemFormAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string formName, CancellationToken cancellationToken) =>
-        Task.FromResult(SystemForm);
+    /// <summary>How many times a form was loaded in full (by name, by id or by a name search): the work the import cache exists to avoid.</summary>
+    public int SystemFormFullLoads { get; private set; }
 
-    public Task<ExistingSystemForm?> TryGetSystemFormByIdAsync(Uri environmentUrl, string accessToken, Guid formId, CancellationToken cancellationToken) =>
-        Task.FromResult(SystemForm);
+    /// <summary>Live forms' <c>versionnumber</c> and table, for <see cref="GetSystemFormVersionsAsync"/>. <see cref="UpdateSystemFormXmlAsync(Uri, string, Guid, string, string?, CancellationToken)"/> bumps it, as Dataverse does on a write.</summary>
+    public Dictionary<Guid, (string EntityLogicalName, long Version)> SystemFormVersions { get; } = [];
+
+    /// <summary>The table of every <see cref="GetSystemFormVersionsAsync"/> request, in order.</summary>
+    public List<string> SystemFormVersionQueries { get; } = [];
+
+    public Task<IReadOnlyDictionary<Guid, long>> GetSystemFormVersionsAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken)
+    {
+        SystemFormVersionQueries.Add(entityLogicalName);
+        return Task.FromResult(VersionsOn(SystemFormVersions, entityLogicalName));
+    }
+
+    public Task<ExistingSystemForm?> TryGetSystemFormAsync(Uri environmentUrl, string accessToken, string entityLogicalName, string formName, CancellationToken cancellationToken)
+    {
+        SystemFormFullLoads++;
+        return Task.FromResult(SystemForm);
+    }
+
+    public Task<ExistingSystemForm?> TryGetSystemFormByIdAsync(Uri environmentUrl, string accessToken, Guid formId, CancellationToken cancellationToken)
+    {
+        SystemFormFullLoads++;
+        return Task.FromResult(SystemForm);
+    }
 
     public Task UpdateSystemFormXmlAsync(Uri environmentUrl, string accessToken, Guid formId, string formXml, CancellationToken cancellationToken) =>
         UpdateSystemFormXmlAsync(environmentUrl, accessToken, formId, formXml, solutionUniqueName: null, cancellationToken);
 
     public Task UpdateSystemFormXmlAsync(Uri environmentUrl, string accessToken, Guid formId, string formXml, string? solutionUniqueName, CancellationToken cancellationToken)
     {
+        if (WriteFailure is not null)
+        {
+            throw WriteFailure;
+        }
+
         UpdateSystemFormXmlCalls.Add((formId, formXml, solutionUniqueName));
         WriteOrder.Add($"update-form:{formId}");
+        Bump(SystemFormVersions, formId);
         return Task.CompletedTask;
     }
+
+    /// <summary>How many table, view and form writes (<see cref="WriteOrder"/>) had been made when each <see cref="PublishEntityAsync"/> call came in, in call order - what a "publish after every change is in" test reads.</summary>
+    public List<int> WritesBeforeEachEntityPublish { get; } = [];
+
+    /// <summary>When set, <see cref="PublishEntityAsync"/> records the attempt, then throws what this returns for that table (null = the publish works) - simulates Dataverse rejecting one table's PublishXml.</summary>
+    public Func<string, Exception?>? PublishEntityFailure { get; set; }
 
     public Task PublishEntityAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken)
     {
         PublishEntityCalls.Add(entityLogicalName);
-        return Task.CompletedTask;
+        WritesBeforeEachEntityPublish.Add(WriteOrder.Count);
+        return PublishEntityFailure?.Invoke(entityLogicalName) is { } failure ? Task.FromException(failure) : Task.CompletedTask;
     }
 
     /// <summary>The option-set names of every <see cref="PublishGlobalOptionSetsAsync"/> call, in order (one list per call).</summary>
     public List<IReadOnlyList<string>> PublishGlobalOptionSetsCalls { get; } = [];
 
+    /// <summary>As <see cref="WritesBeforeEachEntityPublish"/>, for each <see cref="PublishGlobalOptionSetsAsync"/> call.</summary>
+    public List<int> WritesBeforeEachGlobalOptionSetsPublish { get; } = [];
+
     public Task PublishGlobalOptionSetsAsync(Uri environmentUrl, string accessToken, IReadOnlyList<string> optionSetNames, CancellationToken cancellationToken)
     {
         PublishGlobalOptionSetsCalls.Add(optionSetNames);
+        WritesBeforeEachGlobalOptionSetsPublish.Add(WriteOrder.Count);
         return Task.CompletedTask;
     }
 

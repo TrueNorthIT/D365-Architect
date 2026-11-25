@@ -709,16 +709,40 @@ needed first.
 `savedqueryid` as the top-level `savedQueryId` key (omitted when absent).
 Import resolves by that id when present (`TryGetSavedQueryByIdAsync`); an id
 that no longer exists throws `ViewNotFoundException`, as form import does,
-and never falls back to the name. Without it, an ambiguous table + name still
-throws `AmbiguousSavedQueryException`, whose message tells the user to add
-`savedQueryId` and lists the candidate ids.
+and never falls back to the name. An id from a view on another table throws
+`ViewIdentityMismatchException` (`ViewImportService`'s by-id check). Without it,
+an ambiguous table + name still throws `AmbiguousSavedQueryException`, whose
+message tells the user to add `savedQueryId` and lists the candidate ids.
 
-**Only three fields are ever written on an update**: `Description`, `FetchXml`,
-`LayoutXml`. `QueryType`/`IsDefault`/`IsQuickFindQuery`/`IsUserDefined`/
-`IsCustomizable` are all documented on `ViewDefinition` itself as fields
-applying a YAML file back doesn't change (setting the default view, for
-one, needs a dedicated qualifying action, not a plain field write) — import
-respects that boundary rather than attempting a guess at any of them.
+**A changed `view` name renames the view.** When the by-id lookup finds a view
+whose live name differs from the YAML's `view`, `ViewImportPreview.IsRename` is
+true and the plan prints `name: 'old' -> 'new'`. The name counts toward
+`ChangeCount`, so it's confirmed like any other change and goes in the same
+`UpdateSavedQueryAsync` PATCH as the other fields, with `name` set. Compared
+ordinally, so a change of case is a rename too. Before the write,
+`BuildDuplicateNameWarningAsync` (`IDataverseClient.FindSavedQueryIdsByNameAsync`)
+warns when another view on the table already has the new name; the rename still
+goes ahead, since Dataverse allows duplicate view names. Confirmed live:
+Dataverse accepts `name` on a `savedquery` PATCH and keeps the id
+(`ViewRenameLiveTests`). Without a `savedQueryId` there's nothing to rename: a
+table + name lookup that finds nothing is a create, not a rename.
+
+**`solution import` refuses a `savedQueryId` in more than one file.**
+`solution export` names a view's file after the view and never removes the
+old one, so exporting again after a rename leaves both: the new file previews
+as unchanged and the old one as a rename back. Before anything is confirmed,
+`SavedQueryIdConflictCheck` reads the id from every view file of the run and
+fails every file that shares one, matching names included (one must be a stray
+copy), with `DuplicateSavedQueryIdException` naming them all. `view import`
+takes one file, so it can't hit this.
+
+**Only four fields are ever written on an update**: `Name` (only when renamed,
+above), `Description`, `FetchXml`, `LayoutXml`. `QueryType`/`IsDefault`/
+`IsQuickFindQuery`/`IsUserDefined`/`IsCustomizable` are all documented on
+`ViewDefinition` itself as fields applying a YAML file back doesn't change
+(setting the default view, for one, needs a dedicated qualifying action, not
+a plain field write) — import respects that boundary rather than attempting a
+guess at any of them.
 
 **Creates a view that matches nothing.** Without a `savedQueryId`, a table +
 name match that finds nothing is a create (`ViewImportService.ApplyAsync`,

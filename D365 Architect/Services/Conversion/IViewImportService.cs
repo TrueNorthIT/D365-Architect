@@ -14,7 +14,9 @@ namespace D365Architect.Services.Conversion;
 /// one matching its table + name (the same identity <c>view export</c>
 /// uses). A hand-written file matching nothing by table + name is created
 /// as a public view (<see cref="ViewImportPreview.IsCreate"/>). Only
-/// <c>Description</c>/<c>FetchXml</c>/<c>LayoutXml</c> are written —
+/// <c>Name</c>/<c>Description</c>/<c>FetchXml</c>/<c>LayoutXml</c> are
+/// written, and <c>Name</c> only when the <c>savedQueryId</c> names a view
+/// called something else (a rename, see <see cref="ViewImportPreview.ExistingName"/>) —
 /// <c>QueryType</c>/<c>IsDefault</c>/<c>IsQuickFindQuery</c> are documented
 /// on <see cref="ViewDefinition"/> itself as fields applying a YAML file
 /// back doesn't change.
@@ -65,20 +67,29 @@ public sealed record ViewImportPreview(
     string? NewLayoutXml)
 {
     /// <summary>
-    /// Set when the YAML's <c>savedQueryId</c> resolved to a live view with a
-    /// different name (a legitimate rename is possible, so only a warning;
-    /// the id stays authoritative). A different table is refused instead —
-    /// see <see cref="Dataverse.ViewIdentityMismatchException"/>. Null for a
-    /// by-name lookup or when the names agree.
-    /// </summary>
-    public string? IdentityMismatchWarning { get; init; }
-
-    /// <summary>
     /// True when the YAML matched no existing view (no <c>savedQueryId</c>, and no view of that name on that
     /// table), so <c>ApplyAsync</c> creates one. Then <see cref="SavedQueryId"/> is <see cref="Guid.Empty"/>,
     /// the <c>Existing*</c> values are null and <see cref="HasChanges"/> is true.
     /// </summary>
     public bool IsCreate { get; init; }
+
+    /// <summary>
+    /// The live view's name, from the by-id lookup. Null for a create and for a by-name match (which can't
+    /// differ from <see cref="Name"/>). When it differs from <see cref="Name"/> the view is renamed: the
+    /// <c>savedQueryId</c> is authoritative, so a changed name in the file is what the user wants written.
+    /// Compared ordinally, so a change of case is a rename too. A different table is refused instead, see
+    /// <see cref="Dataverse.ViewIdentityMismatchException"/>.
+    /// </summary>
+    public string? ExistingName { get; init; }
+
+    /// <summary>True when <c>ApplyAsync</c> renames the view from <see cref="ExistingName"/> to <see cref="Name"/>.</summary>
+    public bool IsRename => ExistingName is not null && ExistingName != Name;
+
+    /// <summary>
+    /// Set when a rename's new <see cref="Name"/> is already used by another view on the same table.
+    /// Dataverse allows duplicate view names, so it's a warning, not a refusal.
+    /// </summary>
+    public string? DuplicateNameWarning { get; init; }
 
     /// <summary>The YAML's view name — the create's <c>name</c>.</summary>
     public string Name { get; init; } = "";
@@ -87,16 +98,17 @@ public sealed record ViewImportPreview(
     public string Entity { get; init; } = "";
 
     /// <summary>
-    /// False when the local YAML's description/FetchXml/LayoutXml (whichever
-    /// it actually has — a null one is never compared, since omitting a
-    /// field means "don't touch this", not "clear it") all already match
-    /// what's live.
+    /// False when the view isn't renamed (<see cref="IsRename"/>) and the local
+    /// YAML's description/FetchXml/LayoutXml (whichever it actually has — a
+    /// null one is never compared, since omitting a field means "don't touch
+    /// this", not "clear it") all already match what's live.
     /// </summary>
     public bool HasChanges => IsCreate || ChangeCount > 0;
 
-    /// <summary>How many of the three fields differ (see <see cref="HasChanges"/>).</summary>
+    /// <summary>How many of the name and the three fields differ (see <see cref="HasChanges"/>).</summary>
     public int ChangeCount =>
-        (NewDescription is not null && NewDescription != ExistingDescription ? 1 : 0)
+        (IsRename ? 1 : 0)
+        + (NewDescription is not null && NewDescription != ExistingDescription ? 1 : 0)
         + (NewFetchXml is not null && NewFetchXml != ExistingFetchXml ? 1 : 0)
         + (NewLayoutXml is not null && NewLayoutXml != ExistingLayoutXml ? 1 : 0);
 }

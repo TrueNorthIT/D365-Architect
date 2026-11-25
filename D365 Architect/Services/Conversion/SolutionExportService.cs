@@ -1,3 +1,4 @@
+using D365Architect.Services.Caching;
 using D365Architect.Services.Dataverse;
 
 namespace D365Architect.Services.Conversion;
@@ -8,7 +9,8 @@ public sealed class SolutionExportService(
     IViewExportService viewExportService,
     IFormExportService formExportService,
     IGlobalChoiceExportService globalChoiceExportService,
-    ISecurityExportService securityExportService) : ISolutionExportService
+    ISecurityExportService securityExportService,
+    IImportCache? importCache = null) : ISolutionExportService
 {
     public async Task<SolutionExportResult> ExportSolutionAsync(Uri environmentUrl, string accessToken, string solutionUniqueName, CancellationToken cancellationToken, IReadOnlyCollection<string>? tables = null)
     {
@@ -25,9 +27,20 @@ public sealed class SolutionExportService(
         var securityByTable = security.Tables.ToDictionary(t => t.TableLogicalName, t => t.Yaml, StringComparer.OrdinalIgnoreCase);
 
         var entities = new List<SolutionExportEntity>();
+        var cacheEntries = new List<ImportCacheEntry>();
         foreach (var entityLogicalName in entityLogicalNames)
         {
             var tableYaml = await tableExportService.ExportTableAsync(environmentUrl, accessToken, entityLogicalName, solutionUniqueName, cancellationToken);
+
+            // Read before the views and forms themselves, so an edit landing mid-export still looks like a change to the next import.
+            IReadOnlyDictionary<Guid, long> viewVersions = new Dictionary<Guid, long>();
+            IReadOnlyDictionary<Guid, long> formVersions = new Dictionary<Guid, long>();
+            if (importCache is not null)
+            {
+                viewVersions = await dataverseClient.GetSavedQueryVersionsAsync(environmentUrl, accessToken, entityLogicalName, cancellationToken);
+                formVersions = await dataverseClient.GetSystemFormVersionsAsync(environmentUrl, accessToken, entityLogicalName, cancellationToken);
+            }
+
             var views = await viewExportService.ExportViewsAsync(environmentUrl, accessToken, entityLogicalName, solutionUniqueName, cancellationToken);
 
             // formId: null — every form this solution customizes on the
@@ -35,8 +48,31 @@ public sealed class SolutionExportService(
             // own command layer narrows it down to a single pick.
             var forms = await formExportService.ExportFormsAsync(environmentUrl, accessToken, entityLogicalName, solutionUniqueName, formId: null, cancellationToken);
 
+            if (importCache is not null)
+            {
+                foreach (var view in views)
+                {
+                    var id = ViewYamlDeserializer.FromYaml(view.Yaml).SavedQueryId;
+                    if (id is not null && viewVersions.TryGetValue(id.Value, out var version))
+                    {
+                        cacheEntries.Add(new ImportCacheEntry(ImportAssetKind.View, id.Value, ImportCache.HashOf(view.Yaml), version));
+                    }
+                }
+
+                foreach (var form in forms)
+                {
+                    var id = FormYamlDeserializer.FromYaml(form.Yaml).FormId;
+                    if (id is not null && formVersions.TryGetValue(id.Value, out var version))
+                    {
+                        cacheEntries.Add(new ImportCacheEntry(ImportAssetKind.Form, id.Value, ImportCache.HashOf(form.Yaml), version));
+                    }
+                }
+            }
+
             entities.Add(new SolutionExportEntity(entityLogicalName, tableYaml, views, forms, securityByTable.GetValueOrDefault(entityLogicalName)));
         }
+
+        importCache?.Record(environmentUrl, cacheEntries);
 
         // A table-limited export never touches choices: they belong to the
         // solution, not to any table.

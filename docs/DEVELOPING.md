@@ -93,8 +93,9 @@ public `PreviewAsync(Settings, printUnchanged, CancellationToken)` (preview
 only). `ImportRunner` is split the same way: `PreviewAsync` reads, previews,
 prints the diff and applies the per-asset gates (SkipBefore/SkipAfter/
 BlockReason) without prompting or writing, returning a `PreparedImport`
-(`Unchanged`, `Changed` with a deferred `ApplyAsync` that also publishes
-unless `--no-publish`, or `Failed`); `RunAsync` is preview + prompt + apply.
+(`Unchanged`, `Changed` with a deferred `ApplyAsync` and, unless
+`--no-publish`, a separate `Publish`, or `Failed`); `RunAsync` is preview +
+prompt + apply + publish.
 
 `SolutionImportOrchestrator` owns the stage ordering (creates first, then
 choices, then each table's columns, views, forms and security file, then the
@@ -126,6 +127,8 @@ keeps nothing; `ApplyAllAsync` maps the failing part's `Content-ID` (counted
 over the requests actually sent) back to the table, and the run stops before
 any later stage. A decline stops it the same way. Standalone `table create` is
 unchanged: one table, its own prompt, published afterwards.
+
+Views and forms can skip the full preview. `Services/Caching/ImportCache` (`IImportCache`) keeps one JSON file per environment under `%LOCALAPPDATA%\d365architect\import-cache`, holding for each view and form id the SHA-256 of its file (CRLF turned into LF) and the live `versionnumber`. A file from another tool version (the assembly's informational version) or one that can't be read counts as empty, so it can only save work. `SolutionExportService` records every exported view and form, with the versions read before exporting them. In `solution import`, `Commands/Solution/ImportCacheCheck` sits between `StepRunner` and the view/form preview: it reads each table's versions once per kind (`IDataverseClient.GetSavedQueryVersionsAsync`/`GetSystemFormVersionsAsync`) and returns `PreparedImport.Unchanged` when the hash and the version both match, so `SavedQueryIdConflictCheck` still sees the file. Otherwise it runs the full preview, and at the end of the run records, in one write, the files the preview found unchanged (version read before) and the changes actually applied (version re-read after the write). `--no-skip` turns the skip off but still records.
 
 `--table` (repeatable, on `solution export` and `solution import`) is resolved
 by `SolutionTableFilter` (case-insensitive; an unmatched name throws
@@ -197,6 +200,15 @@ publish-only `--publish` mode is gone, and `CommandAppConfiguration` turns on
 Spectre's `StrictParsing`, so `--publish` (like any undeclared option) is now
 a parse error rather than silently ignored.
 
+`PreviewAsync` hands the publish back as `PreparedImport.Publish`, a
+`PendingPublish` whose `Target` is the table's logical name (the spec's
+`PublishTarget`) or `ImportRunner.GlobalChoicesTarget`. Single-file imports run
+it straight after the apply. `SolutionImportFlow` collects the publishes of
+the changes that applied (plus one per table the create stage created, via
+`AddPublish`) and, after the last apply, runs one per distinct target, so a
+table with five changed views is published once. A failed publish is
+reported, the others still run, and the exit code is 1.
+
 ## Services/
 
 ### Authentication
@@ -216,6 +228,7 @@ and deliberately **not** the device-code flow:
 - **Current session**: a separate, non-secret `%LocalAppData%\d365architect\profile.json`
   (`{ EnvironmentUrl, Username }`) tracks which environment/account is
   "current" — independent of the token cache itself.
+- **Import cache**: `%LocalAppData%\d365architect\import-cache\` (see `solution import` above) shares this folder through `MsalAuthenticationService.GetAppDataDirectory()`.
 - **Client id/authority**: `AuthenticationOptions.cs` defaults to Microsoft's
   own documented public client id for native/console Dataverse auth
   (`51f81489-12ee-4a9e-aaae-a2591f45987d`), overridable via the
@@ -662,7 +675,9 @@ can't (`TableCreateServiceLiveTests`: that `solution import`'s one-transaction
 table create really rolls back as one, names the failing table, and adds each
 table to the solution; `GlobalChoiceOptionShapeLiveTests`: that an option the
 tool creates exports with the same empty `Description`/`ExternalValue` as a
-maker-portal one; `SecurityRoleShapeLiveTests`: that privileges written by
+maker-portal one; `ViewRenameLiveTests`: that a view renamed by `view import`'s
+`savedQueryId` path keeps its id and takes the new name, and re-imports as no
+changes; `SecurityRoleShapeLiveTests`: that privileges written by
 `security import` export in the solution XML exactly as the file asked, and
 re-import as no changes). They're regression tests against Microsoft's API as
 much as against this tool: run them before a release to catch a platform

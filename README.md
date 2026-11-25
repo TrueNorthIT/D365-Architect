@@ -450,7 +450,7 @@ double-check that decomposition against.
 
 #### `view import`
 
-Writes a `*.view.yml` file's description/FetchXML/LayoutXML directly back
+Writes a `*.view.yml` file's name/description/FetchXML/LayoutXML directly back
 into Dataverse, or creates the view if it doesn't exist yet. Needs sign-in.
 
 ```
@@ -468,10 +468,15 @@ d365architect view import --input active-accounts.view.yml
 Each exported file carries the view's `savedQueryId`. Import uses it to pick
 the target view, so two live views sharing a name no longer clash; an id that
 is not found live is an error (never a fallback to the name), and an id that
-belongs to a view on a different table is refused (a different name only warns,
-since renames are legitimate). Without `savedQueryId`, import
-matches on table and name and refuses an ambiguous match, listing the
-candidate ids to copy into the file.
+belongs to a view on a different table is refused. When the view's live name
+differs from the file's `view:`, import renames it to that name, and the plan
+shows it as `name: 'old' -> 'new'`. The rename is confirmed like any other
+change and is written with the rest of the view. If another view on the same
+table already has the new name, a warning is printed and the rename still goes
+ahead, since Dataverse allows duplicate view names. Without `savedQueryId`,
+import matches on table and name and refuses an ambiguous match, listing the
+candidate ids to copy into the file. Matching by name can't rename a view, so a
+changed name in such a file creates a new view instead.
 
 A view that matches nothing is created. A file with no `savedQueryId` whose
 table + name matches no live view is shown in the plan as `+ view '<name>'
@@ -504,12 +509,12 @@ Simpler than `form import`: since FetchXML/LayoutXML are kept verbatim
 (never decomposed and rebuilt), the diff compares the live values against
 the local YAML directly, with no canonicalization step needed first. Dataverse
 adds a `savedqueryid` attribute to the stored FetchXML on save; a file that
-leaves it out isn't shown as a change. Only `description`/`fetchXml`/`layoutXml`
-are ever written on an update — a view's type, default status, and Quick Find
-flag are never changed by this command. Unless `--yes` is passed, you get a
-confirmation prompt (defaulting to "no") before anything actually changes in
-Dataverse. Pass `--whatif` to see the diff and stop there — no prompt, no
-write, regardless of `--yes`.
+leaves it out isn't shown as a change. Only `name` (when it differs, as above),
+`description`, `fetchXml` and `layoutXml` are ever written on an update — a
+view's type, default status, and Quick Find flag are never changed by this
+command. Unless `--yes` is passed, you get a confirmation prompt (defaulting
+to "no") before anything actually changes in Dataverse. Pass `--whatif` to
+see the diff and stop there — no prompt, no write, regardless of `--yes`.
 
 `--solution` (sent as the `MSCRM.SolutionUniqueName` header) adds whatever is
 created or changed to that solution. A view created on a table that isn't in
@@ -884,14 +889,18 @@ d365architect solution import --input ./examplesolution --solution examplesoluti
 | `--allow-removals`           | For every form import: remove what's live but missing from the YAML instead of keeping it. For every security and role file: remove a privilege the role holds live but the file leaves out or sets to `None` | No |
 | `--allow-unexpected`         | For every form import: proceed even if the rebuilt FormXML changes something outside what the YAML changed | No |
 | `--no-publish`               | For every table, choice, view and form import: don't publish after importing | No |
+| `--no-skip`                  | Fully preview every view and form file, even one the import cache says can't have changed | No |
 
 After the create stage, every file is previewed, through the same logic as
 `table import`/`view import`/`form import`/`choice import` — its own diff, its
 own column/choice plan, its own schema-violation gate. Only the diffs of the
 files that changed are printed (unchanged ones are silent unless `--verbose`),
 then you're asked once — "Import N changes?" — and yes applies them all, in
-the order above. Each change is published as its own import command would
-(`--no-publish` turns publishing off for all of them). `--yes` skips both
+the order above. Once every change is applied, each table that had one (a
+table created in this run included) is published once, and the global
+choices in one call, rather than once per changed file. A table whose publish
+fails is reported, the rest still publish, and the exit code is non-zero.
+`--no-publish` turns publishing off for all of them. `--yes` skips both
 prompts; `--whatif` prints the diffs and never prompts or writes. The run ends
 with a summary, e.g. `5 changed, 55 unchanged, 0 failed`. `--solution` is
 forwarded to every table create, table import, choice import, view import and
@@ -903,6 +912,8 @@ showing up in a later `solution export` of the same solution.
 `--no-transaction`/`--allow-schema-violations` are forwarded to the table/form
 imports.
 
+A view or form file that hasn't been edited since the last `solution export` or `solution import`, and hasn't changed in Dataverse since (its `versionnumber` is the same), is counted as unchanged without the full preview, which makes a re-import of a large, mostly unedited solution much faster. `--verbose` prints its "No changes" line marked as skipped. Anything else is previewed in full as before: an edited file, a view or form changed in Dataverse, a file with no `savedQueryId`/`formId`, or a different environment. What each run saw is kept per environment in `%LOCALAPPDATA%\d365architect\import-cache\<environment host>.json` (the file's hash and the live version), and ignored after a tool upgrade. Deleting the folder or passing `--no-skip` gives the full preview for every file. Tables, choices and security files are always previewed in full.
+
 A file that fails to preview (a validation error, a live rejection, a missing
 counterpart, a refused schema violation) is reported and never applied, but
 doesn't stop the others being previewed; the prompt notes how many failed and
@@ -911,6 +922,12 @@ There's no cross-file rollback: each asset's own write is atomic on its own
 terms (`table import`'s changeset, in particular), but nothing ties multiple
 files' writes together. Recovery is to fix the file and rerun: existing tables
 are skipped, and each import applies only what still differs.
+
+Two view files with the same `savedQueryId` both fail, changed or not, before
+you're asked anything (`--whatif` reports the same), and the error names every
+file sharing the id. It's usually an export after a rename: `solution export`
+names view files after the view and doesn't remove the old one, so importing
+both would rename the view back. Delete the file that's out of date.
 
 Creating the tables is different. They are created together, in one
 transaction, before anything else is previewed (their columns, views and forms
@@ -922,8 +939,7 @@ lookups) can't succeed against a table that isn't there. A table file that
 can't be used (e.g. no `ownershipType`) stops the run the same way before
 anything is sent. Answering no to "Create these N tables?" creates nothing and
 stops the run. `--solution` reaches every create in the transaction. The
-create stage itself doesn't publish: a new table is published by the later
-step (its columns, a view or a form) that changes it.
+new tables are published once at the end of the run, with the others.
 
 Under `--whatif` the tables that don't exist yet are listed as ones that would
 be created, nothing is asked or written, and each such table's own

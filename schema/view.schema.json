@@ -5,7 +5,7 @@
   "type": "object",
   "properties": {
     "view": {
-      "description": "The view's display name, e.g. \"Active Accounts\" — written as the top-level \"view\" key.",
+      "description": "The view's display name, e.g. \"Active Accounts\" — written as the top-level \"view\" key. With a savedQueryId, changing it renames the view on import.",
       "type": "string"
     },
     "entity": {
@@ -13,7 +13,7 @@
       "type": "string"
     },
     "savedQueryId": {
-      "description": "The view's savedqueryid. Import uses it, when present, to pick the target view directly rather than by table + name - which can match more than one live view (two views may share a name) and is then refused as ambiguous. An id that no longer exists live is an error, never a fallback to the name. Omit to match by table + name; export always writes it.",
+      "description": "The view's savedqueryid. Import uses it, when present, to pick the target view directly rather than by table + name - which can match more than one live view (two views may share a name) and is then refused as ambiguous. An id that no longer exists live is an error, never a fallback to the name, and an id from a view on another table is refused. When the id's view has a different name, import renames it to this file's \"view\". Omit to match by table + name (which can't rename); export always writes it.",
       "type": "string",
       "format": "uuid"
     },

@@ -2,7 +2,8 @@ namespace D365Architect.Services.Dataverse;
 
 /// <summary>
 /// A live <c>savedquery</c>'s id and the fields <c>view import</c> can
-/// actually update — <c>description</c>, <c>fetchxml</c>, <c>layoutxml</c>.
+/// actually update — <c>description</c>, <c>fetchxml</c>, <c>layoutxml</c>,
+/// and <c>name</c> when a <c>savedQueryId</c> renames the view.
 /// Not every field <see cref="Conversion.Models.ViewDefinition"/> captures:
 /// <c>querytype</c>/<c>isdefault</c>/<c>isquickfindquery</c> are all
 /// documented on that model itself as fields applying a YAML file back
@@ -18,5 +19,5 @@ namespace D365Architect.Services.Dataverse;
 /// up by id alone, so the caller can check it against the YAML's own
 /// <c>entity</c>. Null from the by-name lookup, which already filtered by table.
 /// </param>
-/// <param name="Name">The live view name, from the same by-id lookup (null otherwise).</param>
+/// <param name="Name">The live view name, from the same by-id lookup (null otherwise): what a rename is compared against.</param>
 public sealed record ExistingSavedQuery(Guid SavedQueryId, string? Description, string? FetchXml, string? LayoutXml, string? EntityLogicalName = null, string? Name = null);

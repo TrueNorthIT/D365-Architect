@@ -23,15 +23,23 @@ public enum ImportOutcome
 /// (<c>solution import</c>) preview many assets, confirm once, then apply.
 /// </summary>
 /// <param name="Outcome">How the preview turned out.</param>
-/// <param name="ApplyAsync">Writes the previewed change and prints its success line. Returns false (having reported why) if the write failed. Null unless <paramref name="Outcome"/> is <see cref="ImportOutcome.Changed"/>.</param>
+/// <param name="ApplyAsync">Writes the previewed change and prints its success line, without publishing it (see <see cref="Publish"/>). Returns false (having reported why) if the write failed. Null unless <paramref name="Outcome"/> is <see cref="ImportOutcome.Changed"/>.</param>
 public sealed record PreparedImport(ImportOutcome Outcome, Func<CancellationToken, Task<bool>>? ApplyAsync = null)
 {
     /// <summary>True when previewing printed something (a diff, a "No changes" line) that a caller listing many assets should separate from the next one with a blank line.</summary>
     public bool PrintedOutput { get; init; }
 
+    /// <summary>What to publish once <see cref="ApplyAsync"/> has worked. Null when the command doesn't publish or <c>--no-publish</c> was given.</summary>
+    public PendingPublish? Publish { get; init; }
+
     public static readonly PreparedImport Unchanged = new(ImportOutcome.Unchanged);
     public static readonly PreparedImport Failed = new(ImportOutcome.Failed);
 }
+
+/// <summary>A publish to run once its change is applied.</summary>
+/// <param name="Target">What gets published: a table's logical name, or <see cref="ImportRunner.GlobalChoicesTarget"/>. <c>solution import</c> publishes each target once, however many of its assets changed.</param>
+/// <param name="PublishAsync">Publishes and prints "Published.". Returns false (having reported why) if the publish failed.</param>
+public sealed record PendingPublish(string Target, Func<CancellationToken, Task<bool>> PublishAsync);
 
 /// <summary>
 /// Runs the shared flow behind every `import` command (`form import`,
@@ -59,10 +67,15 @@ public sealed record PreparedImport(ImportOutcome Outcome, Func<CancellationToke
 /// publishes it too, unless <c>--no-publish</c>
 /// (<see cref="PublishableImportSettings"/>) - confirming the import is the
 /// only question asked. Nothing applied (no change, declined, <c>--whatif</c>)
-/// means nothing published.
+/// means nothing published. The publish is handed back apart from the apply
+/// (<see cref="PreparedImport.Publish"/>) so <c>solution import</c> can publish
+/// each table once, at the end of the run, rather than after every asset.
 /// </summary>
 public sealed class ImportRunner(IAuthenticationService authenticationService)
 {
+    /// <summary>The <see cref="PendingPublish.Target"/> of a global choice publish. Has a space, so it can't clash with a table's logical name.</summary>
+    public const string GlobalChoicesTarget = "global choices";
+
     /// <summary>The signed-in context, for a flow that isn't one file's import - <c>solution import</c>'s create stage.</summary>
     public Task<AuthenticatedContext> GetContextAsync(CancellationToken cancellationToken) =>
         authenticationService.GetCurrentContextAsync(cancellationToken);
@@ -92,7 +105,17 @@ public sealed class ImportRunner(IAuthenticationService authenticationService)
             return 0;
         }
 
-        return await prepared.ApplyAsync!(cancellationToken) ? 0 : 1;
+        if (!await prepared.ApplyAsync!(cancellationToken))
+        {
+            return 1;
+        }
+
+        if (prepared.Publish is { } publish && !await publish.PublishAsync(cancellationToken))
+        {
+            return 1;
+        }
+
+        return 0;
     }
 
     /// <summary>
@@ -152,7 +175,13 @@ public sealed class ImportRunner(IAuthenticationService authenticationService)
                 return PreparedImport.Failed;
             }
 
-            return new PreparedImport(ImportOutcome.Changed, ct => ApplyAsync(settings, spec, auth, input, preview, ct));
+            PendingPublish? publish = null;
+            if (spec.PublishAsync is { } publishAsync && settings is not PublishableImportSettings { NoPublish: true })
+            {
+                publish = new PendingPublish(spec.PublishTarget!(preview), ct => PublishAsync(spec, input, publishCt => publishAsync(auth, preview, publishCt), ct));
+            }
+
+            return new PreparedImport(ImportOutcome.Changed, ct => ApplyAsync(spec, auth, input, preview, ct)) { Publish = publish };
         }
         catch (Exception ex) when (TryReport(ex, spec, input))
         {
@@ -160,8 +189,8 @@ public sealed class ImportRunner(IAuthenticationService authenticationService)
         }
     }
 
-    /// <summary>Writes a previewed change, then publishes it unless the command has no publish step or <c>--no-publish</c> was given.</summary>
-    private static async Task<bool> ApplyAsync<TSettings, TInput, TPreview>(TSettings settings, ImportFlowSpec<TSettings, TInput, TPreview> spec, AuthenticatedContext auth, TInput input, TPreview preview, CancellationToken cancellationToken)
+    /// <summary>Writes a previewed change. Publishing it is a separate step (<see cref="PreparedImport.Publish"/>).</summary>
+    private static async Task<bool> ApplyAsync<TSettings, TInput, TPreview>(ImportFlowSpec<TSettings, TInput, TPreview> spec, AuthenticatedContext auth, TInput input, TPreview preview, CancellationToken cancellationToken)
         where TSettings : ImportSettingsBase
         where TInput : class
     {
@@ -169,19 +198,34 @@ public sealed class ImportRunner(IAuthenticationService authenticationService)
         {
             await AnsiConsole.Status().StartAsync(spec.ApplyStatusMessage, async _ => await spec.ApplyAsync(auth, preview, cancellationToken));
             spec.PrintSuccess(input, preview);
-
-            if (spec.PublishAsync is { } publishAsync && settings is not PublishableImportSettings { NoPublish: true })
-            {
-                await AnsiConsole.Status().StartAsync("Publishing...", async _ => await publishAsync(auth, preview, cancellationToken));
-                AnsiConsole.MarkupLine("[green]Published.[/]");
-            }
-
             return true;
         }
         catch (Exception ex) when (TryReport(ex, spec, input))
         {
             return false;
         }
+    }
+
+    private static async Task<bool> PublishAsync<TSettings, TInput, TPreview>(ImportFlowSpec<TSettings, TInput, TPreview> spec, TInput input, Func<CancellationToken, Task> publishAsync, CancellationToken cancellationToken)
+        where TSettings : ImportSettingsBase
+        where TInput : class
+    {
+        try
+        {
+            await ShowPublishingAsync(publishAsync, cancellationToken);
+            return true;
+        }
+        catch (Exception ex) when (TryReport(ex, spec, input))
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Runs a publish behind the "Publishing..." status, then prints "Published.". Exceptions propagate.</summary>
+    public static async Task ShowPublishingAsync(Func<CancellationToken, Task> publishAsync, CancellationToken cancellationToken)
+    {
+        await AnsiConsole.Status().StartAsync("Publishing...", async _ => await publishAsync(cancellationToken));
+        AnsiConsole.MarkupLine("[green]Published.[/]");
     }
 
     /// <summary>Prints the exception if it's one this flow knows how to report (auth, HTTP, or the command's own domain exceptions); false lets it propagate.</summary>

@@ -5,6 +5,7 @@ using D365Architect.Commands.Security;
 using D365Architect.Commands.Table;
 using D365Architect.Commands.View;
 using D365Architect.Services.Authentication;
+using D365Architect.Services.Caching;
 using D365Architect.Services.Conversion;
 using D365Architect.Services.Dataverse;
 using Spectre.Console;
@@ -13,7 +14,7 @@ using Spectre.Console.Cli;
 namespace D365Architect.Commands.Solution;
 
 /// <summary>
-/// `d365architect solution import --input ./examplesolution --solution examplesolution [--table account] [--yes] [--whatif] [--verbose] [--no-transaction] [--allow-schema-violations] [--no-publish]`
+/// `d365architect solution import --input ./examplesolution --solution examplesolution [--table account] [--yes] [--whatif] [--verbose] [--no-transaction] [--allow-schema-violations] [--no-publish] [--no-skip]`
 /// Walks a folder previously written by <c>solution export</c> — a
 /// <c>choices.yml</c> at its root, plus one sub-folder per table holding
 /// that table's own <c>*.table.yml</c>/<c>*.view.yml</c>/<c>*.form.yml</c>
@@ -42,8 +43,9 @@ namespace D365Architect.Commands.Solution;
 /// import`/`form import` (<c>PreviewAsync</c>, the first half of each
 /// command's <c>RunAsync</c>), so every asset still gets its own diff,
 /// column/choice plan and safety gate (e.g. the form schema-violation
-/// gate); only the prompt is shared. Applying a change publishes it as its
-/// own import command would, unless <c>--no-publish</c>. <c>--yes</c> skips
+/// gate); only the prompt is shared. Once every change is applied, each
+/// table that had one (a created table included) is published once, and
+/// the global choices in one call, unless <c>--no-publish</c>. <c>--yes</c> skips
 /// both prompts; <c>--whatif</c> prints the diffs and never prompts or
 /// writes. <c>--solution</c> is required (not optional the way it is on the
 /// individual `table create`/`table import`/`choice import` commands) and is
@@ -68,7 +70,15 @@ namespace D365Architect.Commands.Solution;
 /// rejection, a missing live counterpart) doesn't stop the rest: it's
 /// reported, never applied, and the remaining changes are still offered and
 /// applied. The exit code is non-zero if anything failed. There's no
-/// cross-file rollback.
+/// cross-file rollback. Some failures only show across files, so are checked
+/// once every file is previewed: security files disagreeing about a privilege
+/// (<see cref="SecurityConflictCheck"/>) and view files sharing a
+/// <c>savedQueryId</c> (<see cref="SavedQueryIdConflictCheck"/>).
+///
+/// A view or form file unedited since the last export or import, whose live
+/// <c>versionnumber</c> hasn't moved either, is counted as unchanged without
+/// the full preview (see <see cref="ImportCacheCheck"/>); <c>--no-skip</c>
+/// previews every one.
 /// </summary>
 public sealed class ImportSolutionCommand(
     ITableCreateService tableCreateService,
@@ -77,7 +87,9 @@ public sealed class ImportSolutionCommand(
     IFormImportService formImportService,
     IGlobalChoiceImportService globalChoiceImportService,
     ISecurityImportService securityImportService,
-    ImportRunner importRunner) : AsyncCommand<ImportSolutionCommand.Settings>
+    ImportRunner importRunner,
+    IDataverseClient? dataverseClient = null,
+    IImportCache? importCache = null) : AsyncCommand<ImportSolutionCommand.Settings>
 {
     public sealed class Settings : CommandSettings
     {
@@ -124,6 +136,10 @@ public sealed class ImportSolutionCommand(
         [CommandOption("--no-publish")]
         [Description("For every table/choice/view/form import: don't publish after importing.")]
         public bool NoPublish { get; init; }
+
+        [CommandOption("--no-skip")]
+        [Description("Fully preview every view and form file against Dataverse. By default one that hasn't been edited since the last export or import, and hasn't changed in Dataverse since, is counted as unchanged without the full preview.")]
+        public bool NoSkip { get; init; }
     }
 
     protected override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken) =>
@@ -208,12 +224,19 @@ public sealed class ImportSolutionCommand(
         _ => throw new ArgumentOutOfRangeException(nameof(stage), stage, null),
     };
 
+    /// <summary>Null when there's no cache to use. <c>--no-skip</c> still records what the run finds, so the next run can skip again.</summary>
+    private ImportCacheCheck? CreateImportCacheCheck(Settings settings) =>
+        dataverseClient is not null && importCache is not null
+            ? new ImportCacheCheck(dataverseClient, importCache, importRunner.GetContextAsync, skip: !settings.NoSkip)
+            : null;
+
     /// <summary>
     /// The create stage (see <see cref="StepRunner.CreateTablesAsync"/>): previews every table, refusing the whole stage - nothing sent - if
     /// any file can't be read or used; lists the missing ones; asks once (unless <c>--yes</c>; under <c>--whatif</c> it only lists them);
-    /// then creates them all in one transaction, where one failure keeps none.
+    /// then creates them all in one transaction, where one failure keeps none. The created tables are published with the rest at the end
+    /// of the run (<paramref name="flow"/>), unless <c>--no-publish</c>.
     /// </summary>
-    private async Task<SolutionTableCreateResult> CreateTablesAsync(Settings settings, IReadOnlyList<string> tableAssetPaths, CancellationToken cancellationToken)
+    private async Task<SolutionTableCreateResult> CreateTablesAsync(Settings settings, IReadOnlyList<string> tableAssetPaths, SolutionImportFlow flow, CancellationToken cancellationToken)
     {
         AuthenticatedContext auth;
         try
@@ -304,6 +327,19 @@ public sealed class ImportSolutionCommand(
 
         AnsiConsole.MarkupLine($"[green]Created.[/] {string.Join(", ", toCreate.Select(p => p.Preview.EntityLogicalName)).EscapeMarkup()}.");
         AnsiConsole.WriteLine();
+
+        if (!settings.NoPublish)
+        {
+            foreach (var (_, preview) in toCreate)
+            {
+                flow.AddPublish(new PendingPublish(preview.EntityLogicalName, async ct =>
+                {
+                    await ImportRunner.ShowPublishingAsync(publishCt => tableCreateService.PublishAsync(auth.EnvironmentUrl, auth.AccessToken, preview, publishCt), ct);
+                    return true;
+                }));
+            }
+        }
+
         return new SolutionTableCreateResult(SolutionImportStepOutcome.Succeeded, []);
 
         static SolutionTableCreateResult Failed(string path) => new(SolutionImportStepOutcome.Failed, [], path);
@@ -321,7 +357,9 @@ public sealed class ImportSolutionCommand(
         private readonly Settings _settings;
         private readonly SolutionImportFlow _flow;
         private readonly SecurityImportBatch _securityBatch = new();
+        private readonly List<string> _viewPaths = [];
         private readonly IReadOnlySet<string> _pendingChoiceNames;
+        private readonly ImportCacheCheck? _importCacheCheck;
 
         public StepRunner(ImportSolutionCommand command, Settings settings)
         {
@@ -329,27 +367,56 @@ public sealed class ImportSolutionCommand(
             _settings = settings;
             _flow = new SolutionImportFlow(settings.Verbose);
             _pendingChoiceNames = ReadPendingChoiceNames(settings);
+            _importCacheCheck = command.CreateImportCacheCheck(settings);
         }
 
         public async Task<SolutionImportStepOutcome> RunAsync(SolutionImportStage stage, string assetPath, CancellationToken cancellationToken)
         {
+            if (stage == SolutionImportStage.ImportView)
+            {
+                _viewPaths.Add(assetPath);
+            }
+
+            ImportAssetKind? cachedKind = stage switch
+            {
+                SolutionImportStage.ImportView => ImportAssetKind.View,
+                SolutionImportStage.ImportForm => ImportAssetKind.Form,
+                _ => null,
+            };
+
             var item = new SolutionImportItem(assetPath, (printUnchanged, ct) =>
-                _command.PreviewStepAsync(_settings, stage, assetPath, printUnchanged, _pendingChoiceNames, _securityBatch, ct));
+            {
+                Task<PreparedImport> FullPreviewAsync(CancellationToken token) =>
+                    _command.PreviewStepAsync(_settings, stage, assetPath, printUnchanged, _pendingChoiceNames, _securityBatch, token);
+
+                return _importCacheCheck is not null && cachedKind is { } kind
+                    ? _importCacheCheck.PreviewAsync(kind, assetPath, printUnchanged, FullPreviewAsync, ct)
+                    : FullPreviewAsync(ct);
+            });
             return await _flow.PreviewAsync(item, cancellationToken) == ImportOutcome.Failed
                 ? SolutionImportStepOutcome.Failed
                 : SolutionImportStepOutcome.Succeeded;
         }
 
         /// <summary>Asks once (unless <c>--yes</c>; never under <c>--whatif</c>) and applies every change <see cref="RunAsync"/> previewed. Returns the exit code.</summary>
-        public Task<int> ConfirmAndApplyAsync(CancellationToken cancellationToken)
+        public async Task<int> ConfirmAndApplyAsync(CancellationToken cancellationToken)
         {
-            // The cross-file step: security and role files disagreeing about one privilege fail before anything is confirmed.
+            // The cross-file steps: security and role files disagreeing about one privilege, and view files sharing a savedQueryId,
+            // fail before anything is confirmed.
             SecurityConflictCheck.Apply(_securityBatch, _flow);
-            return _flow.ConfirmAndApplyAsync(_settings.Yes, _settings.WhatIf, confirm: null, cancellationToken);
+            SavedQueryIdConflictCheck.Apply(_viewPaths, _flow);
+            var exitCode = await _flow.ConfirmAndApplyAsync(_settings.Yes, _settings.WhatIf, confirm: null, cancellationToken);
+
+            if (_importCacheCheck is not null)
+            {
+                await _importCacheCheck.RecordAsync(cancellationToken);
+            }
+
+            return exitCode;
         }
 
         public Task<SolutionTableCreateResult> CreateTablesAsync(IReadOnlyList<string> tableAssetPaths, CancellationToken cancellationToken) =>
-            _command.CreateTablesAsync(_settings, tableAssetPaths, cancellationToken);
+            _command.CreateTablesAsync(_settings, tableAssetPaths, _flow, cancellationToken);
 
         public void ReportSkipped(SolutionImportStage stage, string assetPath, string tableLogicalName)
         {
