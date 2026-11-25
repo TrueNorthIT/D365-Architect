@@ -91,7 +91,7 @@ public sealed class MsalAuthenticationService(AuthenticationOptions options, Non
         return app;
     };
 
-    private static string GetAppDataDirectory()
+    internal static string GetAppDataDirectory()
     {
         var directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "d365architect");
         Directory.CreateDirectory(directory);
