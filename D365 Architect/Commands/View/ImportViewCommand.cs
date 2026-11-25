@@ -127,6 +127,7 @@ public sealed class ImportViewCommand(IViewImportService viewImportService, Impo
 
             // Dataverse publishes a view as part of its table.
             PublishAsync = (auth, preview, ct) => viewImportService.PublishAsync(auth.EnvironmentUrl, auth.AccessToken, preview, ct),
+            PublishTarget = preview => preview.Entity,
         };
 
         return spec;

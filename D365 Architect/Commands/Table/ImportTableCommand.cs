@@ -179,6 +179,7 @@ public sealed class ImportTableCommand(ITableImportService tableImportService, I
             },
 
             PublishAsync = (auth, preview, ct) => tableImportService.PublishAsync(auth.EnvironmentUrl, auth.AccessToken, preview, ct),
+            PublishTarget = preview => preview.EntityLogicalName,
         };
 
         return spec;

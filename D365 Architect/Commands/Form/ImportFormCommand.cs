@@ -165,6 +165,7 @@ public sealed class ImportFormCommand(IFormImportService formImportService, Impo
             PrintSuccess = (form, preview) => AnsiConsole.MarkupLine($"[green]Imported.[/] '{form.Name.EscapeMarkup()}' {(preview.IsCreate ? "created" : "updated")} in Dataverse."),
 
             PublishAsync = (auth, preview, ct) => formImportService.PublishAsync(auth.EnvironmentUrl, auth.AccessToken, preview, ct),
+            PublishTarget = preview => preview.Entity,
 
             FormatDomainException = (ex, form) => ex switch
             {
