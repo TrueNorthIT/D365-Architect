@@ -43,8 +43,9 @@ namespace D365Architect.Commands.Solution;
 /// import`/`form import` (<c>PreviewAsync</c>, the first half of each
 /// command's <c>RunAsync</c>), so every asset still gets its own diff,
 /// column/choice plan and safety gate (e.g. the form schema-violation
-/// gate); only the prompt is shared. Applying a change publishes it as its
-/// own import command would, unless <c>--no-publish</c>. <c>--yes</c> skips
+/// gate); only the prompt is shared. Once every change is applied, each
+/// table that had one (a created table included) is published once, and
+/// the global choices in one call, unless <c>--no-publish</c>. <c>--yes</c> skips
 /// both prompts; <c>--whatif</c> prints the diffs and never prompts or
 /// writes. <c>--solution</c> is required (not optional the way it is on the
 /// individual `table create`/`table import`/`choice import` commands) and is
@@ -232,9 +233,10 @@ public sealed class ImportSolutionCommand(
     /// <summary>
     /// The create stage (see <see cref="StepRunner.CreateTablesAsync"/>): previews every table, refusing the whole stage - nothing sent - if
     /// any file can't be read or used; lists the missing ones; asks once (unless <c>--yes</c>; under <c>--whatif</c> it only lists them);
-    /// then creates them all in one transaction, where one failure keeps none.
+    /// then creates them all in one transaction, where one failure keeps none. The created tables are published with the rest at the end
+    /// of the run (<paramref name="flow"/>), unless <c>--no-publish</c>.
     /// </summary>
-    private async Task<SolutionTableCreateResult> CreateTablesAsync(Settings settings, IReadOnlyList<string> tableAssetPaths, CancellationToken cancellationToken)
+    private async Task<SolutionTableCreateResult> CreateTablesAsync(Settings settings, IReadOnlyList<string> tableAssetPaths, SolutionImportFlow flow, CancellationToken cancellationToken)
     {
         AuthenticatedContext auth;
         try
@@ -325,6 +327,19 @@ public sealed class ImportSolutionCommand(
 
         AnsiConsole.MarkupLine($"[green]Created.[/] {string.Join(", ", toCreate.Select(p => p.Preview.EntityLogicalName)).EscapeMarkup()}.");
         AnsiConsole.WriteLine();
+
+        if (!settings.NoPublish)
+        {
+            foreach (var (_, preview) in toCreate)
+            {
+                flow.AddPublish(new PendingPublish(preview.EntityLogicalName, async ct =>
+                {
+                    await ImportRunner.ShowPublishingAsync(publishCt => tableCreateService.PublishAsync(auth.EnvironmentUrl, auth.AccessToken, preview, publishCt), ct);
+                    return true;
+                }));
+            }
+        }
+
         return new SolutionTableCreateResult(SolutionImportStepOutcome.Succeeded, []);
 
         static SolutionTableCreateResult Failed(string path) => new(SolutionImportStepOutcome.Failed, [], path);
@@ -401,7 +416,7 @@ public sealed class ImportSolutionCommand(
         }
 
         public Task<SolutionTableCreateResult> CreateTablesAsync(IReadOnlyList<string> tableAssetPaths, CancellationToken cancellationToken) =>
-            _command.CreateTablesAsync(_settings, tableAssetPaths, cancellationToken);
+            _command.CreateTablesAsync(_settings, tableAssetPaths, _flow, cancellationToken);
 
         public void ReportSkipped(SolutionImportStage stage, string assetPath, string tableLogicalName)
         {

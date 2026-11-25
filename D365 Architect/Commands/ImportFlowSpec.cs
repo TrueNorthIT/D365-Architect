@@ -71,7 +71,10 @@ public sealed class ImportFlowSpec<TSettings, TInput, TPreview>
 
     /// <summary>
     /// Publishes what <see cref="ApplyAsync"/> just wrote (via the service's own <c>PublishAsync</c>) - run by
-    /// <see cref="ImportRunner"/> right after a successful apply, unless <c>--no-publish</c>. Null for a flow that never publishes.
+    /// <see cref="ImportRunner"/> right after a successful apply (by <c>solution import</c> once per <see cref="PublishTarget"/> at the end of the run), unless <c>--no-publish</c>. Null for a flow that never publishes.
     /// </summary>
     public Func<AuthenticatedContext, TPreview, CancellationToken, Task>? PublishAsync { get; init; }
+
+    /// <summary>What <see cref="PublishAsync"/> publishes (see <see cref="PendingPublish.Target"/>), so <c>solution import</c> can publish each table once. Required when <see cref="PublishAsync"/> is set.</summary>
+    public Func<TPreview, string>? PublishTarget { get; init; }
 }

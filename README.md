@@ -896,8 +896,11 @@ After the create stage, every file is previewed, through the same logic as
 own column/choice plan, its own schema-violation gate. Only the diffs of the
 files that changed are printed (unchanged ones are silent unless `--verbose`),
 then you're asked once — "Import N changes?" — and yes applies them all, in
-the order above. Each change is published as its own import command would
-(`--no-publish` turns publishing off for all of them). `--yes` skips both
+the order above. Once every change is applied, each table that had one (a
+table created in this run included) is published once, and the global
+choices in one call, rather than once per changed file. A table whose publish
+fails is reported, the rest still publish, and the exit code is non-zero.
+`--no-publish` turns publishing off for all of them. `--yes` skips both
 prompts; `--whatif` prints the diffs and never prompts or writes. The run ends
 with a summary, e.g. `5 changed, 55 unchanged, 0 failed`. `--solution` is
 forwarded to every table create, table import, choice import, view import and
@@ -936,8 +939,7 @@ lookups) can't succeed against a table that isn't there. A table file that
 can't be used (e.g. no `ownershipType`) stops the run the same way before
 anything is sent. Answering no to "Create these N tables?" creates nothing and
 stops the run. `--solution` reaches every create in the transaction. The
-create stage itself doesn't publish: a new table is published by the later
-step (its columns, a view or a form) that changes it.
+new tables are published once at the end of the run, with the others.
 
 Under `--whatif` the tables that don't exist yet are listed as ones that would
 be created, nothing is asked or written, and each such table's own

@@ -93,8 +93,9 @@ public `PreviewAsync(Settings, printUnchanged, CancellationToken)` (preview
 only). `ImportRunner` is split the same way: `PreviewAsync` reads, previews,
 prints the diff and applies the per-asset gates (SkipBefore/SkipAfter/
 BlockReason) without prompting or writing, returning a `PreparedImport`
-(`Unchanged`, `Changed` with a deferred `ApplyAsync` that also publishes
-unless `--no-publish`, or `Failed`); `RunAsync` is preview + prompt + apply.
+(`Unchanged`, `Changed` with a deferred `ApplyAsync` and, unless
+`--no-publish`, a separate `Publish`, or `Failed`); `RunAsync` is preview +
+prompt + apply + publish.
 
 `SolutionImportOrchestrator` owns the stage ordering (creates first, then
 choices, then each table's columns, views, forms and security file, then the
@@ -198,6 +199,15 @@ has its own `--no-publish` and forwards it to every step's settings. The old
 publish-only `--publish` mode is gone, and `CommandAppConfiguration` turns on
 Spectre's `StrictParsing`, so `--publish` (like any undeclared option) is now
 a parse error rather than silently ignored.
+
+`PreviewAsync` hands the publish back as `PreparedImport.Publish`, a
+`PendingPublish` whose `Target` is the table's logical name (the spec's
+`PublishTarget`) or `ImportRunner.GlobalChoicesTarget`. Single-file imports run
+it straight after the apply. `SolutionImportFlow` collects the publishes of
+the changes that applied (plus one per table the create stage created, via
+`AddPublish`) and, after the last apply, runs one per distinct target, so a
+table with five changed views is published once. A failed publish is
+reported, the others still run, and the exit code is 1.
 
 ## Services/
 
