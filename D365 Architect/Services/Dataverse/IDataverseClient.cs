@@ -233,6 +233,19 @@ public interface IDataverseClient
     Task<ExistingSavedQuery?> TryGetSavedQueryByIdAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Every view on one table with its <c>versionnumber</c>, in one request
+    /// (<c>savedqueries?$select=savedqueryid,versionnumber&amp;$filter=returnedtypecode eq '&lt;table&gt;'</c>), keyed by <c>savedqueryid</c>.
+    /// Lets <c>solution import</c> tell cheaply whether a view changed, instead of loading each one.
+    /// </summary>
+    Task<IReadOnlyDictionary<Guid, long>> GetSavedQueryVersionsAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// As <see cref="GetSavedQueryVersionsAsync"/> for forms
+    /// (<c>systemforms?$select=formid,versionnumber&amp;$filter=objecttypecode eq '&lt;table&gt;'</c>), keyed by <c>formid</c>.
+    /// </summary>
+    Task<IReadOnlyDictionary<Guid, long>> GetSystemFormVersionsAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Updates an existing <c>savedquery</c>'s <c>name</c>/<c>description</c>/
     /// <c>fetchxml</c>/<c>layoutxml</c> in one PATCH request — the actual
     /// write <c>view import</c> performs, so a rename and a FetchXML/LayoutXML

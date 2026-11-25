@@ -127,6 +127,8 @@ over the requests actually sent) back to the table, and the run stops before
 any later stage. A decline stops it the same way. Standalone `table create` is
 unchanged: one table, its own prompt, published afterwards.
 
+Views and forms can skip the full preview. `Services/Caching/ImportCache` (`IImportCache`) keeps one JSON file per environment under `%LOCALAPPDATA%\d365architect\import-cache`, holding for each view and form id the SHA-256 of its file (CRLF turned into LF) and the live `versionnumber`. A file from another tool version (the assembly's informational version) or one that can't be read counts as empty, so it can only save work. `SolutionExportService` records every exported view and form, with the versions read before exporting them. In `solution import`, `Commands/Solution/ImportCacheCheck` sits between `StepRunner` and the view/form preview: it reads each table's versions once per kind (`IDataverseClient.GetSavedQueryVersionsAsync`/`GetSystemFormVersionsAsync`) and returns `PreparedImport.Unchanged` when the hash and the version both match, so `SavedQueryIdConflictCheck` still sees the file. Otherwise it runs the full preview, and at the end of the run records, in one write, the files the preview found unchanged (version read before) and the changes actually applied (version re-read after the write). `--no-skip` turns the skip off but still records.
+
 `--table` (repeatable, on `solution export` and `solution import`) is resolved
 by `SolutionTableFilter` (case-insensitive; an unmatched name throws
 `UnknownTableException`); the orchestrator then only walks those folders and
@@ -216,6 +218,7 @@ and deliberately **not** the device-code flow:
 - **Current session**: a separate, non-secret `%LocalAppData%\d365architect\profile.json`
   (`{ EnvironmentUrl, Username }`) tracks which environment/account is
   "current" — independent of the token cache itself.
+- **Import cache**: `%LocalAppData%\d365architect\import-cache\` (see `solution import` above) shares this folder through `MsalAuthenticationService.GetAppDataDirectory()`.
 - **Client id/authority**: `AuthenticationOptions.cs` defaults to Microsoft's
   own documented public client id for native/console Dataverse auth
   (`51f81489-12ee-4a9e-aaae-a2591f45987d`), overridable via the

@@ -547,6 +547,29 @@ public sealed class DataverseClient(HttpClient httpClient) : IDataverseClient
         return new ExistingSavedQuery(savedQueryId, description, fetchXml, layoutXml, entity, name);
     }
 
+    public Task<IReadOnlyDictionary<Guid, long>> GetSavedQueryVersionsAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken) =>
+        GetVersionsAsync(environmentUrl, accessToken,
+            $"savedqueries?$select=savedqueryid,versionnumber&$filter=returnedtypecode eq '{Uri.EscapeDataString(entityLogicalName)}'", "savedqueryid", cancellationToken);
+
+    public Task<IReadOnlyDictionary<Guid, long>> GetSystemFormVersionsAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken) =>
+        GetVersionsAsync(environmentUrl, accessToken,
+            $"systemforms?$select=formid,versionnumber&$filter=objecttypecode eq '{Uri.EscapeDataString(entityLogicalName)}'", "formid", cancellationToken);
+
+    // versionnumber is a BigInt in Dataverse, so it is read as a long.
+    private async Task<IReadOnlyDictionary<Guid, long>> GetVersionsAsync(Uri environmentUrl, string accessToken, string relativePath, string idColumn, CancellationToken cancellationToken)
+    {
+        var versions = new Dictionary<Guid, long>();
+        foreach (var page in await GetAllPagesAsync(environmentUrl, accessToken, relativePath, cancellationToken))
+        {
+            foreach (var row in page)
+            {
+                versions[row.GetProperty(idColumn).GetGuid()] = row.GetProperty("versionnumber").GetInt64();
+            }
+        }
+
+        return versions;
+    }
+
     public async Task UpdateSavedQueryAsync(Uri environmentUrl, string accessToken, Guid savedQueryId, string? name, string? description, string? fetchXml, string? layoutXml, string? solutionUniqueName, CancellationToken cancellationToken)
     {
         var body = new Dictionary<string, string>();

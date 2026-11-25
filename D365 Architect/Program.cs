@@ -1,3 +1,4 @@
+using System.Reflection;
 using D365Architect.Commands;
 using D365Architect.Commands.Auth;
 using D365Architect.Commands.Choice;
@@ -10,6 +11,7 @@ using D365Architect.Commands.View;
 using D365Architect.Infrastructure;
 using D365Architect.Services;
 using D365Architect.Services.Authentication;
+using D365Architect.Services.Caching;
 using D365Architect.Services.Conversion;
 using D365Architect.Services.Dataverse;
 using Microsoft.Extensions.DependencyInjection;
@@ -76,6 +78,12 @@ services.AddSingleton<ISecurityImportService, SecurityImportService>();
 // do) rather than reading from Dataverse itself — see
 // ISolutionExportService's own doc comment.
 services.AddSingleton<ISolutionExportService, SolutionExportService>();
+
+// What `solution export`/`solution import` last saw of each view and form,
+// so an unedited, unchanged one can skip the full preview. Keyed on the
+// informational version so a new build never trusts an older build's cache.
+var toolVersion = typeof(Program).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "unknown";
+services.AddSingleton<IImportCache>(new ImportCache(ImportCache.DefaultDirectory(), toolVersion));
 
 // `form build-xml` reads the form's current live FormXML (when it already
 // exists) so it can patch onto it instead of building one from scratch —

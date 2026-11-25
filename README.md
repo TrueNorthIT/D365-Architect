@@ -889,6 +889,7 @@ d365architect solution import --input ./examplesolution --solution examplesoluti
 | `--allow-removals`           | For every form import: remove what's live but missing from the YAML instead of keeping it. For every security and role file: remove a privilege the role holds live but the file leaves out or sets to `None` | No |
 | `--allow-unexpected`         | For every form import: proceed even if the rebuilt FormXML changes something outside what the YAML changed | No |
 | `--no-publish`               | For every table, choice, view and form import: don't publish after importing | No |
+| `--no-skip`                  | Fully preview every view and form file, even one the import cache says can't have changed | No |
 
 After the create stage, every file is previewed, through the same logic as
 `table import`/`view import`/`form import`/`choice import` — its own diff, its
@@ -907,6 +908,8 @@ wherever Dataverse's own default solution context puts it and silently not
 showing up in a later `solution export` of the same solution.
 `--no-transaction`/`--allow-schema-violations` are forwarded to the table/form
 imports.
+
+A view or form file that hasn't been edited since the last `solution export` or `solution import`, and hasn't changed in Dataverse since (its `versionnumber` is the same), is counted as unchanged without the full preview, which makes a re-import of a large, mostly unedited solution much faster. `--verbose` prints its "No changes" line marked as skipped. Anything else is previewed in full as before: an edited file, a view or form changed in Dataverse, a file with no `savedQueryId`/`formId`, or a different environment. What each run saw is kept per environment in `%LOCALAPPDATA%\d365architect\import-cache\<environment host>.json` (the file's hash and the live version), and ignored after a tool upgrade. Deleting the folder or passing `--no-skip` gives the full preview for every file. Tables, choices and security files are always previewed in full.
 
 A file that fails to preview (a validation error, a live rejection, a missing
 counterpart, a refused schema violation) is reported and never applied, but
