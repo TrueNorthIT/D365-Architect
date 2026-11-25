@@ -97,6 +97,7 @@ public sealed class CreateTableCommand(ITableCreateService tableCreateService, I
             },
 
             PublishAsync = (auth, preview, ct) => tableCreateService.PublishAsync(auth.EnvironmentUrl, auth.AccessToken, preview, ct),
+            PublishTarget = preview => preview.EntityLogicalName,
         };
 
         return await importRunner.RunAsync(settings, tableCreateService, spec, cancellationToken);

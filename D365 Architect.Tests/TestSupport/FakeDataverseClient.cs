@@ -246,18 +246,29 @@ public sealed class FakeDataverseClient : IDataverseClient
         return Task.CompletedTask;
     }
 
+    /// <summary>How many table, view and form writes (<see cref="WriteOrder"/>) had been made when each <see cref="PublishEntityAsync"/> call came in, in call order - what a "publish after every change is in" test reads.</summary>
+    public List<int> WritesBeforeEachEntityPublish { get; } = [];
+
+    /// <summary>When set, <see cref="PublishEntityAsync"/> records the attempt, then throws what this returns for that table (null = the publish works) - simulates Dataverse rejecting one table's PublishXml.</summary>
+    public Func<string, Exception?>? PublishEntityFailure { get; set; }
+
     public Task PublishEntityAsync(Uri environmentUrl, string accessToken, string entityLogicalName, CancellationToken cancellationToken)
     {
         PublishEntityCalls.Add(entityLogicalName);
-        return Task.CompletedTask;
+        WritesBeforeEachEntityPublish.Add(WriteOrder.Count);
+        return PublishEntityFailure?.Invoke(entityLogicalName) is { } failure ? Task.FromException(failure) : Task.CompletedTask;
     }
 
     /// <summary>The option-set names of every <see cref="PublishGlobalOptionSetsAsync"/> call, in order (one list per call).</summary>
     public List<IReadOnlyList<string>> PublishGlobalOptionSetsCalls { get; } = [];
 
+    /// <summary>As <see cref="WritesBeforeEachEntityPublish"/>, for each <see cref="PublishGlobalOptionSetsAsync"/> call.</summary>
+    public List<int> WritesBeforeEachGlobalOptionSetsPublish { get; } = [];
+
     public Task PublishGlobalOptionSetsAsync(Uri environmentUrl, string accessToken, IReadOnlyList<string> optionSetNames, CancellationToken cancellationToken)
     {
         PublishGlobalOptionSetsCalls.Add(optionSetNames);
+        WritesBeforeEachGlobalOptionSetsPublish.Add(WriteOrder.Count);
         return Task.CompletedTask;
     }
 

@@ -109,6 +109,7 @@ public sealed class ImportChoiceCommand(IGlobalChoiceImportService globalChoiceI
             },
 
             PublishAsync = (auth, preview, ct) => globalChoiceImportService.PublishAsync(auth.EnvironmentUrl, auth.AccessToken, preview, ct),
+            PublishTarget = _ => ImportRunner.GlobalChoicesTarget,
         };
 
         return spec;

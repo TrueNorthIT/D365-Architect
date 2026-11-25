@@ -24,14 +24,21 @@ public sealed record SolutionImportItem(string Path, Func<bool, CancellationToke
 /// rest" behaviour as before); the prompt says how many failed and will be
 /// skipped, and the exit code is non-zero if anything failed. There's no
 /// cross-asset rollback.
+///
+/// Publishing waits until every change is applied, then publishes each
+/// table (and the global choices) that had a change applied once, since a
+/// table's publish is slow and covers all of its views and forms. A table
+/// whose publish fails is reported and the rest still publish.
 /// </summary>
 public sealed class SolutionImportFlow(bool verbose)
 {
     private readonly List<(SolutionImportItem Item, PreparedImport Prepared)> _changed = [];
     private readonly HashSet<string> _unchangedPaths = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<PendingPublish> _publishes = [];
     private int _unchanged;
     private int _failed;
     private int _skipped;
+    private int _publishFailed;
 
     public static async Task<int> RunAsync(IReadOnlyList<SolutionImportItem> items, bool yes, bool whatIf, bool verbose, Func<string, bool>? confirm, CancellationToken cancellationToken)
     {
@@ -84,6 +91,9 @@ public sealed class SolutionImportFlow(bool verbose)
         return prepared.Outcome;
     }
 
+    /// <summary>Adds a publish for something already written outside the flow (a table the create stage created), to run with the others once every change is applied.</summary>
+    public void AddPublish(PendingPublish publish) => _publishes.Add(publish);
+
     /// <summary>Counts an asset that was never previewed (its table would be created first under <c>--whatif</c>), for the summary.</summary>
     public void CountSkipped() => _skipped++;
 
@@ -113,6 +123,7 @@ public sealed class SolutionImportFlow(bool verbose)
 
         if (_changed.Count == 0)
         {
+            await PublishAsync(cancellationToken);
             PrintSummary(0, written: true);
             return ExitCode;
         }
@@ -157,6 +168,10 @@ public sealed class SolutionImportFlow(bool verbose)
             if (ok)
             {
                 applied++;
+                if (prepared.Publish is { } publish)
+                {
+                    _publishes.Add(publish);
+                }
             }
             else
             {
@@ -166,18 +181,53 @@ public sealed class SolutionImportFlow(bool verbose)
             AnsiConsole.WriteLine();
         }
 
+        await PublishAsync(cancellationToken);
         PrintSummary(applied, written: true);
         return ExitCode;
     }
 
-    private int ExitCode => _failed == 0 ? 0 : 1;
+    /// <summary>Publishes each target once, in the order its first change was applied.</summary>
+    private async Task PublishAsync(CancellationToken cancellationToken)
+    {
+        var publishes = _publishes.DistinctBy(p => p.Target, StringComparer.OrdinalIgnoreCase).ToList();
+        foreach (var publish in publishes)
+        {
+            bool ok;
+            try
+            {
+                ok = await publish.PublishAsync(cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                ErrorConsole.Print($"Publishing '{publish.Target}' failed: {ex.Message}");
+                ok = false;
+            }
+
+            if (!ok)
+            {
+                _publishFailed++;
+            }
+        }
+
+        if (publishes.Count > 0)
+        {
+            AnsiConsole.WriteLine();
+        }
+    }
+
+    private int ExitCode => _failed == 0 && _publishFailed == 0 ? 0 : 1;
 
     // Written is false after --whatif or an aborted prompt, where nothing was applied: the count is what would change.
     private void PrintSummary(int changed, bool written)
     {
-        var colour = _failed == 0 ? "green" : "yellow";
+        var colour = ExitCode == 0 ? "green" : "yellow";
         var changedText = written ? $"{changed} changed" : $"{changed} would change";
         var skippedText = _skipped > 0 ? $", {_skipped} skipped" : "";
-        AnsiConsole.MarkupLine($"[{colour}]{changedText}, {_unchanged} unchanged, {_failed} failed{skippedText}[/]");
+        var publishFailedText = _publishFailed > 0 ? $", {_publishFailed} failed to publish" : "";
+        AnsiConsole.MarkupLine($"[{colour}]{changedText}, {_unchanged} unchanged, {_failed} failed{skippedText}{publishFailedText}[/]");
     }
 }
